@@ -434,10 +434,10 @@ export default function AppointmentsPage() {
   const handleViewMentorProfile = (mentorId: string) => {
     const mentor = moodMentors.find(a => a.id === mentorId);
     if (mentor) {
-      const nameSlug = mentor.name.toLowerCase().replace(/\s+/g, '-');
-      navigate(`/mood-mentors/${nameSlug}?id=${mentorId}`);
+      const nameSlug = mentor.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+      navigate(`/mood-mentor/${nameSlug}?id=${mentorId}`);
     } else {
-      navigate(`/mood-mentors?id=${mentorId}`);
+      navigate(`/mood-mentor?id=${mentorId}`);
     }
   };
 

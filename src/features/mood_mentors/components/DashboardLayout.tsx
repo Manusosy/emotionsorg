@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useAuth } from "@/hooks/use-auth";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import {
   Dialog,
   DialogContent,
@@ -587,17 +588,64 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               )}
 
               {/* Search */}
-              <div className="relative hidden md:block">
-                <button
-                  onClick={() => setSearchOpen(true)}
-                  className="w-full flex items-center text-sm rounded-md border border-gray-300 bg-white px-3 h-9 text-gray-500 hover:bg-gray-50"
-                >
-                  <Search className="h-4 w-4 mr-2" />
-                  <span>Search...</span>
-                  <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border border-gray-200 bg-gray-100 px-1.5 font-mono text-xs font-medium text-gray-500">
-                    <span className="text-xs">Ctrl</span>K
-                  </kbd>
-                </button>
+              <div className="relative hidden md:block flex-1 max-w-2xl mx-4">
+                <form onSubmit={(e) => {
+                  e.preventDefault();
+                  if (searchResults.length > 0) {
+                    handleSearchResultClick(searchResults[0].href);
+                  }
+                }} className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Input
+                    type="search"
+                    placeholder="Search dashboard..."
+                    className="w-full pl-10 pr-4 rounded-full border-gray-200"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchInput(e.target.value)}
+                    onFocus={() => setSearchOpen(searchQuery.length > 0)}
+                  />
+
+                  {/* Search Results Dropdown */}
+                  {searchOpen && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 max-h-[400px] overflow-y-auto z-50">
+                      {searchResults.length > 0 ? (
+                        <div className="py-2">
+                          {Object.entries(
+                            searchResults.reduce((acc, item) => {
+                              acc[item.category] = [...(acc[item.category] || []), item];
+                              return acc;
+                            }, {} as Record<string, SearchResult[]>)
+                          ).map(([category, items]) => (
+                            <div key={category}>
+                              <div className="px-3 py-2 text-xs font-semibold text-gray-500 bg-gray-50">
+                                {category}
+                              </div>
+                              {items.map((item) => (
+                                <button
+                                  key={item.href}
+                                  className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-3"
+                                  onClick={() => handleSearchResultClick(item.href)}
+                                >
+                                  {item.icon && <item.icon className="h-4 w-4 text-gray-500" />}
+                                  <div>
+                                    <div className="text-sm font-medium">{item.title}</div>
+                                    {item.description && (
+                                      <div className="text-xs text-gray-500">{item.description}</div>
+                                    )}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 text-center text-gray-500">
+                          No results found
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </form>
               </div>
             </div>
 
@@ -741,16 +789,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               </DropdownMenu>
             </div>
           </div>
-        </div>
-
-        {/* Welcome banner */}
-        <div className="bg-white border-b border-gray-200 px-6 py-4">
-          <h1 className="text-xl font-semibold text-gray-900">
-            {getWelcomeMessage()}, {getFullName()?.split(' ')[0]}
-          </h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Here's what's happening with your patients and appointments today.
-          </p>
         </div>
 
         {/* Main content area */}

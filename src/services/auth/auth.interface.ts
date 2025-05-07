@@ -7,8 +7,15 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'user' | 'admin' | 'mood_mentor';
+  role: 'user' | 'patient' | 'admin' | 'mood_mentor';
   avatarUrl?: string;
+  user_metadata?: {
+    avatar_url?: string;
+    full_name?: string;
+    country?: string;
+    gender?: string;
+    [key: string]: any;
+  };
 }
 
 export interface AuthCredentials {

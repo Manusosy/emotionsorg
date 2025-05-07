@@ -1,11 +1,9 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-// Supabase import removed
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
 import { Smile, Meh, Frown, BookOpen } from "lucide-react";
@@ -74,57 +72,88 @@ export default function MoodAssessment() {
     }
   };
 
-  const handleSubmit = async () => {
-    if (!user) return;
+  // Function to dispatch mood assessment event and save to sessionStorage
+  const dispatchMoodAssessmentEvent = (moodScore: number, assessmentResult: string) => {
+    // Create an event with data in the format expected by MoodAnalytics and MoodSummaryCard
+    const timestamp = new Date().toISOString();
+    
+    // Dispatch the event for other components to listen to
+    const event = new CustomEvent('mood-assessment-completed', {
+      detail: {
+        moodScore: moodScore,
+        assessmentResult: assessmentResult,
+        timestamp: timestamp
+      }
+    });
+    window.dispatchEvent(event);
+  };
 
+  const handleSubmit = async () => {
     try {
       setIsSubmitting(true);
 
-      if (createJournalEntry) {
-        // Create a journal entry first
-        const { data: journalEntry, error: journalError } = await supabase
-          .from("journal_entries")
-          .insert({
-            user_id: user.id,
-            title: `Mood Entry - ${new Date().toLocaleDateString()}`,
+      // Use test mode implementation
+      const userId = user?.id || 'test_user';
+      const now = new Date();
+      const entryId = `mood_${Date.now()}`;
+      const assessmentResult = getMoodResult(moodScore);
+      
+      // Create the mood entry object
+      const moodEntry = {
+        id: entryId,
+        user_id: userId,
+        mood_score: moodScore,
+        assessment_result: assessmentResult,
+        notes: notes,
+        assessment_data: assessmentResponses.length > 0 ? assessmentResponses : undefined,
+        created_at: now.toISOString(),
+        journal_entry_id: createJournalEntry ? `journal_${Date.now()}` : undefined
+      };
+      
+      // Store in session storage
+      try {
+        // Get existing entries or create new array
+        const existingEntriesStr = sessionStorage.getItem('test_mood_entries');
+        const moodEntries = existingEntriesStr ? JSON.parse(existingEntriesStr) : [];
+        
+        // Add new entry
+        moodEntries.push(moodEntry);
+        
+        // Save back to session storage
+        sessionStorage.setItem('test_mood_entries', JSON.stringify(moodEntries));
+        
+        // If creating journal entry, save that too
+        if (createJournalEntry) {
+          const journalEntry = {
+            id: `journal_${Date.now()}`,
+            user_id: userId,
+            title: `Mood Entry - ${now.toLocaleDateString()}`,
             content: `<p>${notes}</p>`,
-            mood: getMoodResult(moodScore).toLowerCase() as any,
-          })
-          .select()
-          .single();
-
-        if (journalError) throw journalError;
-
-        // Create mood entry with journal reference
-        const { error: moodError } = await supabase
-          .from("mood_entries")
-          .insert({
-            user_id: user.id,
-            mood_score: moodScore,
-            assessment_result: getMoodResult(moodScore),
-            notes: notes,
-            journal_entry_id: journalEntry?.id,
-            assessment_data: assessmentResponses.length > 0 ? assessmentResponses : undefined
-          });
-
-        if (moodError) throw moodError;
-
-        toast.success("Mood logged and journal entry created!");
-        navigate(`/journal/${journalEntry?.id}`);
-      } else {
-        // Just create mood entry
-        const { error } = await supabase
-          .from("mood_entries")
-          .insert({
-            user_id: user.id,
-            mood_score: moodScore,
-            assessment_result: getMoodResult(moodScore),
-            notes: notes,
-            assessment_data: assessmentResponses.length > 0 ? assessmentResponses : undefined
-          });
-
-        if (error) throw error;
-        toast.success("Mood logged successfully!");
+            mood: assessmentResult.toLowerCase(),
+            created_at: now.toISOString(),
+            updated_at: now.toISOString()
+          };
+          
+          const existingJournalsStr = sessionStorage.getItem('test_journal_entries');
+          const journalEntries = existingJournalsStr ? JSON.parse(existingJournalsStr) : [];
+          journalEntries.push(journalEntry);
+          sessionStorage.setItem('test_journal_entries', JSON.stringify(journalEntries));
+        }
+        
+        // Dispatch the custom event to update other components
+        dispatchMoodAssessmentEvent(moodScore, assessmentResult);
+        
+        toast.success(createJournalEntry 
+          ? "Mood logged and journal entry created!" 
+          : "Mood logged successfully!");
+          
+        // Navigate if journal entry created
+        if (createJournalEntry) {
+          navigate(`/journal/${moodEntry.journal_entry_id}`);
+        }
+      } catch (storageError) {
+        console.error("Error saving to session storage:", storageError);
+        throw new Error("Failed to save mood data");
       }
 
       setNotes("");
@@ -134,105 +163,174 @@ export default function MoodAssessment() {
       setShowAssessment(false);
     } catch (error: any) {
       console.error("Error logging mood:", error);
-      toast.error(error.message || "Failed to log mood");
+      toast.error(error.message || "Failed to save assessment. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Calculate stress level from assessment responses
+  const calculateStressLevel = (): number => {
+    // If no responses, return 0
+    if (!assessmentResponses.length) return 0;
+    
+    // Filter for stress type questions
+    const stressResponses = assessmentResponses.filter(r => r.question_type === 'stress');
+    
+    // If no stress responses, return 0
+    if (!stressResponses.length) return 0;
+    
+    // Calculate average stress score (on a scale from 0-10)
+    const totalScore = stressResponses.reduce((sum, response) => sum + response.score, 0);
+    return totalScore / stressResponses.length / 10; // Normalize to 0-1 scale
+  };
+  
+  // Additional function to dispatch a stress assessment event
+  const dispatchStressAssessmentEvent = () => {
+    // Only dispatch if we have assessment responses
+    if (assessmentResponses.length === 0) return;
+    
+    const stressLevel = calculateStressLevel();
+    const event = new CustomEvent('stress-assessment-completed', {
+      detail: {
+        stressLevel: stressLevel,
+        score: moodScore,
+        status: "Completed"
+      }
+    });
+    window.dispatchEvent(event);
+    
+    // Also save to sessionStorage for persistence
+    try {
+      sessionStorage.setItem('test_stress_assessment', JSON.stringify({
+        stressLevel: stressLevel,
+        score: moodScore,
+        status: "Completed",
+        created_at: new Date().toISOString()
+      }));
+    } catch (error) {
+      console.error("Error saving stress assessment to session storage:", error);
+    }
+  };
+  
+  // Modify the submit handler to also dispatch the stress assessment
+  const handleCompleteSubmit = async () => {
+    await handleSubmit();
+    
+    // If we showed the assessment and have responses, dispatch stress event
+    if (showAssessment && assessmentResponses.length > 0) {
+      dispatchStressAssessmentEvent();
+    }
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-center">
-        <div className="flex items-center space-x-2 text-center">
-          <Frown className="w-5 h-5 text-slate-400" />
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle>How are you feeling today?</CardTitle>
+          {getMoodIcon(moodScore)}
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-sm text-muted-foreground">Mood Score: {moodScore}/10</span>
+            <span className="text-sm font-medium">{getMoodResult(moodScore)}</span>
+          </div>
           <Slider
             value={[moodScore]}
             min={1}
             max={10}
             step={1}
             onValueChange={(value) => setMoodScore(value[0])}
-            className="w-48 mx-4"
+            className="py-2"
           />
-          <Smile className="w-5 h-5 text-slate-400" />
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>Poor</span>
+            <span>Excellent</span>
+          </div>
         </div>
-      </div>
 
-      <div className="flex items-center justify-center">
-        <div className="text-center">
-          <div className="mb-2">{getMoodIcon(moodScore)}</div>
-          <div className="text-sm font-medium">{getMoodResult(moodScore)}</div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label htmlFor="notes" className="text-sm font-medium">
+              Notes (optional)
+            </label>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-8"
+              onClick={() => setShowAssessment(!showAssessment)}
+            >
+              <BookOpen className="h-4 w-4 mr-1" />
+              {showAssessment ? "Hide Assessment" : "Complete Assessment"}
+            </Button>
+          </div>
+          <Textarea
+            id="notes"
+            placeholder="Add any notes about how you're feeling today..."
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            className="resize-none"
+            rows={4}
+          />
         </div>
-      </div>
 
-      <Textarea
-        placeholder="How are you feeling today? What's on your mind? (optional)"
-        className="resize-none"
-        rows={3}
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-      />
+        {showAssessment && (
+          <div className="space-y-4 border rounded-lg p-4 bg-blue-50/50">
+            <h3 className="font-medium">Stress Assessment</h3>
+            <p className="text-sm text-muted-foreground">
+              Rate each item on a scale from 1 (not at all) to 10 (extremely).
+            </p>
 
-      <div className="space-y-2">
+            <div className="space-y-6">
+              {stressQuestions.map((question) => (
+                <div key={question.id} className="space-y-2">
+                  <label className="text-sm font-medium">{question.text}</label>
+                  <Slider
+                    value={[
+                      assessmentResponses.find(r => r.question_id === question.id)?.score || 5
+                    ]}
+                    min={1}
+                    max={10}
+                    step={1}
+                    onValueChange={(value) => 
+                      handleAssessmentChange(question.id, question.type, value[0])
+                    }
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Not at all</span>
+                    <span>Extremely</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center space-x-2">
           <Checkbox 
-            id="journal" 
+            id="journal"
             checked={createJournalEntry}
             onCheckedChange={(checked) => setCreateJournalEntry(checked as boolean)} 
           />
-          <label htmlFor="journal" className="text-sm flex items-center cursor-pointer">
-            <BookOpen className="w-4 h-4 mr-1" />
-            Also create a journal entry
+          <label
+            htmlFor="journal"
+            className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+          >
+            Create a journal entry from this check-in
           </label>
         </div>
-        
-        <div className="flex items-center space-x-2">
-          <Checkbox 
-            id="assessment" 
-            checked={showAssessment}
-            onCheckedChange={(checked) => setShowAssessment(checked as boolean)} 
-          />
-          <label htmlFor="assessment" className="text-sm cursor-pointer">
-            Include stress assessment
-          </label>
-        </div>
-      </div>
 
-      {showAssessment && (
-        <div className="bg-slate-50 p-3 rounded-md space-y-4 mt-2">
-          <h3 className="text-sm font-medium">Stress Assessment</h3>
-          {stressQuestions.map((question) => (
-            <div key={question.id} className="space-y-2">
-              <div className="text-sm">{question.text}</div>
-              <div className="flex items-center">
-                <span className="text-xs mr-2">Low</span>
-                <Slider
-                  value={[assessmentResponses.find(r => r.question_id === question.id)?.score || 3]}
-                  min={1}
-                  max={5}
-                  step={1}
-                  onValueChange={(value) => handleAssessmentChange(question.id, question.type, value[0])}
-                  className="w-full mx-1"
-                />
-                <span className="text-xs ml-2">High</span>
-              </div>
-            </div>
-          ))}
-          <div className="text-xs text-slate-500">
-            These responses help us calculate your stress level metrics
-          </div>
-        </div>
-      )}
-
-      <div className="pt-2">
         <Button 
-          onClick={handleSubmit} 
-          className="w-full" 
+          onClick={handleCompleteSubmit} 
           disabled={isSubmitting}
+          className="w-full"
         >
-          {isSubmitting ? "Saving..." : "Save Check-in"}
+          {isSubmitting ? "Saving..." : "Log Mood"}
         </Button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 

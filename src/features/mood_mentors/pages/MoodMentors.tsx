@@ -1,21 +1,15 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
-import { MapPin, ThumbsUp, MessageSquare, DollarSign, Info } from "lucide-react"
+import { MapPin, ThumbsUp, MessageSquare, DollarSign, Info, Search, Calendar, Filter } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Link } from "react-router-dom"
 import BookingButton from "@/features/booking/components/BookingButton"
-
-// Mock mood mentor service
-const moodMentorService = {
-  async getAvailableMoodMentors(limit = 10) {
-    console.log("Using mock mood mentor service");
-    // Return empty data that will fall back to mock data
-    return { success: false, error: new Error("Mock service"), data: [] };
-  }
-};
+import { moodMentorService } from "@/services"
+import "../styles/MoodMentors.css"
+import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion"
 
 type MoodMentor = {
   id: string
@@ -26,398 +20,773 @@ type MoodMentor = {
   totalRatings: number
   feedback: number
   location: string
+  city: string
+  country: string
   isFree: boolean
   therapyTypes: string[]
   image: string
   satisfaction: number
+  gender: string
+  nameSlug: string
 }
 
 const MoodMentors = () => {
+  const { scrollY } = useScroll();
+  const containerRef = useRef(null);
+  
+  // Transform values for the gradients as user scrolls
+  const backgroundOpacity = useTransform(scrollY, [0, 300], [0.8, 0.6]);
+  const backgroundOpacity2 = useTransform(scrollY, [0, 300], [0.9, 0.7]);
+
+  const [searchQuery, setSearchQuery] = useState("")
   const [selectedDate, setSelectedDate] = useState("")
-  const [gender, setGender] = useState<string[]>(["Male"])
-  const [specialties, setSpecialties] = useState<string[]>(["Depression & Anxiety", "Trauma & PTSD"])
+  const [selectedGender, setSelectedGender] = useState<string[]>([])
+  const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>([])
+  const [selectedCountry, setSelectedCountry] = useState<string>("")
+  const [availableSpecialties, setAvailableSpecialties] = useState<string[]>([
+    "Depression & Anxiety",
+    "Trauma & PTSD",
+    "Relationship Issues",
+    "Addiction & Recovery",
+    "Stress Management",
+    "Self-Esteem",
+    "Grief",
+    "Life Transitions",
+    "LGBTQ+ Issues"
+  ])
+  const [availableCountries, setAvailableCountries] = useState<string[]>([])
   const [filteredMoodMentors, setFilteredMoodMentors] = useState<MoodMentor[]>([])
   const [loading, setLoading] = useState(true)
   const [realMoodMentors, setRealMoodMentors] = useState<MoodMentor[]>([])
+  const [showFilters, setShowFilters] = useState(false)
   // Add debug toggle button
-  const [showDebugInfo, setShowDebugInfo] = useState(false)
+  const [showDebugInfo, setShowDebugInfo] = useState(process.env.NODE_ENV === 'development')
   
-  // Sample mood mentor data as fallback
-  const mockMoodMentors: MoodMentor[] = [
-    {
-      id: "1",
-      name: "Dr. Ruby Perrin",
-      credentials: "PhD in Psychology, Mental Health Specialist",
-      specialty: "Depression & Anxiety Specialist",
-      rating: 5,
-      totalRatings: 17,
-      feedback: 17,
-      location: "Kigali, Rwanda",
-      isFree: true,
-      therapyTypes: ["Cognitive Behavioral Therapy", "Mindfulness", "Stress Management"],
-      image: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      satisfaction: 98
-    },
-    {
-      id: "2",
-      name: "Dr. Darren Elder",
-      credentials: "MSc in Clinical Psychology, Certified Counselor",
-      specialty: "Trauma & PTSD Specialist",
-      rating: 5,
-      totalRatings: 35,
-      feedback: 35,
-      location: "Musanze, Rwanda",
-      isFree: true,
-      therapyTypes: ["EMDR Therapy", "Trauma-Focused CBT", "Group Therapy"],
-      image: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      satisfaction: 96
-    },
-    {
-      id: "3",
-      name: "Dr. Deborah Angel",
-      credentials: "MA in Counseling Psychology, Mental Health Mood Mentor",
-      specialty: "Relationship & Family Specialist",
-      rating: 4,
-      totalRatings: 27,
-      feedback: 27,
-      location: "Kigali, Rwanda",
-      isFree: true,
-      therapyTypes: ["Couples Therapy", "Family Counseling", "Child Psychology"],
-      image: "https://images.unsplash.com/photo-1614608997588-8173059e05e6?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      satisfaction: 97
-    },
-    {
-      id: "4",
-      name: "Dr. Sofia Brient",
-      credentials: "PhD in Clinical Psychology, Addiction Specialist",
-      specialty: "Addiction & Recovery Specialist",
-      rating: 4,
-      totalRatings: 4,
-      feedback: 4,
-      location: "Rubavu, Rwanda",
-      isFree: true,
-      therapyTypes: ["Substance Abuse", "Behavioral Addiction", "Recovery Support"],
-      image: "https://images.unsplash.com/photo-1594824476967-48c8b964273f?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      satisfaction: 94
-    }
-  ]
-
   // Fetch real mood mentors from service
   useEffect(() => {
     const fetchRealMoodMentors = async () => {
       if (!moodMentorService) {
-        console.log("Mood mentor service not available, using mock data");
-        setLoading(false);
-        return;
+        console.log("Mood mentor service not available")
+        setLoading(false)
+        return
       }
 
       try {
-        console.log("Fetching mood mentors with mood mentor service...");
-        const result = await moodMentorService.getAvailableMoodMentors(10);
-        console.log("Mood mentor service response:", result);
+        console.log("Fetching mood mentors with mood mentor service...")
+        const mentorsData = await moodMentorService.getMoodMentors({ limit: 50 }) // Increase limit to show more mentors
+        console.log("Mood mentor service response:", mentorsData)
         
-        if (result.success && result.data && result.data.length > 0) {
+        if (mentorsData && mentorsData.length > 0) {
           // Map to expected MoodMentor format
-          const mappedMoodMentors = result.data.map((moodMentor: any) => {
-            console.log("Processing mood mentor:", moodMentor.name || moodMentor.id);
+          const mappedMoodMentors = mentorsData.map((moodMentor) => {
+            console.log("Processing mood mentor:", moodMentor.name || moodMentor.full_name || moodMentor.id)
+            const [city, country] = (moodMentor.location || "Kigali, Rwanda").split(", ");
+            
+            // Get therapy types from multiple possible sources
+            let therapyTypes = [];
+            if (Array.isArray(moodMentor.specialties) && moodMentor.specialties.length > 0) {
+              therapyTypes = moodMentor.specialties;
+            } else if (Array.isArray(moodMentor.therapyTypes) && moodMentor.therapyTypes.length > 0) {
+              therapyTypes = moodMentor.therapyTypes;
+            } else if (moodMentor.specialties) {
+              therapyTypes = [moodMentor.specialties];
+            } else {
+              therapyTypes = ["Mental Health Support"];
+            }
+            
+            // Handle image from multiple possible sources
+            const image = moodMentor.avatarUrl || moodMentor.avatar_url || 
+              "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80";
+            
+            // Get name from various possible fields
+            const name = moodMentor.name || moodMentor.full_name || "Mood Mentor";
+            
+            // Generate slug if not present
+            const nameSlug = moodMentor.nameSlug || moodMentor.name_slug || 
+              name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+              
+            console.log("Mood mentor name:", name, "nameSlug:", nameSlug, "image:", image);
+            
             return {
               id: moodMentor.id || Math.random().toString(),
-              name: moodMentor.name || "Mood Mentor",
-              credentials: moodMentor.credentials || "Mood Mentor",
-              specialty: moodMentor.specialty || "Mood Support",
+              name: name,
+              credentials: moodMentor.title || moodMentor.credentials || "Mental Health Specialist",
+              specialty: moodMentor.specialty || (Array.isArray(moodMentor.specialties) ? moodMentor.specialties[0] : "Mental Health Support"),
               rating: moodMentor.rating || 4.5,
-              totalRatings: moodMentor.reviews || 10,
-              feedback: moodMentor.reviews || 10,
-              location: moodMentor.location || "Remote",
-              isFree: moodMentor.isFree !== false,
-              therapyTypes: Array.isArray(moodMentor.services) ? moodMentor.services : 
-                (moodMentor.specialty ? [moodMentor.specialty] : ["Mood Support"]),
-              image: moodMentor.avatar || "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-              satisfaction: 95
-            };
-          });
+              totalRatings: moodMentor.reviewCount || 10,
+              feedback: moodMentor.reviewCount || 10,
+              location: moodMentor.location || "Kigali, Rwanda",
+              city: city || "Kigali",
+              country: country || "Rwanda",
+              isFree: true,
+              therapyTypes: therapyTypes,
+              image: image,
+              satisfaction: moodMentor.satisfaction || 95,
+              gender: moodMentor.gender || "Male",
+              nameSlug: nameSlug
+            }
+          })
           
-          setRealMoodMentors(mappedMoodMentors);
-          console.log("Successfully fetched real mood mentors:", mappedMoodMentors.length);
-          console.log("Mood mentor details:", mappedMoodMentors);
+          // Immediately set both real mentors and filtered mentors to show all
+          setRealMoodMentors(mappedMoodMentors)
+          setFilteredMoodMentors(mappedMoodMentors)
+          
+          // Extract unique specialties from the mentors
+          const uniqueSpecialties = Array.from(
+            new Set(
+              mappedMoodMentors.flatMap(mentor => {
+                const specialtyArray = mentor.specialty ? [mentor.specialty] : [];
+                return [...mentor.therapyTypes, ...specialtyArray];
+              })
+            )
+          )
+          setAvailableSpecialties(uniqueSpecialties)
+          
+          console.log("Successfully fetched real mood mentors:", mappedMoodMentors.length)
+          console.log("Mood mentor details:", mappedMoodMentors)
         } else {
-          console.log("No mood mentors returned from service or error in response");
+          console.log("No mood mentors returned from service")
+          setRealMoodMentors([])
+          setFilteredMoodMentors([])
         }
       } catch (error) {
-        console.error("Error fetching mood mentors:", error);
+        console.error("Error fetching mood mentors:", error)
+        setRealMoodMentors([])
+        setFilteredMoodMentors([])
       } finally {
-        setLoading(false);
+        setLoading(false)
       }
-    };
+    }
 
-    fetchRealMoodMentors();
-  }, []);
+    fetchRealMoodMentors()
+  }, [])
   
   // Combine real and mock mood mentors, ALWAYS show real mood mentors first
   const combinedMoodMentors = () => {
-    if (realMoodMentors.length === 0) {
-      console.log("No real mood mentors available, using mock data only");
-      return mockMoodMentors;
-    }
-    
-    console.log("Combining real mood mentors with mock data");
-    // Always show real mood mentors first, then mock ones
-    return [...realMoodMentors, ...mockMoodMentors.filter(mock => 
-      !realMoodMentors.some(real => real.id === mock.id)
-    )];
-  };
-
-  // Apply filters in real-time
-  useEffect(() => {
-    // Use the combined list of mood mentors
-    const moodMentorsList = combinedMoodMentors();
-    
-    // Filter mood mentors based on selected specialties
-    const filtered = moodMentorsList.filter(moodMentor => {
-      // Check if mood mentor's specialty matches any selected specialty
-      const hasSpecialty = specialties.some(specialty => {
-        if (specialty === "Depression & Anxiety") {
-          return moodMentor.specialty.includes("Depression") || moodMentor.specialty.includes("Anxiety");
-        }
-        if (specialty === "Trauma & PTSD") {
-          return moodMentor.specialty.includes("Trauma") || moodMentor.specialty.includes("PTSD");
-        }
-        if (specialty === "Relationship Issues") {
-          return moodMentor.specialty.includes("Relationship");
-        }
-        if (specialty === "Addiction & Recovery") {
-          return moodMentor.specialty.includes("Addiction") || moodMentor.specialty.includes("Recovery");
-        }
-        return false;
-      });
-      
-      return hasSpecialty;
-    });
-    
-    setFilteredMoodMentors(filtered.length > 0 ? filtered : moodMentorsList);
-  }, [specialties, gender, realMoodMentors]);
-
-  const toggleSpecialty = (value: string) => {
-    if (specialties.includes(value)) {
-      setSpecialties(specialties.filter((v) => v !== value));
+    if (realMoodMentors.length > 0) {
+      console.log("Using real mood mentors, count:", realMoodMentors.length)
+      // Only use real mood mentors if available
+      return realMoodMentors
     } else {
-      setSpecialties([...specialties, value]);
+      console.log("No real mood mentors, using mock data")
+      // Otherwise default to mock data
+      // In this case, just return an empty array so the debug info shows
+      return []
     }
   }
 
+  // Extract unique countries from mood mentors
+  useEffect(() => {
+    if (realMoodMentors.length > 0) {
+      const countries = Array.from(new Set(
+        realMoodMentors.map(mentor => mentor.location.split(', ')[1])
+      )).filter(Boolean);
+      setAvailableCountries(countries);
+    }
+  }, [realMoodMentors]);
+
+  // Apply filters in real-time
+  useEffect(() => {
+    let filtered = [...realMoodMentors]
+    
+    // Filter by search query
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(mentor => 
+        mentor.name.toLowerCase().includes(query) ||
+        mentor.credentials.toLowerCase().includes(query) ||
+        mentor.specialty.toLowerCase().includes(query) ||
+        mentor.location.toLowerCase().includes(query) ||
+        mentor.therapyTypes.some(type => type.toLowerCase().includes(query))
+      )
+    }
+    
+    // Only apply gender filter if something is selected
+    if (selectedGender.length > 0) {
+      filtered = filtered.filter(mentor => selectedGender.includes(mentor.gender))
+    }
+    
+    // Only apply specialties filter if something is selected
+    if (selectedSpecialties.length > 0) {
+      filtered = filtered.filter(mentor => 
+        selectedSpecialties.some(specialty => 
+          mentor.specialty.includes(specialty) || 
+          mentor.therapyTypes.some(type => type.includes(specialty))
+        )
+      )
+    }
+
+    // Only apply country filter if something is selected
+    if (selectedCountry) {
+      filtered = filtered.filter(mentor => 
+        mentor.location.split(', ')[1] === selectedCountry
+      )
+    }
+    
+    setFilteredMoodMentors(filtered)
+  }, [selectedGender, selectedSpecialties, selectedCountry, realMoodMentors, searchQuery])
+
+  const toggleGender = (value: string) => {
+    setSelectedGender(prev => 
+      prev.includes(value) 
+        ? prev.filter(g => g !== value)
+        : [...prev, value]
+    )
+  }
+
+  const toggleSpecialty = (value: string) => {
+    setSelectedSpecialties(prev => 
+      prev.includes(value)
+        ? prev.filter(s => s !== value)
+        : [...prev, value]
+    )
+  }
+
+  // Toggle debug info
+  const toggleDebugInfo = () => {
+    setShowDebugInfo(!showDebugInfo)
+  }
+
+  // Only show debug info in development mode
+  useEffect(() => {
+    // Hide debug info in production
+    if (process.env.NODE_ENV === 'production') {
+      setShowDebugInfo(false)
+    }
+  }, [])
+
   return (
-    <div className="container mx-auto px-4 py-12">
-      <h1 className="text-3xl font-bold mb-1 text-center">Find Your Mood Mentor</h1>
-      <p className="text-center text-gray-600 mb-10">Connect with qualified professionals who can support your emotional wellbeing</p>
+    <div className="min-h-screen bg-white relative overflow-hidden" ref={containerRef}>
+      {/* Background gradient */}
+      <motion.div 
+        className="absolute inset-0 bg-gradient-to-r from-[#E7E1FF] to-[#FEFEFF]"
+        style={{ opacity: backgroundOpacity }}
+      ></motion.div>
+      <motion.div 
+        className="absolute inset-0 bg-gradient-to-br from-transparent via-white to-[#D4E6FF]"
+        style={{ opacity: backgroundOpacity2 }}
+      ></motion.div>
       
-      <div className="flex flex-col lg:flex-row gap-8">
-        {/* Filters */}
-        <div className="lg:w-1/4 space-y-6 order-2 lg:order-1">
-          <Card className="p-4 shadow-sm border-gray-200">
-            <h2 className="font-semibold text-lg mb-4">Specialty</h2>
-            <div className="space-y-3">
-              <div className="flex items-start space-x-2">
-                <Checkbox 
-                  id="depression-anxiety" 
-                  checked={specialties.includes("Depression & Anxiety")}
-                  onCheckedChange={() => toggleSpecialty("Depression & Anxiety")}
-                />
-                <label
-                  htmlFor="depression-anxiety"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                >
-                  Depression & Anxiety
-                </label>
-              </div>
-              <div className="flex items-start space-x-2">
-                <Checkbox 
-                  id="trauma" 
-                  checked={specialties.includes("Trauma & PTSD")}
-                  onCheckedChange={() => toggleSpecialty("Trauma & PTSD")}
-                />
-                <label
-                  htmlFor="trauma"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                >
-                  Trauma & PTSD
-                </label>
-              </div>
-              <div className="flex items-start space-x-2">
-                <Checkbox 
-                  id="relationship" 
-                  checked={specialties.includes("Relationship Issues")}
-                  onCheckedChange={() => toggleSpecialty("Relationship Issues")}
-                />
-                <label
-                  htmlFor="relationship"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                >
-                  Relationship Issues
-                </label>
-              </div>
-              <div className="flex items-start space-x-2">
-                <Checkbox 
-                  id="addiction" 
-                  checked={specialties.includes("Addiction & Recovery")}
-                  onCheckedChange={() => toggleSpecialty("Addiction & Recovery")}
-                />
-                <label
-                  htmlFor="addiction"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
-                >
-                  Addiction & Recovery
-                </label>
-              </div>
-            </div>
-          </Card>
+      {/* Hero Section */}
+      <div className="bg-gradient-to-r from-[#0078FF] via-[#20c0f3] to-[#00D2FF] text-white pt-20 pb-32 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute -left-20 -top-20 w-96 h-96 rounded-full bg-white"></div>
+          <div className="absolute right-0 bottom-0 w-80 h-80 rounded-full bg-white"></div>
+          <div className="absolute left-1/3 top-1/3 w-64 h-64 rounded-full bg-white"></div>
         </div>
-
-        {/* Main content */}
-        <div className="lg:w-3/4 space-y-6 order-1 lg:order-2">
-          {/* Date selector */}
-          <div className="flex items-center space-x-2">
-            <div className="flex-1">
-              <Input
-                type="date"
-                placeholder="Select availability date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-              />
-            </div>
-            <Button variant="outline">Search</Button>
+        
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="text-center max-w-3xl mx-auto px-4 relative z-10"
+        >
+          <h1 className="text-4xl md:text-5xl font-bold mb-6">Our Mood Mentors</h1>
+          <p className="text-lg md:text-xl max-w-2xl mx-auto text-blue-50 mb-8">
+            Our Mood Mentors are dedicated professionals providing 
+            compassionate support for your emotional well-being. These 
+            specialists focus on various areas of mental health to help you navigate 
+            life's challenges with confidence and resilience.
+          </p>
+          <div className="relative max-w-xl mx-auto mb-8">
+            <Input 
+              type="text"
+              placeholder="Search for a mood mentor..."
+              className="pl-10 pr-14 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+            <Button 
+              variant="outline" 
+              size="icon" 
+              className="absolute right-2 top-2 rounded-full bg-white border-0 text-gray-500 hover:text-[#20c0f3] hover:bg-blue-50"
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <Filter className="h-5 w-5" />
+            </Button>
           </div>
-
-          {/* Mood Mentors list */}
-          <div className="space-y-6">
-            {loading ? (
-              <div className="text-center py-12">
-                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" role="status">
-                  <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
-                </div>
-                <p className="mt-4 text-gray-600">Loading mood mentors...</p>
-              </div>
-            ) : filteredMoodMentors.length > 0 ? (
-              filteredMoodMentors.map((moodMentor) => (
-                <Card key={moodMentor.id} className="p-6 shadow-sm hover:shadow-md transition-shadow duration-200 border-gray-200">
-                  <div className="flex flex-col md:flex-row gap-6">
-                    {/* Image */}
-                    <div className="flex-shrink-0">
-                      <img
-                        src={moodMentor.image}
-                        alt={moodMentor.name}
-                        className="w-32 h-32 object-cover rounded-lg shadow"
-                      />
-                    </div>
-                    
-                    {/* Info */}
-                    <div className="flex-grow flex flex-col">
-                      <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-2">
-                        <div>
-                          <h3 className="text-xl font-semibold text-gray-900">{moodMentor.name}</h3>
-                          <p className="text-gray-600 text-sm">{moodMentor.credentials}</p>
-                        </div>
-                        <div className="flex items-center">
-                          <div className="flex text-yellow-400 mr-1">
-                            {[...Array(Math.floor(moodMentor.rating))].map((_, i) => (
-                              <svg key={i} xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 fill-current" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                              </svg>
-                            ))}
-                            {moodMentor.rating % 1 !== 0 && (
-                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 fill-current" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-                              </svg>
-                            )}
-                          </div>
-                          <span className="text-sm font-semibold text-gray-700">{moodMentor.rating.toFixed(1)}</span>
-                          <span className="text-sm text-gray-500 ml-1">({moodMentor.totalRatings})</span>
-                        </div>
-                      </div>
-                      
-                      <div className="flex flex-col md:flex-row gap-2 mt-1">
-                        <Badge variant="outline" className="text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200">
-                          {moodMentor.specialty}
-                        </Badge>
-                        {moodMentor.isFree && (
-                          <Badge variant="outline" className="text-green-700 bg-green-50 hover:bg-green-100 border-green-200">
-                            <DollarSign className="h-3 w-3 mr-1" /> Free Service
-                          </Badge>
-                        )}
-                      </div>
-                      
-                      <div className="flex items-center mt-2 text-gray-600">
-                        <MapPin className="h-4 w-4 mr-1" />
-                        <span className="text-sm">{moodMentor.location}</span>
-                      </div>
-                      
-                      <div className="mt-2">
-                        <p className="text-sm text-gray-600">Specializes in: {moodMentor.therapyTypes.join(", ")}</p>
-                      </div>
-                      
-                      <div className="flex flex-wrap items-center gap-3 mt-auto pt-4">
-                        <div className="flex items-center text-sm text-gray-600">
-                          <ThumbsUp className="h-4 w-4 mr-1 text-green-600" />
-                          <span>{moodMentor.satisfaction}% Satisfaction</span>
-                        </div>
-                        <div className="flex items-center text-sm text-gray-600">
-                          <MessageSquare className="h-4 w-4 mr-1 text-blue-600" />
-                          <span>{moodMentor.feedback} Patient Reviews</span>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between items-center mt-4 flex-wrap gap-2">
-                        <Link to={`/mood-mentor/${moodMentor.id}`} className="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                          View Profile
-                        </Link>
-                        <div className="flex gap-2">
-                          <Button variant="outline">Message</Button>
-                          <BookingButton moodMentorId={moodMentor.id} moodMentorName={moodMentor.name} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              ))
-            ) : (
-              <div className="text-center py-12 bg-gray-50 rounded-lg">
-                <Info className="h-12 w-12 mx-auto text-gray-400" />
-                <h3 className="mt-4 text-lg font-semibold">No mood mentors found</h3>
-                <p className="mt-2 text-gray-600">Try adjusting your filters or check back later</p>
-              </div>
-            )}
-          </div>
-        </div>
+        </motion.div>
+        
+        {/* Curved bottom edge - changed to transparent */}
+        <div className="absolute bottom-0 left-0 right-0 h-24" style={{ 
+          clipPath: "ellipse(75% 100% at 50% 100%)",
+          background: "transparent"
+        }}></div>
       </div>
       
-      {/* Debug toggle button */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="fixed bottom-4 right-4">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowDebugInfo(!showDebugInfo)}
-            className="bg-gray-100"
-          >
-            {showDebugInfo ? 'Hide Debug' : 'Show Debug'}
-          </Button>
-          
-          {showDebugInfo && (
-            <div className="fixed bottom-16 right-4 bg-black text-white p-4 rounded-md shadow-lg max-w-md max-h-96 overflow-auto">
-              <h4 className="font-mono text-xs mb-2">Debug Info:</h4>
-              <pre className="text-xs">
-                {JSON.stringify({
-                  realMoodMentors: realMoodMentors.length,
-                  filteredCount: filteredMoodMentors.length,
-                  specialties,
-                  gender,
-                  selectedDate,
-                  serviceAvailable: !!moodMentorService
-                }, null, 2)}
-              </pre>
+      {/* Main Content */}
+      <div className="relative z-20">
+        <div className="container mx-auto px-4 -mt-16">
+          <div className="flex flex-col lg:flex-row gap-8 mb-24">
+            {/* Sidebar Filters */}
+            <AnimatePresence>
+              <motion.div 
+                layout
+                className={`lg:w-1/4 ${showFilters ? 'block' : 'hidden lg:block'}`}
+                initial={{ x: -50, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: -50, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              >
+                <motion.div 
+                  className="backdrop-blur-lg bg-white/60 rounded-lg p-6 shadow-md"
+                  whileHover={{ boxShadow: "0 10px 25px rgba(0, 120, 255, 0.1)" }}
+                >
+                  <motion.div 
+                    className="flex items-center justify-between mb-6"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.2 }}
+                  >
+                    <h2 className="text-xl font-semibold">Filters</h2>
+                    <motion.label 
+                      className="flex items-center space-x-2"
+                      whileTap={{ scale: 0.95 }}
+                    >
+                      <input 
+                        type="radio"
+                        name="all_filters"
+                        checked={selectedGender.length === 0 && selectedSpecialties.length === 0 && !selectedCountry}
+                        onChange={() => {
+                          setSelectedGender([]);
+                          setSelectedSpecialties([]);
+                          setSelectedCountry("");
+                        }}
+                        className="rounded-full text-[#20c0f3] focus:ring-[#20c0f3]"
+                      />
+                      <span>All</span>
+                    </motion.label>
+                  </motion.div>
+                  
+                  {/* Gender Filter */}
+                  <motion.div 
+                    className="mb-6"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.3 }}
+                  >
+                    <h3 className="text-lg font-medium mb-3">Gender</h3>
+                    <div className="space-y-2">
+                      <motion.label 
+                        className="flex items-center space-x-2"
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        <input 
+                          type="radio"
+                          name="gender"
+                          checked={selectedGender.includes('Male')}
+                          onChange={() => setSelectedGender(['Male'])}
+                          className="rounded-full text-[#20c0f3] focus:ring-[#20c0f3]"
+                        />
+                        <span>Male</span>
+                      </motion.label>
+                      <motion.label 
+                        className="flex items-center space-x-2"
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        <input 
+                          type="radio"
+                          name="gender"
+                          checked={selectedGender.includes('Female')}
+                          onChange={() => setSelectedGender(['Female'])}
+                          className="rounded-full text-[#20c0f3] focus:ring-[#20c0f3]"
+                        />
+                        <span>Female</span>
+                      </motion.label>
+                    </div>
+                  </motion.div>
+
+                  {/* Specialities Filter */}
+                  <motion.div 
+                    className="mb-6"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.4 }}
+                  >
+                    <h3 className="text-lg font-medium mb-3">Specialities</h3>
+                    <div className="space-y-2">
+                      {availableSpecialties.map((specialty, index) => (
+                        <motion.label 
+                          key={specialty} 
+                          className="flex items-center space-x-2"
+                          whileHover={{ x: 2 }}
+                          whileTap={{ scale: 0.95 }}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: 0.4 + (index * 0.05) }}
+                        >
+                          <Checkbox 
+                            checked={selectedSpecialties.includes(specialty)}
+                            onCheckedChange={() => toggleSpecialty(specialty)}
+                            className="border-gray-300 data-[state=checked]:bg-[#20c0f3] data-[state=checked]:border-[#20c0f3]"
+                          />
+                          <span>{specialty}</span>
+                        </motion.label>
+                      ))}
+                    </div>
+                  </motion.div>
+
+                  {/* Country Filter */}
+                  <motion.div 
+                    className="mb-6"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.5 }}
+                  >
+                    <h3 className="text-lg font-medium mb-3">Country</h3>
+                    <select
+                      value={selectedCountry}
+                      onChange={(e) => setSelectedCountry(e.target.value)}
+                      className="w-full p-2 border border-gray-300 rounded-md focus:border-[#20c0f3] focus:ring-[#20c0f3]"
+                    >
+                      <option value="">All Countries</option>
+                      {availableCountries.map((country) => (
+                        <option key={country} value={country}>
+                          {country}
+                        </option>
+                      ))}
+                    </select>
+                  </motion.div>
+
+                  {/* Search Button */}
+                  <motion.div
+                    whileHover={{ scale: 1.03 }}
+                    whileTap={{ scale: 0.97 }}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.6 }}
+                  >
+                    <Button 
+                      onClick={() => {}} 
+                      className="w-full bg-[#20c0f3] text-white hover:bg-[#0066FF] transition-colors"
+                    >
+                      Search
+                    </Button>
+                  </motion.div>
+                </motion.div>
+              </motion.div>
+            </AnimatePresence>
+            
+            {/* Mood Mentors List */}
+            <div className="lg:w-3/4">
+              {loading ? (
+                <div className="backdrop-blur-lg bg-white/60 rounded-lg shadow-md p-8 text-center">
+                  <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]" role="status">
+                    <span className="!absolute !-m-px !h-px !w-px !overflow-hidden !whitespace-nowrap !border-0 !p-0 ![clip:rect(0,0,0,0)]">Loading...</span>
+                  </div>
+                  <p className="mt-4 text-gray-600">Loading mood mentors...</p>
+                </div>
+              ) : filteredMoodMentors.length > 0 ? (
+                <div className="space-y-4">
+                  {filteredMoodMentors.map((moodMentor, index) => (
+                    <motion.div 
+                      key={moodMentor.id}
+                      initial={{ opacity: 0, y: 50 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: false, margin: "-100px" }}
+                      transition={{ 
+                        duration: 0.8, 
+                        ease: "easeOut",
+                        delay: 0.2
+                      }}
+                      whileHover={{ 
+                        y: -5, 
+                        boxShadow: "0 15px 30px rgba(0, 120, 255, 0.1)",
+                        transition: { duration: 0.3 }
+                      }}
+                      className="backdrop-blur-lg bg-white/60 rounded-xl shadow-md border border-blue-50 overflow-hidden"
+                    >
+                      <div className="p-6 flex gap-6">
+                        {/* Image */}
+                        <motion.div 
+                          className="flex-shrink-0"
+                          initial={{ opacity: 0, scale: 0.9 }}
+                          whileInView={{ opacity: 1, scale: 1 }}
+                          viewport={{ once: false }}
+                          transition={{ duration: 0.5, delay: 0.3 }}
+                          whileHover={{ scale: 1.05 }}
+                        >
+                          <img
+                            src={moodMentor.image}
+                            alt={moodMentor.name}
+                            className="w-32 h-32 object-cover rounded-lg"
+                          />
+                        </motion.div>
+                        
+                        {/* Info */}
+                        <div className="flex-grow">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <motion.h3 
+                                className="text-xl font-semibold text-gray-900 overflow-hidden"
+                                initial={{ opacity: 0, height: 0 }}
+                                whileInView={{ opacity: 1, height: "auto" }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.5, delay: 0.4 }}
+                              >
+                                {moodMentor.name}
+                              </motion.h3>
+                              <motion.p 
+                                className="text-gray-600 text-sm mt-1 overflow-hidden"
+                                initial={{ opacity: 0, height: 0 }}
+                                whileInView={{ opacity: 1, height: "auto" }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.5, delay: 0.5 }}
+                              >
+                                {moodMentor.credentials}
+                              </motion.p>
+                              <motion.p 
+                                className="text-[#00A3FF] text-sm font-medium mt-2 overflow-hidden"
+                                initial={{ opacity: 0, height: 0 }}
+                                whileInView={{ opacity: 1, height: "auto" }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.5, delay: 0.6 }}
+                              >
+                                {moodMentor.specialty}
+                              </motion.p>
+                            </div>
+                            
+                            <div className="flex flex-col items-end">
+                              <motion.div 
+                                className="flex items-center"
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                whileInView={{ opacity: 1, scale: 1 }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.5, delay: 0.4 }}
+                              >
+                                <span className="text-lg font-semibold text-gray-900">{Math.round(moodMentor.satisfaction)}%</span>
+                              </motion.div>
+                              <motion.div 
+                                className="text-sm text-gray-600 mt-1 flex items-center"
+                                initial={{ opacity: 0, y: 10 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.5, delay: 0.5 }}
+                              >
+                                <MessageSquare className="h-4 w-4 mr-1" />
+                                {moodMentor.feedback} Feedback
+                              </motion.div>
+                              <motion.div 
+                                className="mt-1 text-sm text-gray-600 flex items-center"
+                                initial={{ opacity: 0, y: 10 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.5, delay: 0.6 }}
+                              >
+                                <span className="mr-1">Free</span>
+                                <Info className="h-4 w-4 text-gray-400" />
+                              </motion.div>
+                            </div>
+                          </div>
+
+                          {/* Star Rating */}
+                          <motion.div 
+                            className="flex items-center mt-2"
+                            initial={{ opacity: 0, width: 0 }}
+                            whileInView={{ opacity: 1, width: "auto" }}
+                            viewport={{ once: false }}
+                            transition={{ duration: 0.6, delay: 0.7 }}
+                          >
+                            {[...Array(5)].map((_, i) => (
+                              <motion.svg 
+                                key={i} 
+                                className="w-4 h-4 text-yellow-400" 
+                                fill="currentColor" 
+                                viewBox="0 0 20 20"
+                                initial={{ opacity: 0, scale: 0 }}
+                                whileInView={{ opacity: 1, scale: 1 }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.3, delay: 0.8 + (i * 0.1) }}
+                              >
+                                <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                              </motion.svg>
+                            ))}
+                            <motion.span 
+                              className="text-sm text-gray-600 ml-1"
+                              initial={{ opacity: 0 }}
+                              whileInView={{ opacity: 1 }}
+                              viewport={{ once: false }}
+                              transition={{ duration: 0.3, delay: 1.3 }}
+                            >
+                              ({moodMentor.totalRatings})
+                            </motion.span>
+                          </motion.div>
+                          
+                          <motion.div 
+                            className="flex items-center mt-3 text-sm text-gray-600"
+                            initial={{ opacity: 0, x: -20 }}
+                            whileInView={{ opacity: 1, x: 0 }}
+                            viewport={{ once: false }}
+                            transition={{ duration: 0.5, delay: 0.9 }}
+                          >
+                            <MapPin className="h-4 w-4 mr-1.5" />
+                            <span>{moodMentor.location}</span>
+                          </motion.div>
+                          
+                          {/* Therapy types */}
+                          <motion.div 
+                            className="flex flex-wrap gap-2 mt-4"
+                            initial={{ opacity: 0 }}
+                            whileInView={{ opacity: 1 }}
+                            viewport={{ once: false }}
+                            transition={{ duration: 0.6, delay: 1.0 }}
+                          >
+                            {moodMentor.therapyTypes.map((type, idx) => (
+                              <motion.span 
+                                key={idx} 
+                                className="px-3 py-1 bg-gray-50 text-gray-600 text-sm rounded-full"
+                                initial={{ opacity: 0, y: 10 }}
+                                whileInView={{ opacity: 1, y: 0 }}
+                                viewport={{ once: false }}
+                                transition={{ duration: 0.4, delay: 1.1 + (idx * 0.1) }}
+                                whileHover={{ 
+                                  backgroundColor: "#e6f7ff", 
+                                  color: "#0078FF",
+                                  scale: 1.05
+                                }}
+                              >
+                                {type}
+                              </motion.span>
+                            ))}
+                          </motion.div>
+                          
+                          <motion.div 
+                            className="flex justify-end gap-3 mt-4"
+                            initial={{ opacity: 0, y: 20 }}
+                            whileInView={{ opacity: 1, y: 0 }}
+                            viewport={{ once: false }}
+                            transition={{ duration: 0.6, delay: 1.2 }}
+                          >
+                            <motion.div
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                            >
+                              <Link 
+                                to={`/mood-mentor/${moodMentor.nameSlug}`}
+                                className="inline-flex items-center justify-center px-5 py-2 border border-[#20C0F3] text-[#20C0F3] text-sm font-medium rounded-lg hover:bg-[#20C0F3] hover:text-white focus:ring-2 focus:ring-[#20C0F3] focus:ring-offset-2 transition-colors duration-200"
+                              >
+                                VIEW PROFILE
+                              </Link>
+                            </motion.div>
+                            <motion.div
+                              whileHover={{ scale: 1.05 }}
+                              whileTap={{ scale: 0.95 }}
+                            >
+                              <BookingButton 
+                                moodMentorId={moodMentor.id}
+                                moodMentorName={moodMentor.name}
+                                nameSlug={moodMentor.nameSlug}
+                                className="px-5 py-2 bg-[#0066FF] text-white text-sm font-medium rounded-lg hover:bg-blue-600 transition-colors duration-200"
+                                buttonText="BOOK APPOINTMENT"
+                                variant="default"
+                              />
+                            </motion.div>
+                          </motion.div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                <motion.div 
+                  className="backdrop-blur-lg bg-white/60 rounded-lg shadow-md p-8 text-center"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.5 }}
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1, rotate: [0, 10, 0] }}
+                    transition={{ duration: 0.5, delay: 0.2 }}
+                  >
+                    <Info className="h-12 w-12 mx-auto text-gray-400" />
+                  </motion.div>
+                  <motion.h3 
+                    className="mt-4 text-lg font-semibold"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.4 }}
+                  >
+                    No mood mentors found
+                  </motion.h3>
+                  <motion.p 
+                    className="mt-2 text-gray-600"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                  >
+                    Try adjusting your filters or check back later
+                  </motion.p>
+                </motion.div>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      )}
+        
+        {/* Added spacer div */}
+        <div className="h-20"></div>
+        
+        {/* Debug button for development only */}
+        {showDebugInfo && (
+          <motion.div 
+            className="fixed bottom-4 right-4 bg-white p-4 rounded shadow-lg border border-gray-300 max-w-md max-h-80 overflow-auto z-50 text-xs"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+          >
+            <h3 className="font-bold mb-2">Debug Info</h3>
+            <p className="mb-1">Real Mood Mentors: {realMoodMentors.length}</p>
+            <p className="mb-1">Filtered Mood Mentors: {filteredMoodMentors.length}</p>
+            <p className="mb-1">Selected Specialties: {selectedSpecialties.join(', ') || 'None'}</p>
+            <p className="mb-1">Available Specialties: {availableSpecialties.join(', ') || 'None'}</p>
+            <p className="mb-1">Selected Date: {selectedDate || 'None'}</p>
+            
+            <div className="flex flex-col space-y-2 mt-2">
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button 
+                  variant="default" 
+                  className="w-full text-xs py-1" 
+                  onClick={async () => {
+                    await moodMentorService.registerTestMentorProfile();
+                    window.location.reload();
+                  }}
+                >
+                  Register Test Mentor
+                </Button>
+              </motion.div>
+            
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button 
+                  variant="destructive" 
+                  className="w-full text-xs py-1" 
+                  onClick={async () => {
+                    await moodMentorService.resetMentorProfiles();
+                    window.location.reload();
+                  }}
+                >
+                  Reset Profiles
+                </Button>
+              </motion.div>
+              
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                <Button variant="outline" className="w-full text-xs py-1" onClick={() => setShowDebugInfo(false)}>
+                  Close
+                </Button>
+              </motion.div>
+            </div>
+          </motion.div>
+        )}
+      </div>
     </div>
   )
 }

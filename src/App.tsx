@@ -1,4 +1,4 @@
-import { moodMentorService, authService, userService, dataService, apiService, messageService, patientService, appointmentService } from './services'
+import { moodMentorService, authService, userService, dataService, apiService, messageService, patientService, appointmentService } from './services';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -81,6 +81,21 @@ const HomePage = () => {
   );
 };
 
+// AuthRedirect component - redirects authenticated users from auth pages to their dashboard
+const AuthRedirect = ({ children }: { children: React.ReactNode }) => {
+  const { isAuthenticated, userRole, isLoading, getDashboardUrlForRole } = useAuth();
+  
+  // If authenticated, redirect to the appropriate dashboard
+  if (!isLoading && isAuthenticated && userRole) {
+    const dashboardUrl = getDashboardUrlForRole(userRole);
+    console.log(`User already authenticated (${userRole}), redirecting to: ${dashboardUrl}`);
+    return <Navigate to={dashboardUrl} replace />;
+  }
+
+  // Otherwise, render the auth page
+  return <>{children}</>;
+};
+
 // DashboardErrorFallback component to provide context-aware error handling
 const DashboardErrorFallback = ({ dashboardType }: { dashboardType: 'patient' | 'mood_mentor' }) => {
   const navigate = useNavigate();
@@ -117,7 +132,9 @@ const ProtectedRoute = ({
   const [isAuthorized, setIsAuthorized] = useState(false);
   const { isAuthenticated, userRole, isLoading, getDashboardUrlForRole } = useAuth();
 
-  const effectiveAllowedRoles = requiredRole ? [requiredRole] : allowedRoles;
+  // Ensure requiredRole is properly typed to avoid runtime errors
+  const effectiveRequiredRole = requiredRole as UserRole | undefined;
+  const effectiveAllowedRoles = effectiveRequiredRole ? [effectiveRequiredRole] : allowedRoles;
 
   // Check for stored auth state first
   useEffect(() => {
@@ -207,14 +224,175 @@ const ProtectedRoute = ({
     );
   }
 
-  // Wrap the children in an ErrorBoundary with the appropriate dashboard path
-  const dashboardPath = requiredRole === 'patient' ? '/patient-dashboard' : '/mood-mentor-dashboard';
+  // Get proper dashboard path for error boundary based on role
+  // Use a default value to avoid errors
+  const dashboardPath = effectiveRequiredRole === 'patient' ? '/patient-dashboard' : 
+                       effectiveRequiredRole === 'mood_mentor' ? '/mood-mentor-dashboard' : 
+                       '/';
   
   return isAuthorized ? (
     <ErrorBoundary dashboardPath={dashboardPath}>
       {children}
     </ErrorBoundary>
   ) : null;
+};
+
+const DirectPatientRoute = ({ children }: { children: React.ReactNode }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { isAuthenticated, userRole, isLoading } = useAuth();
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    if (!isLoading) {
+      if (!isAuthenticated) {
+        // If not authenticated, redirect to login
+        navigate(`/signin?redirect=${encodeURIComponent(location.pathname)}`);
+      } else if (userRole !== 'patient') {
+        // If authenticated but wrong role, redirect to appropriate dashboard
+        if (userRole === 'mood_mentor') {
+          navigate('/mood-mentor-dashboard');
+        } else {
+          // Fallback for any other role
+          navigate('/');
+        }
+      }
+    }
+  }, [isAuthenticated, userRole, isLoading, navigate, location.pathname]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-screen items-center justify-center">
+        <Spinner size="lg" className="mb-4" />
+        <p className="text-lg font-medium">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full min-h-[50vh] p-6 text-center">
+        <div className="max-w-md space-y-4">
+          <h2 className="text-2xl font-semibold text-gray-800">Something went wrong</h2>
+          <p className="text-gray-600">
+            We encountered an error while rendering this page.
+          </p>
+          <div className="p-4 text-sm bg-red-50 text-red-700 rounded-md border border-red-200 text-left overflow-auto max-h-32">
+            {error.toString()}
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+            <Button onClick={() => setError(null)}>
+              Try Again
+            </Button>
+            <Button variant="outline" onClick={() => navigate('/')}>
+              Return to Home
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Only render children if authenticated and correct role
+  if (isAuthenticated && userRole === 'patient') {
+    try {
+      return (
+        <ErrorBoundary dashboardPath="/patient-dashboard">
+          {children}
+        </ErrorBoundary>
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error('An unknown error occurred'));
+      return null;
+    }
+  }
+
+  // Default fallback while waiting for redirects
+  return (
+    <div className="flex flex-col h-screen items-center justify-center">
+      <Spinner size="lg" className="mb-4" />
+      <p className="text-lg font-medium">Verifying permissions...</p>
+    </div>
+  );
+};
+
+const DirectMoodMentorRoute = ({ children }: { children: React.ReactNode }) => {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { isAuthenticated, userRole, isLoading } = useAuth();
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    if (!isLoading) {
+      if (!isAuthenticated) {
+        // If not authenticated, redirect to login
+        navigate(`/signin?redirect=${encodeURIComponent(location.pathname)}`);
+      } else if (userRole !== 'mood_mentor') {
+        // If authenticated but wrong role, redirect to appropriate dashboard
+        if (userRole === 'patient') {
+          navigate('/patient-dashboard');
+        } else {
+          // Fallback for any other role
+          navigate('/');
+        }
+      }
+    }
+  }, [isAuthenticated, userRole, isLoading, navigate, location.pathname]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-screen items-center justify-center">
+        <Spinner size="lg" className="mb-4" />
+        <p className="text-lg font-medium">Loading...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full min-h-[50vh] p-6 text-center">
+        <div className="max-w-md space-y-4">
+          <h2 className="text-2xl font-semibold text-gray-800">Something went wrong</h2>
+          <p className="text-gray-600">
+            We encountered an error while rendering this page.
+          </p>
+          <div className="p-4 text-sm bg-red-50 text-red-700 rounded-md border border-red-200 text-left overflow-auto max-h-32">
+            {error.toString()}
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+            <Button onClick={() => setError(null)}>
+              Try Again
+            </Button>
+            <Button variant="outline" onClick={() => navigate('/')}>
+              Return to Home
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Only render children if authenticated and correct role
+  if (isAuthenticated && userRole === 'mood_mentor') {
+    try {
+      return (
+        <ErrorBoundary dashboardPath="/mood-mentor-dashboard">
+          {children}
+        </ErrorBoundary>
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e : new Error('An unknown error occurred'));
+      return null;
+    }
+  }
+
+  // Default fallback while waiting for redirects
+  return (
+    <div className="flex flex-col h-screen items-center justify-center">
+      <Spinner size="lg" className="mb-4" />
+      <p className="text-lg font-medium">Verifying permissions...</p>
+    </div>
+  );
 };
 
 const AppContent = () => {
@@ -268,13 +446,13 @@ const AppContent = () => {
             <Routes key={location.pathname}>
               {/* Public routes */}
               <Route path="/" element={<HomePage />} />
-              <Route path="/signin" element={<SignIn />} />
-              <Route path="/signup" element={<Signup />} />
-              <Route path="/forgot-password" element={<ForgotPassword />} />
-              <Route path="/reset-password" element={<ResetPassword />} />
+              <Route path="/signin" element={<AuthRedirect><SignIn /></AuthRedirect>} />
+              <Route path="/signup" element={<AuthRedirect><Signup /></AuthRedirect>} />
+              <Route path="/forgot-password" element={<AuthRedirect><ForgotPassword /></AuthRedirect>} />
+              <Route path="/reset-password" element={<AuthRedirect><ResetPassword /></AuthRedirect>} />
               <Route path="/journal" element={<JournalPage />} />
               <Route path="/mood-mentors" element={<MoodMentors />} />
-              <Route path="/mood-mentors/:id" element={<MoodMentorProfile />} />
+              <Route path="/mood-mentor/:name" element={<MoodMentorProfile />} />
               <Route path="/booking" element={<BookingPage />} />
               
               <Route path="/resources" element={<Resources />} />
@@ -288,156 +466,146 @@ const AppContent = () => {
               
               {/* Mood Mentor Dashboard Routes */}
               <Route path="/mood-mentor-dashboard" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorDashboard />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/appointments" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorAppointmentsPage />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/patients" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorPatientsPage />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/groups" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorGroupsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/mood-mentor-dashboard/resources" element={
-                <ProtectedRoute requiredRole="mood_mentor">
-                  <MoodMentorResourcesPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/mood-mentor-dashboard/reviews" element={
-                <ProtectedRoute requiredRole="mood_mentor">
-                  <MoodMentorReviewsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/mood-mentor-dashboard/availability" element={
-                <ProtectedRoute requiredRole="mood_mentor">
-                  <MoodMentorAvailabilityPage />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/messages" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorMessagesPage />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
+              } />
+              <Route path="/mood-mentor-dashboard/resources" element={
+                <DirectMoodMentorRoute>
+                  <MoodMentorResourcesPage />
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/profile" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorProfilePage />
-                </ProtectedRoute>
-              } />
-              <Route path="/mood-mentor-dashboard/settings" element={
-                <ProtectedRoute requiredRole="mood_mentor">
-                  <MoodMentorSettingsPage />
-                </ProtectedRoute>
-              } />
-              <Route path="/mood-mentor-dashboard/settings/delete-account" element={
-                <ProtectedRoute requiredRole="mood_mentor">
-                  <MoodMentorDeleteAccountPage />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/notifications" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <MoodMentorNotificationsPage />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
+              } />
+              <Route path="/mood-mentor-dashboard/settings" element={
+                <DirectMoodMentorRoute>
+                  <MoodMentorSettingsPage />
+                </DirectMoodMentorRoute>
+              } />
+              <Route path="/mood-mentor-dashboard/settings/delete-account" element={
+                <DirectMoodMentorRoute>
+                  <MoodMentorDeleteAccountPage />
+                </DirectMoodMentorRoute>
               } />
               <Route path="/mood-mentor-dashboard/*" element={
-                <ProtectedRoute requiredRole="mood_mentor">
+                <DirectMoodMentorRoute>
                   <NotFound />
-                </ProtectedRoute>
+                </DirectMoodMentorRoute>
               } />
               
               {/* Patient Dashboard Routes */}
               <Route path="/patient-dashboard" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <PatientDashboard />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } /> 
               <Route path="/patient-dashboard/appointments" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <PatientAppointmentsPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/favorites" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <FavoritesPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/journal" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <DashboardJournalPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/journal/:entryId" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <JournalEntryPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/journal/new" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <NewJournalEntryPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/journal/edit/:entryId" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <JournalEditPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/notifications" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <NotificationsPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/mood-tracker" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <MoodTrackerPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/reports" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <ReportsPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/resources" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <DashboardResourcesPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/messages" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <MessagesPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/help" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <HelpCenterPage />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/settings" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <Settings />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/settings/delete-account" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <DeleteAccount />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/profile" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <Profile />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               <Route path="/patient-dashboard/*" element={
-                <ProtectedRoute requiredRole="patient">
+                <DirectPatientRoute>
                   <NotFound />
-                </ProtectedRoute>
+                </DirectPatientRoute>
               } />
               
               {/* Fallback 404 route */}

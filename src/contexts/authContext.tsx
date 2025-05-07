@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { authService } from '../services/auth/auth.service';
-import { User, UserRole } from '../types/user';
-import { AuthResponse, AuthCredentials } from '../services/auth/auth.interface';
+import { User, AuthResponse, AuthCredentials } from '../services/auth/auth.interface';
+import { UserRole } from '../types/user';
 
 interface AuthContextType {
   user: User | null;
@@ -13,6 +13,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   getDashboardUrlForRole: (role: string | undefined) => string;
+  getFullName: () => string;
+  updateUserAvatar: (avatarUrl: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -156,6 +158,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const updateUserAvatar = useCallback((avatarUrl: string) => {
+    if (!user) return;
+    
+    // Update user object with new avatar URL
+    setUser(prevUser => {
+      if (!prevUser) return null;
+      
+      return {
+        ...prevUser,
+        user_metadata: {
+          ...prevUser.user_metadata,
+          avatar_url: avatarUrl
+        }
+      };
+    });
+    
+    // Update localStorage auth state as well
+    try {
+      const authState = localStorage.getItem('auth_state');
+      if (authState) {
+        const parsedState = JSON.parse(authState);
+        // We don't store the user in auth_state, but we can update any related UI state here
+        localStorage.setItem('auth_state', JSON.stringify(parsedState));
+      }
+      
+      // Also update any other local storage that might contain user data
+      const userData = localStorage.getItem('user_data');
+      if (userData) {
+        const parsedUserData = JSON.parse(userData);
+        parsedUserData.avatar_url = avatarUrl;
+        localStorage.setItem('user_data', JSON.stringify(parsedUserData));
+      }
+    } catch (error) {
+      console.error('Error updating avatar URL in localStorage:', error);
+    }
+  }, [user]);
+
   const getDashboardUrlForRole = useCallback((role?: string | null) => {
     if (!role) return '/signin';
     
@@ -171,6 +210,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
+  const getFullName = useCallback(() => {
+    if (!user) return '';
+    
+    // Since we're using User from auth.interface.ts, use the name property
+    if (user.name) return user.name;
+    
+    // Fallback to email if name is not available
+    return user.email ? user.email.split('@')[0] : 'User';
+  }, [user]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -183,6 +232,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         signOut,
         resetPassword,
         getDashboardUrlForRole,
+        getFullName,
+        updateUserAvatar
       }}
     >
       {children}

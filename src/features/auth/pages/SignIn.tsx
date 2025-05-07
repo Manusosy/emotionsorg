@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,7 +14,6 @@ export default function SignIn() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [checkingAuth, setCheckingAuth] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
   const { signIn, isAuthenticated, userRole, getDashboardUrlForRole, isLoading: authLoading } = useAuth();
@@ -25,19 +24,12 @@ export default function SignIn() {
     return searchParams.get("redirect");
   };
   
-  // Check if user is already authenticated and redirect if needed
-  useEffect(() => {
-    if (authLoading) return;
-    
-    if (isAuthenticated && userRole) {
-      console.log("User already authenticated, redirecting to dashboard");
-      const dashboardUrl = getDashboardUrlForRole(userRole);
-      console.log("Dashboard URL:", dashboardUrl);
-      window.location.href = dashboardUrl;
-    }
-    
-    setCheckingAuth(false);
-  }, [isAuthenticated, userRole, navigate, getDashboardUrlForRole, authLoading]);
+  // If user is already authenticated, redirect immediately to their dashboard
+  if (!authLoading && isAuthenticated && userRole) {
+    const dashboardUrl = getDashboardUrlForRole(userRole);
+    console.log("User already authenticated, redirecting to dashboard:", dashboardUrl);
+    return <Navigate to={dashboardUrl} replace />;
+  }
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,7 +63,7 @@ export default function SignIn() {
           
           console.log(`Sign in successful, redirecting to dashboard: ${dashboardPath}`);
           
-          // Force a full page reload to ensure all contexts are properly refreshed
+          // Force a complete page reload with direct navigation
           window.location.href = dashboardPath;
         }
       } else {
@@ -93,14 +85,6 @@ export default function SignIn() {
     // TO BE CONFIGURED LATER
     toast.info("Google sign in will be configured later");
   };
-
-  if (checkingAuth || authLoading) {
-    return (
-      <div className="flex justify-center items-center h-screen">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
 
   return (
     <AuthLayout>

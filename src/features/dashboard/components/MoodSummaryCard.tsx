@@ -1,275 +1,370 @@
 import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { BarChart, FileText, Smile, Meh, Frown, Download, FileDown, Share, ChevronDown } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
-import { 
-  Smile, 
-  Frown, 
-  Meh, 
-  Clock, 
-  ArrowUp, 
-  ArrowDown, 
-  Minus, 
-  Calendar,
-  HeartPulse,
-  Activity,
-  BarChart
-} from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
-import { format, parseISO, differenceInDays } from "date-fns";
+import { format, parseISO } from 'date-fns';
+import { jsPDF } from "jspdf";
+import 'jspdf-autotable';
+import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-interface MoodSummary {
-  totalEntries: number;
-  averageScore: number;
-  lastAssessment: string | null;
-  mostFrequentMood: string;
-  streakDays: number;
-}
-
-// Function to interpret mood score
-const getMoodDescription = (score: number): string => {
-  if (score >= 8) return 'Very Happy';
-  if (score >= 6) return 'Happy';
-  if (score >= 5) return 'Neutral';
-  if (score >= 3) return 'Sad';
-  return 'Very Sad';
-};
-
-// Function to get color based on mood score
-const getMoodColor = (score: number): string => {
-  if (score >= 8) return 'text-green-600';
-  if (score >= 6) return 'text-green-500';
-  if (score >= 5) return 'text-yellow-500';
-  if (score >= 3) return 'text-orange-500';
-  return 'text-red-500';
+type MoodEntry = {
+  id: string;
+  mood_score: number;
+  assessment_result: string;
+  created_at: string;
 };
 
 export default function MoodSummaryCard() {
   const { user } = useAuth();
-  const [summary, setSummary] = useState<MoodSummary | null>(null);
+  const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-
-  // Create a memoized function to fetch mood summary data
-  const fetchMoodSummary = useCallback(async () => {
-    if (!user) return;
-
+  const [error, setError] = useState<string | null>(null);
+  
+  // Function to fetch mood entries from session storage (test mode)
+  const fetchTestMoodEntries = () => {
     try {
-      setIsLoading(true);
-      
-      // Fetch mood entries
-      const { data: moodEntries, error } = await dataService.getMoodEntries(user.id);
-
-      if (error) throw error;
-
-      if (moodEntries && moodEntries.length > 0) {
-        // Calculate average score
-        const averageScore = moodEntries.reduce((acc, entry) => acc + entry.mood_score, 0) / moodEntries.length;
+      const entriesString = sessionStorage.getItem('test_mood_entries');
+      if (entriesString) {
+        const entries = JSON.parse(entriesString);
+        // Ensure all entries have proper date format
+        const formattedEntries = entries.map((entry: any) => ({
+          id: entry.id || `generated_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          mood_score: entry.mood_score || 5,
+          assessment_result: entry.assessment_result || 'Neutral',
+          created_at: entry.created_at || new Date().toISOString()
+        }));
         
-        // Calculate last assessment date
-        const lastAssessment = moodEntries[0]?.created_at || null;
+        // Sort by created_at in descending order (newest first)
+        formattedEntries.sort((a: MoodEntry, b: MoodEntry) => 
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
         
-        // Calculate streak
-        let streakDays = 0;
-        if (moodEntries.length > 0) {
-          // Sort entries by date (newest first)
-          const sortedEntries = [...moodEntries].sort((a, b) => 
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          );
-          
-          // Check if latest entry is from today or yesterday
-          const latestDate = parseISO(sortedEntries[0].created_at);
-          const today = new Date();
-          const daysDifference = differenceInDays(today, latestDate);
-          
-          if (daysDifference <= 1) {
-            // Start counting streak
-            streakDays = 1;
-            let previousDate = latestDate;
-            
-            // Loop through other entries to find consecutive days
-            for (let i = 1; i < sortedEntries.length; i++) {
-              const currentDate = parseISO(sortedEntries[i].created_at);
-              // If entries are from consecutive days
-              if (differenceInDays(previousDate, currentDate) === 1) {
-                streakDays++;
-                previousDate = currentDate;
-              } else {
-                break;
-              }
-            }
-          }
-        }
-
-        // Count mood frequencies
-        const moodFrequencies = moodEntries.reduce((acc, entry) => {
-          acc[entry.assessment_result] = (acc[entry.assessment_result] || 0) + 1;
-          return acc;
-        }, {} as Record<string, number>);
-
-        // Find most frequent mood
-        const mostFrequentMood = Object.entries(moodFrequencies)
-          .sort(([,a], [,b]) => b - a)[0][0];
-
-        setSummary({
-          totalEntries: moodEntries.length,
-          averageScore,
-          lastAssessment,
-          mostFrequentMood,
-          streakDays
-        });
-      } else {
-        // No entries found
-        setSummary({
-          totalEntries: 0,
-          averageScore: 0,
-          lastAssessment: null,
-          mostFrequentMood: 'No data',
-          streakDays: 0
-        });
+        // Only return most recent 7 entries for the chart
+        return formattedEntries.slice(0, 7);
       }
+      return [];
     } catch (error) {
-      console.error('Error fetching mood summary:', error);
-    } finally {
-      setIsLoading(false);
+      console.error("Error reading test mood entries:", error);
+      return [];
     }
+  };
+
+  useEffect(() => {
+    const loadMoodData = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        
+        // Get data from sessionStorage in test mode
+        const testEntries = fetchTestMoodEntries();
+        setMoodEntries(testEntries);
+      } catch (err: any) {
+        console.error("Error fetching mood entries:", err);
+        setError(err.message || "Failed to load mood data");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadMoodData();
+    
+    // Listen for mood assessment completed events
+    const handleMoodAssessmentCompleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        moodScore: number;
+        assessmentResult: string;
+        timestamp: string;
+      }>;
+      
+      // Add the new entry to our state
+      const newEntry = {
+        id: `generated_${Date.now()}`,
+        mood_score: customEvent.detail.moodScore,
+        assessment_result: customEvent.detail.assessmentResult,
+        created_at: customEvent.detail.timestamp
+      };
+      
+      // Update entries list with new entry at the beginning and limit to 7 entries
+      setMoodEntries(prev => [newEntry, ...prev].slice(0, 7));
+    };
+    
+    window.addEventListener('mood-assessment-completed', handleMoodAssessmentCompleted as EventListener);
+    
+    return () => {
+      window.removeEventListener('mood-assessment-completed', handleMoodAssessmentCompleted as EventListener);
+    };
   }, [user]);
 
-  // Initial fetch on component mount
-  useEffect(() => {
-    fetchMoodSummary();
-  }, [fetchMoodSummary]);
+  // Format data for chart - we need oldest to newest for proper display
+  const chartData = [...moodEntries]
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map(entry => ({
+      date: format(parseISO(entry.created_at), 'MMM dd'),
+      score: entry.mood_score
+    }));
 
-  // Setup subscription to mood entries changes
-  useEffect(() => {
-    if (!user) return;
+  const getAverageMoodScore = (): string => {
+    if (!moodEntries.length) return "N/A";
+    
+    const sum = moodEntries.reduce((acc, entry) => acc + entry.mood_score, 0);
+    return (sum / moodEntries.length).toFixed(1);
+  };
 
-    // Setup subscription to mood_entries changes using the data service
-    const unsubscribe = dataService.subscribeMoodEntries(user.id, () => {
-      // Refresh data when changes are detected for this user
-      fetchMoodSummary();
-    });
+  const getLatestMood = (): string => {
+    if (!moodEntries.length) return "No data";
+    return moodEntries[0].assessment_result;
+  };
 
-    // Also set up a periodic refresh every 30 seconds
-    const intervalId = setInterval(fetchMoodSummary, 30000);
+  const getLatestMoodDate = (): string => {
+    if (!moodEntries.length) return "";
+    
+    const date = parseISO(moodEntries[0].created_at);
+    return format(date, 'MMM d');
+  };
 
-    return () => {
-      // Clean up subscription and interval on unmount
-      if (unsubscribe && typeof unsubscribe === 'function') {
-        unsubscribe();
+  const getMoodColor = (mood: string): string => {
+    const lowerMood = (mood || '').toLowerCase();
+    if (lowerMood.includes('happy') || lowerMood.includes('great')) return 'text-green-500';
+    if (lowerMood.includes('neutral') || lowerMood.includes('calm')) return 'text-blue-500';
+    if (lowerMood.includes('sad') || lowerMood.includes('low')) return 'text-red-500';
+    return 'text-slate-700';
+  };
+
+  // Export functions
+  const exportToPdf = () => {
+    try {
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(18);
+      doc.setTextColor(0, 0, 150);
+      doc.text('Mood Summary Report', 14, 20);
+      
+      // Add user info
+      doc.setFontSize(11);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 30);
+      
+      // Add summary info
+      doc.setFontSize(14);
+      doc.text('Mood Summary', 14, 45);
+      
+      doc.setFontSize(11);
+      doc.text(`Latest Mood: ${getLatestMood()}`, 16, 55);
+      doc.text(`Average Mood Score: ${getAverageMoodScore()}/10`, 16, 65);
+      doc.text(`Total Entries: ${moodEntries.length}`, 16, 75);
+      
+      // Add table with mood data
+      if (moodEntries.length > 0) {
+        doc.setFontSize(14);
+        doc.text('Mood History', 14, 95);
+        
+        const tableRows = moodEntries.map(entry => [
+          format(parseISO(entry.created_at), 'MMM dd, yyyy'),
+          entry.mood_score.toString() + '/10',
+          entry.assessment_result
+        ]);
+        
+        (doc as any).autoTable({
+          head: [['Date', 'Score', 'Mood']],
+          body: tableRows,
+          startY: 105,
+          styles: { 
+            fontSize: 9,
+            cellPadding: 3
+          },
+          headStyles: { 
+            fillColor: [76, 175, 80],
+            textColor: [255, 255, 255],
+            fontStyle: 'bold'
+          },
+          alternateRowStyles: {
+            fillColor: [240, 255, 240]
+          }
+        });
       }
-      clearInterval(intervalId);
-    };
-  }, [user, fetchMoodSummary]);
-
-  const formatLastAssessment = (dateString: string | null) => {
-    if (!dateString) return 'Never';
-    
-    const date = parseISO(dateString);
-    const today = new Date();
-    const daysDiff = differenceInDays(today, date);
-    
-    if (daysDiff === 0) return 'Today';
-    if (daysDiff === 1) return 'Yesterday';
-    if (daysDiff < 7) return `${daysDiff} days ago`;
-    
-    return format(date, 'MMM dd, yyyy');
+      
+      // Save the PDF
+      const fileName = `mood_summary_${new Date().toISOString().split('T')[0]}.pdf`;
+      doc.save(fileName);
+      
+      toast.success("Mood summary has been downloaded as PDF");
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      toast.error("Failed to export mood summary");
+    }
+  };
+  
+  const exportToCsv = () => {
+    try {
+      if (moodEntries.length === 0) {
+        toast.error("No mood data to export");
+        return;
+      }
+      
+      // Create CSV content
+      const headers = ['Date', 'Mood Score', 'Mood'];
+      const rows = moodEntries.map(entry => [
+        format(parseISO(entry.created_at), 'yyyy-MM-dd'),
+        entry.mood_score.toString(),
+        entry.assessment_result
+      ]);
+      
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.join(','))
+      ].join('\n');
+      
+      // Create download link
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `mood_data_${new Date().toISOString().split('T')[0]}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      toast.success("Mood data has been downloaded as CSV");
+    } catch (error) {
+      console.error("Error generating CSV:", error);
+      toast.error("Failed to export mood data");
+    }
   };
 
   return (
-    <Card className="h-full overflow-hidden">
-      <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base font-medium">Your Mood Summary</CardTitle>
-        <HeartPulse className="w-4 h-4 text-rose-500" />
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex justify-between items-center">
+          <CardTitle className="text-xl font-medium">Mood Summary</CardTitle>
+          <div className="flex gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 text-slate-500" disabled={isLoading || moodEntries.length === 0}>
+                  <Download className="h-4 w-4 mr-1" />
+                  Export
+                  <ChevronDown className="h-4 w-4 ml-1" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportToPdf}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Export PDF
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={exportToCsv}>
+                  <FileDown className="h-4 w-4 mr-2" />
+                  Export CSV
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
+            <Button variant="ghost" size="sm" className="h-8 text-slate-500" disabled={isLoading || moodEntries.length === 0}>
+              <Share className="h-4 w-4 mr-1" />
+              Share
+            </Button>
+            
+            <Link to="/mood-check">
+              <Button variant="ghost" size="sm" className="h-8 text-slate-500">
+                <FileText className="h-4 w-4 mr-1" />
+                Check-in
+              </Button>
+            </Link>
+          </div>
+        </div>
       </CardHeader>
-      
       <CardContent>
         {isLoading ? (
-          <div className="space-y-3">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-8 w-full" />
+          <div className="h-[200px] flex items-center justify-center">
+            <div className="text-slate-500">Loading mood data...</div>
+          </div>
+        ) : error ? (
+          <div className="h-[200px] flex items-center justify-center">
+            <div className="text-red-500">{error}</div>
+          </div>
+        ) : moodEntries.length === 0 ? (
+          <div className="h-[200px] flex flex-col items-center justify-center">
+            <div className="text-slate-500 mb-4">No mood entries yet</div>
+            <Link to="/mood-check">
+              <Button size="sm">Log Your First Mood</Button>
+            </Link>
           </div>
         ) : (
-          <div className="space-y-4">
-            {/* Emotion Status */}
-            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg">
-              <div className="flex flex-col">
-                <span className="text-sm font-medium">Current Mood</span>
-                <span className={`text-base font-bold ${summary?.averageScore ? getMoodColor(summary.averageScore) : 'text-slate-500'}`}>
-                  {summary?.averageScore ? getMoodDescription(summary.averageScore) : 'No data'}
-                </span>
-              </div>
-              <div className="h-10 w-10 rounded-full bg-white flex items-center justify-center shadow-sm">
-                {summary?.averageScore ? (
-                  summary.averageScore >= 6 ? (
-                    <Smile className="w-6 h-6 text-green-500" />
-                  ) : summary.averageScore >= 4 ? (
-                    <Meh className="w-6 h-6 text-yellow-500" />
-                  ) : (
-                    <Frown className="w-6 h-6 text-red-500" />
-                  )
-                ) : (
-                  <Meh className="w-6 h-6 text-slate-300" />
-                )}
-              </div>
-            </div>
-            
-            {/* Metrics Grid */}
-            <div className="grid grid-cols-2 gap-3">
-              {/* Check-ins */}
-              <div className="bg-blue-50 p-3 rounded-lg">
-                <div className="flex items-center gap-2 mb-1">
-                  <Activity className="h-4 w-4 text-blue-600" />
-                  <span className="text-xs font-medium text-blue-800">Check-ins</span>
-                </div>
-                <div className="text-lg font-bold text-blue-900">{summary?.totalEntries || 0}</div>
-              </div>
-              
-              {/* Streak */}
-              <div className="bg-green-50 p-3 rounded-lg">
-                <div className="flex items-center gap-2 mb-1">
-                  <BarChart className="h-4 w-4 text-green-600" />
-                  <span className="text-xs font-medium text-green-800">Streak</span>
-                </div>
-                <div className="text-lg font-bold text-green-900">{summary?.streakDays || 0} days</div>
-              </div>
-            </div>
-            
-            {/* More Details */}
-            <div className="space-y-2 pt-1">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <span className="text-sm text-slate-600">Average Mood</span>
-                <div className="flex items-center">
-                  <span className={`text-sm font-semibold ${summary?.averageScore ? getMoodColor(summary.averageScore) : ''}`}>
-                    {summary?.averageScore ? summary.averageScore.toFixed(1) : '0'}
+          <>
+            <div className="flex justify-between items-center mb-4">
+              <div>
+                <div className="text-sm text-slate-500">Recent Mood</div>
+                <div className={`text-lg font-medium ${getMoodColor(getLatestMood())}`}>
+                  {getLatestMood()}
+                  <span className="text-xs text-slate-400 ml-2">
+                    {getLatestMoodDate()}
                   </span>
-                  <span className="text-xs text-slate-400 ml-1">/10</span>
                 </div>
               </div>
-              
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <div className="flex items-center gap-1">
-                  <Clock className="h-3.5 w-3.5 text-slate-400" />
-                  <span className="text-sm text-slate-600">Last Check-in</span>
+              <div>
+                <div className="text-sm text-slate-500">Average</div>
+                <div className="text-lg font-medium">
+                  {getAverageMoodScore()}
+                  <span className="text-xs text-slate-400">/10</span>
                 </div>
-                <span className="text-sm font-medium">{formatLastAssessment(summary?.lastAssessment || null)}</span>
-              </div>
-              
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-600">Frequent Mood</span>
-                <Badge variant="outline" className={`font-medium ${
-                  summary?.mostFrequentMood?.toLowerCase().includes('happy') 
-                    ? 'text-green-600 border-green-200 bg-green-50' 
-                    : summary?.mostFrequentMood?.toLowerCase().includes('sad')
-                    ? 'text-red-600 border-red-200 bg-red-50'
-                    : 'text-yellow-600 border-yellow-200 bg-yellow-50'
-                }`}>
-                  {summary?.mostFrequentMood || 'No data'}
-                </Badge>
               </div>
             </div>
-          </div>
+            
+            <div className="h-[130px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={chartData}
+                  margin={{
+                    top: 5,
+                    right: 10,
+                    left: 0,
+                    bottom: 0,
+                  }}
+                >
+                  <XAxis 
+                    dataKey="date" 
+                    tick={{ fontSize: 10 }}
+                  />
+                  <YAxis 
+                    domain={[0, 10]} 
+                    tick={{ fontSize: 10 }}
+                    tickCount={6}
+                  />
+                  <Tooltip 
+                    labelFormatter={(value) => `Date: ${value}`}
+                    formatter={(value) => [`Mood: ${value}/10`, '']}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="score"
+                    stroke="#4ade80"
+                    strokeWidth={2}
+                    dot={{ r: 4, strokeWidth: 2, fill: 'white' }}
+                    activeDot={{ r: 6, strokeWidth: 2, fill: 'white' }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            
+            <div className="mt-4 flex justify-end">
+              <Link to="/mood-check">
+                <Button size="sm" variant="outline" className="text-sm">
+                  <BarChart className="h-4 w-4 mr-1" />
+                  Log Mood
+                </Button>
+              </Link>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

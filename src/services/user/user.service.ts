@@ -133,6 +133,30 @@ export class MockUserService implements IUserService {
     
     return { success: true, error: null };
   }
+  
+  /**
+   * Update user metadata
+   */
+  async updateUserMetadata(data: { avatar_url?: string, full_name?: string, [key: string]: any }): Promise<{ success: boolean, error: string | null }> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    try {
+      // In a real implementation, this would update the user's metadata in the auth system
+      console.log('Updating user metadata:', data);
+      
+      return {
+        success: true,
+        error: null
+      };
+    } catch (error) {
+      console.error("Error updating user metadata:", error);
+      return {
+        success: false,
+        error: 'Failed to update user metadata'
+      };
+    }
+  }
 }
 
 // Export a singleton instance

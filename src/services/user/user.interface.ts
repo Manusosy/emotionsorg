@@ -43,4 +43,9 @@ export interface IUserService {
    * Delete user
    */
   deleteUser(userId: string): Promise<{ success: boolean, error: string | null }>;
+  
+  /**
+   * Update user metadata
+   */
+  updateUserMetadata(data: { avatar_url?: string, full_name?: string, [key: string]: any }): Promise<{ success: boolean, error: string | null }>;
 } 

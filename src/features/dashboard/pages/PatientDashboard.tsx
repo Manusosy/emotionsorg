@@ -33,7 +33,8 @@ import {
   Activity,
   BarChart,
   HeartPulse,
-  Download
+  Download,
+  HeartHandshake
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -43,10 +44,12 @@ import MoodAnalytics from "../components/MoodAnalytics";
 import MoodAssessment from "../components/MoodAssessment";
 import MoodSummaryCard from "../components/MoodSummaryCard";
 import EmotionalHealthWheel from "../components/EmotionalHealthWheel";
-import { Appointment, Message, UserProfile } from "../../../types/database.types";
+import { Appointment as DbAppointment, Message, UserProfile } from "../../../types/database.types";
 import { format, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
 import 'jspdf-autotable';
+import WelcomeDialog, { resetWelcomeDialog } from "@/components/WelcomeDialog";
+import NotificationManager from '../components/NotificationManager';
 
 // Define interfaces for appointment data
 interface MoodMentor {
@@ -72,6 +75,7 @@ export default function PatientDashboard() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showWelcomeDialog, setShowWelcomeDialog] = useState(false);
   const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([
     {
       id: 'EMHA01',
@@ -139,6 +143,7 @@ export default function PatientDashboard() {
   const [hasAssessments, setHasAssessments] = useState(false);
   const [appointmentReports, setAppointmentReports] = useState<any[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
+  const [checkInDates, setCheckInDates] = useState<Date[]>([]);
 
   useEffect(() => {
     let isMounted = true;
@@ -419,6 +424,293 @@ export default function PatientDashboard() {
     updateAppointmentReports();
   }, [user, appointmentFilter]);
 
+  // Add testing mode listener for stress assessment completion
+  useEffect(() => {
+    // Check if there's test data in session storage on component mount
+    try {
+      const testDataString = sessionStorage.getItem('test_stress_assessment');
+      if (testDataString) {
+        const testData = JSON.parse(testDataString);
+        
+        // Update UI with test data
+        setUserMetrics(prevMetrics => ({
+          ...prevMetrics,
+          stressLevel: testData.stressLevel || prevMetrics.stressLevel,
+          lastCheckInStatus: "Completed",
+          // Streak is no longer incremented here - will be managed in the day tracking logic
+        }));
+        
+        setHasAssessments(true);
+        setLastAssessmentDate(new Date().toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        }));
+      }
+    } catch (error) {
+      console.error("Error reading test data from session storage:", error);
+    }
+    
+    // Listen for custom event from stress assessment
+    const handleStressAssessmentCompleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        stressLevel: number;
+        score: number;
+        status: string;
+      }>;
+      
+      // Update UI immediately with the assessment data
+      setUserMetrics(prevMetrics => ({
+        ...prevMetrics,
+        stressLevel: customEvent.detail.stressLevel || prevMetrics.stressLevel,
+        lastCheckInStatus: "Completed",
+        // Streak is no longer incremented here - will be managed in the day tracking logic
+      }));
+      
+      setHasAssessments(true);
+      setLastAssessmentDate(new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }));
+      
+      // Check for day tracking and increment streak if it's a new day
+      updateDayStreak();
+      
+      // Show a toast notification
+      toast.success("Dashboard updated with new assessment data", {
+        duration: 3000
+      });
+    };
+    
+    window.addEventListener('stress-assessment-completed', handleStressAssessmentCompleted as EventListener);
+    
+    // Clean up
+    return () => {
+      window.removeEventListener('stress-assessment-completed', handleStressAssessmentCompleted as EventListener);
+    };
+  }, []);
+
+  // Add listener for mood assessment completion
+  useEffect(() => {
+    // Check if there's test mood data in session storage on component mount
+    try {
+      const moodEntriesStr = sessionStorage.getItem('test_mood_entries');
+      if (moodEntriesStr) {
+        const moodEntries = JSON.parse(moodEntriesStr);
+        if (moodEntries && moodEntries.length > 0) {
+          // Get the most recent mood entry
+          const latestEntry = moodEntries[moodEntries.length - 1];
+          
+          // Update UI with mood data
+          setUserMetrics(prevMetrics => ({
+            ...prevMetrics,
+            moodScore: latestEntry.mood_score || prevMetrics.moodScore,
+            lastCheckInStatus: "Completed",
+            // Streak is no longer incremented here - will be managed in the day tracking logic
+          }));
+          
+          // Update last check-in date
+          const entryDate = new Date(latestEntry.created_at);
+          setLastCheckInDate(entryDate.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          }));
+          
+          const timeString = entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          setLastCheckIn(timeString);
+        }
+      }
+    } catch (error) {
+      console.error("Error reading test mood data from session storage:", error);
+    }
+    
+    // Listen for custom event from mood assessment
+    const handleMoodAssessmentCompleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        moodScore: number;
+        assessmentResult: string;
+        timestamp: string;
+      }>;
+      
+      // Update UI immediately with the mood assessment data
+      setUserMetrics(prevMetrics => ({
+        ...prevMetrics,
+        moodScore: customEvent.detail.moodScore || prevMetrics.moodScore,
+        lastCheckInStatus: "Completed",
+        // Streak is no longer incremented here - will be managed in the day tracking logic
+      }));
+      
+      // Update last check-in time
+      const entryDate = new Date(customEvent.detail.timestamp);
+      setLastCheckInDate(entryDate.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }));
+      
+      const timeString = entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      setLastCheckIn(timeString);
+      
+      // Check for day tracking and increment streak if it's a new day
+      updateDayStreak();
+      
+      // Show a toast notification
+      toast.success("Dashboard updated with new mood data", {
+        duration: 3000
+      });
+    };
+    
+    window.addEventListener('mood-assessment-completed', handleMoodAssessmentCompleted as EventListener);
+    
+    // Clean up
+    return () => {
+      window.removeEventListener('mood-assessment-completed', handleMoodAssessmentCompleted as EventListener);
+    };
+  }, []);
+
+  // Function to manage the day-based streak counter
+  const updateDayStreak = () => {
+    try {
+      // Get or initialize the streak record from sessionStorage
+      const streakDataStr = sessionStorage.getItem('test_streak_data');
+      let streakData = streakDataStr 
+        ? JSON.parse(streakDataStr) 
+        : { 
+            days: [], // Array of date strings that have been logged
+            currentStreak: 0,
+            lastUpdated: ''
+          };
+      
+      // Get today's date in YYYY-MM-DD format for consistent comparison
+      const today = new Date();
+      const todayStr = today.toISOString().split('T')[0];
+      
+      // Check if we already logged today
+      if (!streakData.days.includes(todayStr)) {
+        // Today hasn't been logged yet, add it
+        streakData.days.push(todayStr);
+        
+        // Determine if this continues a streak by checking if yesterday was logged
+        const yesterday = new Date(today);
+        yesterday.setDate(today.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+        
+        if (streakData.days.includes(yesterdayStr) || streakData.currentStreak === 0) {
+          // Either yesterday was logged, or this is the first day (start streak)
+          streakData.currentStreak += 1;
+        } else {
+          // Gap detected, reset streak to 1 (today)
+          streakData.currentStreak = 1;
+        }
+        
+        // Update the last updated date
+        streakData.lastUpdated = todayStr;
+        
+        // Save back to sessionStorage
+        sessionStorage.setItem('test_streak_data', JSON.stringify(streakData));
+        
+        // Update the UI
+        setUserMetrics(prevMetrics => ({
+          ...prevMetrics,
+          streak: streakData.currentStreak,
+          // Update any other metrics as needed
+        }));
+      }
+      // If today is already logged, no need to update streak
+      
+    } catch (error) {
+      console.error("Error updating streak data:", error);
+    }
+  };
+  
+  // Check initial streak on component mount
+  useEffect(() => {
+    try {
+      const streakDataStr = sessionStorage.getItem('test_streak_data');
+      if (streakDataStr) {
+        const streakData = JSON.parse(streakDataStr);
+        
+        // Update UI with existing streak data
+        setUserMetrics(prevMetrics => ({
+          ...prevMetrics,
+          streak: streakData.currentStreak || 0
+        }));
+        
+        // If there are days logged, we have assessments
+        if (streakData.days && streakData.days.length > 0) {
+          setHasAssessments(true);
+        }
+      }
+    } catch (error) {
+      console.error("Error reading streak data:", error);
+    }
+  }, []);
+
+  // Update checkInDates whenever assessments are completed
+  useEffect(() => {
+    // Add check-in dates from sessionStorage
+    const loadCheckInDates = () => {
+      try {
+        // Get stress assessment dates
+        const stressDataString = sessionStorage.getItem('test_stress_assessment');
+        const stressDates: Date[] = [];
+        
+        if (stressDataString) {
+          const stressData = JSON.parse(stressDataString);
+          if (stressData.created_at) {
+            stressDates.push(new Date(stressData.created_at));
+          }
+        }
+        
+        // Get mood assessment dates
+        const moodEntriesString = sessionStorage.getItem('test_mood_entries');
+        const moodDates: Date[] = [];
+        
+        if (moodEntriesString) {
+          const entries = JSON.parse(moodEntriesString);
+          if (Array.isArray(entries)) {
+            entries.forEach(entry => {
+              if (entry.created_at) {
+                moodDates.push(new Date(entry.created_at));
+              }
+            });
+          }
+        }
+        
+        // Combine all dates
+        setCheckInDates([...stressDates, ...moodDates]);
+      } catch (error) {
+        console.error("Error loading check-in dates:", error);
+      }
+    };
+    
+    // Load initial check-in dates
+    loadCheckInDates();
+    
+    // Listen for new check-ins to update dates
+    const handleStressAssessment = (e: CustomEvent) => {
+      const newDate = new Date();
+      setCheckInDates(prev => [...prev, newDate]);
+    };
+    
+    const handleMoodAssessment = (e: CustomEvent) => {
+      const newDate = new Date();
+      setCheckInDates(prev => [...prev, newDate]);
+    };
+    
+    // Add event listeners
+    window.addEventListener('stress-assessment-completed', handleStressAssessment as EventListener);
+    window.addEventListener('mood-assessment-completed', handleMoodAssessment as EventListener);
+    
+    return () => {
+      // Remove event listeners
+      window.removeEventListener('stress-assessment-completed', handleStressAssessment as EventListener);
+      window.removeEventListener('mood-assessment-completed', handleMoodAssessment as EventListener);
+    };
+  }, []);
+
   const handleUpdateProfile = async (updatedData: Partial<UserProfile>) => {
     try {
       if (!profile?.id) return;
@@ -559,16 +851,53 @@ export default function PatientDashboard() {
     }
   };
 
+  // Function to show welcome dialog for testing
+  const handleShowWelcomeDialog = () => {
+    resetWelcomeDialog(); // Reset the localStorage flag
+    setShowWelcomeDialog(true);
+  };
+
   return (
     <DashboardLayout>
+      {/* Weekly notification manager */}
+      <NotificationManager 
+        checkInDates={checkInDates}
+        userId={user?.id || 'test-user'}
+        userEmail={user?.email || 'test@example.com'}
+      />
+      
+      {showWelcomeDialog && (
+        <WelcomeDialog 
+          isOpen={showWelcomeDialog} 
+          onClose={() => setShowWelcomeDialog(false)}
+        />
+      )}
+
       <div className="space-y-6">
         {/* Title and User Welcome */}
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold">Dashboard</h1>
-          <p className="text-slate-500">
-            Welcome back, {profile?.first_name || "User"}
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-semibold">Dashboard</h1>
+            <p className="text-slate-500">
+              Welcome back, {profile?.first_name || "User"}
+            </p>
+          </div>
+          {/* Testing Controls */}
+          <Button 
+            variant="outline" 
+            size="sm" 
+            onClick={handleShowWelcomeDialog}
+            className="sm:self-start"
+          >
+            <div className="flex items-center gap-1">
+              <HeartHandshake className="w-4 h-4" />
+              <span>Show Welcome Dialog</span>
+            </div>
+          </Button>
         </div>
+
+        {/* Welcome Dialog for testing */}
+        {showWelcomeDialog && <WelcomeDialog forceShow={true} />}
 
         {/* Health Records Overview */}
         <div>
@@ -617,9 +946,9 @@ export default function PatientDashboard() {
                         style={{ 
                           width: `${Math.round(userMetrics.stressLevel * 10)}%`,
                           backgroundColor: userMetrics.stressLevel < 3 ? '#4ade80' : 
-                                         userMetrics.stressLevel < 5 ? '#a3e635' : 
-                                         userMetrics.stressLevel < 7 ? '#facc15' : 
-                                         userMetrics.stressLevel < 8 ? '#fb923c' : '#ef4444'
+                                           userMetrics.stressLevel < 5 ? '#a3e635' : 
+                                           userMetrics.stressLevel < 7 ? '#facc15' : 
+                                           userMetrics.stressLevel < 8 ? '#fb923c' : '#ef4444'
                         }}
                       ></div>
                     </div>
@@ -808,6 +1137,8 @@ export default function PatientDashboard() {
                       appointmentReports.map((report) => {
                         // Determine status badge styling
                         const getBadgeClasses = (status: string) => {
+                          if (!status) return "bg-slate-100 text-slate-700 hover:bg-slate-200";
+                          
                           switch(status.toLowerCase()) {
                             case 'upcoming':
                               return "bg-indigo-100 text-indigo-700 hover:bg-indigo-200";
@@ -822,6 +1153,8 @@ export default function PatientDashboard() {
 
                         // Determine badge dot color
                         const getDotColor = (status: string) => {
+                          if (!status) return "bg-slate-500";
+                          
                           switch(status.toLowerCase()) {
                             case 'upcoming':
                               return "bg-indigo-500";
@@ -950,6 +1283,7 @@ export default function PatientDashboard() {
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between mb-3">
                       <Badge variant="outline" className={
+                        !entry.mood ? "bg-slate-50 border-slate-200 text-slate-700" :
                         entry.mood === 'Happy' || entry.mood === 'Grateful' ? "bg-green-50 border-green-200 text-green-700" :
                         entry.mood === 'Calm' ? "bg-blue-50 border-blue-200 text-blue-700" :
                         entry.mood === 'Anxious' || entry.mood === 'Worried' ? "bg-yellow-50 border-yellow-200 text-yellow-700" :

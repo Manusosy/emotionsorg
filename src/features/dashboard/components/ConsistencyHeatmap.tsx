@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { subDays, addDays, format, eachDayOfInterval, startOfWeek, endOfWeek, isSameDay, differenceInDays } from 'date-fns';
+import { subDays, addDays, format, eachDayOfInterval, startOfWeek, endOfWeek, isSameDay, differenceInDays, isValid } from 'date-fns';
 
 interface ConsistencyHeatmapProps {
   checkInDates: Date[];
@@ -35,6 +35,18 @@ export default function ConsistencyHeatmap({
     const days = eachDayOfInterval({ start: startDate, end: endDate });
     setCalendarDays(days);
   }, [startDate, endDate]);
+  
+  // Process check-in dates to ensure we're only using real dates
+  // Ensure we don't display fake data
+  const filteredCheckInDates = checkInDates.filter(date => {
+    // Make sure the date is valid and within our display range
+    return isValid(date) && date >= startDate && date <= endDate;
+  });
+  
+  // Sort dates by most recent to oldest
+  const sortedFilteredDates = [...filteredCheckInDates].sort((a, b) => 
+    b.getTime() - a.getTime()
+  );
   
   // Calculate weekly rows for the calendar
   const weeks: Date[][] = [];
@@ -76,58 +88,56 @@ export default function ConsistencyHeatmap({
   
   // Calculate color intensity based on check-in status
   const getCellColor = (day: Date) => {
-    // Check if the user checked in on this day
-    const hasCheckIn = checkInDates.some(checkInDate => isSameDay(checkInDate, day));
+    // Count how many check-ins occurred on this day
+    const checkInsOnDay = filteredCheckInDates.filter(checkInDate => isSameDay(checkInDate, day)).length;
     
-    if (!hasCheckIn) return 'bg-slate-100';
+    if (checkInsOnDay === 0) return 'bg-slate-100';
     
-    // Check for streaks - look for consecutive days
-    const dayIndex = checkInDates.findIndex(d => isSameDay(d, day));
-    if (dayIndex === -1) return 'bg-slate-100';
+    // Use gradient colors for each day based on number of check-ins
+    if (checkInsOnDay >= 4) return 'bg-gradient-to-br from-emerald-600 to-emerald-700'; // 4+ tests
+    if (checkInsOnDay === 3) return 'bg-gradient-to-br from-emerald-500 to-emerald-600'; // 3 tests
+    if (checkInsOnDay === 2) return 'bg-gradient-to-br from-emerald-400 to-emerald-500'; // 2 tests
+    if (checkInsOnDay === 1) return 'bg-gradient-to-br from-emerald-300 to-emerald-400'; // 1 test
     
-    let streak = 1;
+    return 'bg-emerald-200'; // Fallback
+  };
+  
+  // Get tooltip text for a day
+  const getTooltipText = (day: Date) => {
+    const checkInsOnDay = filteredCheckInDates.filter(checkInDate => isSameDay(checkInDate, day)).length;
+    const dateStr = format(day, 'MMM d, yyyy');
     
-    // Count days before
-    let prevDay = subDays(day, 1);
-    while (checkInDates.some(d => isSameDay(d, prevDay))) {
-      streak++;
-      prevDay = subDays(prevDay, 1);
+    if (checkInsOnDay === 0) {
+      return `${dateStr}: No check-ins`;
+    } else {
+      return `${dateStr}: ${checkInsOnDay} check-in${checkInsOnDay !== 1 ? 's' : ''}`;
     }
-    
-    // Count days after
-    let nextDay = addDays(day, 1);
-    while (checkInDates.some(d => isSameDay(d, nextDay))) {
-      streak++;
-      nextDay = addDays(nextDay, 1);
-    }
-    
-    // Color based on streak length
-    if (streak >= 7) return 'bg-emerald-500';
-    if (streak >= 5) return 'bg-emerald-400';
-    if (streak >= 3) return 'bg-emerald-300';
-    
-    return 'bg-emerald-200';
   };
   
   // Calculate consistency percentage - modified to be more accurate
   const totalDays = calendarDays.length;
-  const checkedInDays = new Set(checkInDates.map(d => d.toDateString())).size;
+  
+  // Count unique days that have check-ins, not total check-ins
+  const uniqueCheckInDays = new Set(filteredCheckInDates.map(d => d.toDateString())).size;
   
   // More accurate consistency calculation based on actual data collection period
   const daysSinceFirstCheckIn = firstCheckInDate ? 
     differenceInDays(new Date(), firstCheckInDate) + 1 : // Add 1 to include the first day
     totalDays;
     
+  // For a brand new user (first day), don't show 100% consistency yet
+  // They need at least a few days of history for meaningful consistency
   const expectedDays = Math.min(daysSinceFirstCheckIn, totalDays);
-  const consistencyPercentage = expectedDays > 0 ? 
-    Math.round((checkedInDays / expectedDays) * 100) : 0;
+  const consistencyPercentage = expectedDays > 2 ? 
+    Math.round((uniqueCheckInDays / expectedDays) * 100) : 
+    uniqueCheckInDays > 0 ? 10 : 0; // Show minimal progress for first-time users
   
   // Calculate longest streak
   let longestStreak = 0;
   let currentStreak = 0;
   
-  // Sort dates first
-  const sortedDates = [...checkInDates].sort((a, b) => a.getTime() - b.getTime());
+  // Sort dates first - use our filtered dates
+  const sortedDates = [...filteredCheckInDates].sort((a, b) => a.getTime() - b.getTime());
   
   // Calculate current streak - check if today or yesterday has an entry
   let currentStreakActive = false;
@@ -196,7 +206,7 @@ export default function ConsistencyHeatmap({
               </div>
             </div>
           </div>
-          <p className="text-xs text-slate-400">{checkedInDays}/{expectedDays} days</p>
+          <p className="text-xs text-slate-400">{uniqueCheckInDays}/{expectedDays} days</p>
         </div>
       </div>
       
@@ -223,7 +233,7 @@ export default function ConsistencyHeatmap({
                       ${day < startDate || day > endDate ? 'opacity-30' : ''}
                       flex items-center justify-center
                     `}
-                    title={`${format(day, 'MMM d, yyyy')}: ${checkInDates.some(d => isSameDay(d, day)) ? 'Checked in' : 'No check-in'}`}
+                    title={getTooltipText(day)}
                   >
                     <span className="text-[10px] text-slate-800 opacity-70">
                       {format(day, 'd')}
@@ -254,13 +264,21 @@ export default function ConsistencyHeatmap({
       <div className="mt-3 flex items-center justify-between">
         <div className="flex items-center space-x-1">
           <div className="w-3 h-3 rounded-sm bg-slate-100"></div>
-          <div className="w-3 h-3 rounded-sm bg-emerald-200"></div>
-          <div className="w-3 h-3 rounded-sm bg-emerald-300"></div>
-          <div className="w-3 h-3 rounded-sm bg-emerald-400"></div>
-          <div className="w-3 h-3 rounded-sm bg-emerald-500"></div>
+          <div className="w-3 h-3 rounded-sm bg-gradient-to-br from-emerald-300 to-emerald-400"></div>
+          <div className="w-3 h-3 rounded-sm bg-gradient-to-br from-emerald-400 to-emerald-500"></div>
+          <div className="w-3 h-3 rounded-sm bg-gradient-to-br from-emerald-500 to-emerald-600"></div>
+          <div className="w-3 h-3 rounded-sm bg-gradient-to-br from-emerald-600 to-emerald-700"></div>
         </div>
-        <div className="text-xs text-slate-500">
-          Less <span className="mx-1">→</span> More
+        <div className="text-xs text-slate-500 flex items-center">
+          <span>None</span>
+          <span className="mx-1">→</span>
+          <span>1</span>
+          <span className="mx-1">→</span>
+          <span>2</span>
+          <span className="mx-1">→</span>
+          <span>3</span>
+          <span className="mx-1">→</span>
+          <span>4+</span>
         </div>
       </div>
     </div>

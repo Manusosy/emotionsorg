@@ -64,6 +64,7 @@ type MoodMentorProfileData = {
   galleryImages: string[];
   satisfaction: number;
   about: string;
+  bio?: string;
   education: Education[];
   experience: Experience[];
   awards: Award[];
@@ -71,17 +72,18 @@ type MoodMentorProfileData = {
   specializations: string[];
   phoneNumber: string;
   availability: TimeSlot[];
+  nameSlug: string;
 };
 
 const MoodMentorProfile = () => {
   // Get both URL params and query params
-  const { id } = useParams<{ id: string }>();
+  const { name } = useParams<{ name: string }>();
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
-  const queryId = queryParams.get('id');
+  const mentorId = queryParams.get('id');
   
   // Priority: query ID first (from name-based URLs), then param ID
-  const moodMentorId = queryId || id;
+  const moodMentorId = mentorId;
   
   const [activeTab, setActiveTab] = useState('overview');
   const [showAvailability, setShowAvailability] = useState(false);
@@ -98,6 +100,7 @@ const MoodMentorProfile = () => {
     percentage: number;
     isComplete: boolean;
   } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
   // Use the auth hook to check authentication
   const { isAuthenticated, user } = useAuth();
@@ -105,151 +108,126 @@ const MoodMentorProfile = () => {
   // Fetch mood mentor data
   useEffect(() => {
     const fetchMoodMentorData = async () => {
-      if (!moodMentorId) return;
-      
-      console.log(`Fetching mood mentor data for ID: ${moodMentorId}`);
-      setLoading(true);
       try {
-        const response = await moodMentorService.getFormattedMoodMentorData(moodMentorId);
+        setLoading(true);
+        const nameSlug = name || "";
+
+        // Debug the nameSlug we're looking up
+        console.log(`Fetching mood mentor profile for slug: ${nameSlug}`);
+        
+        // Get mood mentor by slug
+        const response = await moodMentorService.getMoodMentorBySlug(nameSlug);
         
         if (response.success && response.data) {
-          console.log("Successfully fetched mood mentor data:", response.data.name);
-          setMoodMentor(response.data);
-          if (response.completeness) {
-            setProfileCompleteness(response.completeness);
-          }
+          console.log("API Response Data:", response.data);
+          
+          // Map API response to the UI model with more detailed mapping
+          const mentorData: MoodMentorProfileData = {
+            id: response.data.id || "",
+            name: response.data.name || response.data.full_name || "",
+            credentials: response.data.credentials || response.data.title || "",
+            specialty: response.data.specialty || "",
+            rating: response.data.rating || 0,
+            totalRatings: response.data.reviewCount || 0,
+            feedback: response.data.reviewCount || 0,
+            location: response.data.location || "",
+            isFree: response.data.hourlyRate === 0,
+            
+            // Enhanced mapping for therapy types with better type safety
+            therapyTypes: Array.isArray(response.data.therapyTypes) 
+              ? response.data.therapyTypes.map((type: string) => ({
+                  name: type,
+                  icon: '/therapy-icon.svg' // Default icon path
+                }))
+              : [],
+              
+            image: response.data.avatarUrl || response.data.avatar_url || '/default-avatar.png',
+            galleryImages: [],
+            satisfaction: response.data.satisfaction || 0,
+            
+            // Detailed bio mapping with fallbacks - but no generic text
+            about: response.data.about || response.data.bio || response.data.description || "",
+                
+            // Carefully map education with null checks and defaults
+            education: (() => {
+              console.log("DEBUG: Raw education data:", response.data.education);
+              
+              if (Array.isArray(response.data.education) && response.data.education.length > 0) {
+                return response.data.education.map(edu => ({
+                  university: edu.institution || "",
+                  degree: edu.degree || "",
+                  period: edu.year || ""
+                }));
+              }
+              return [];
+            })(),
+            
+            // Carefully map experience with null checks and defaults
+            experience: (() => {
+              console.log("DEBUG: Raw experience data:", 
+                response.data.experience_details || response.data.experience);
+              
+              if (Array.isArray(response.data.experience_details) && response.data.experience_details.length > 0) {
+                return response.data.experience_details.map(exp => ({
+                  company: exp.place || exp.title || "",
+                  period: exp.duration || "",
+                  duration: exp.duration || ""
+                }));
+              } else if (Array.isArray(response.data.experience) && response.data.experience.length > 0) {
+                return response.data.experience.map(exp => ({
+                  company: exp.place || exp.title || "",
+                  period: exp.duration || "",
+                  duration: exp.duration || ""
+                }));
+              }
+              
+              // If experience is just a number, only create an entry if it's a valid number
+              if (typeof response.data.experience === 'number' && response.data.experience > 0) {
+                return [{
+                  company: "Mental Health Professional",
+                  period: `${response.data.experience} years of experience`,
+                  duration: `${response.data.experience} years`
+                }];
+              }
+              
+              return [];
+            })(),
+            
+            awards: [], // Not implemented yet
+            
+            // Services - Use specialties if available
+            services: Array.isArray(response.data.specialties) ? response.data.specialties : [],
+            
+            // Specializations - Use specialties as a fallback
+            specializations: Array.isArray(response.data.specialties) ? response.data.specialties : 
+              (response.data.specialty ? [response.data.specialty] : []),
+            
+            phoneNumber: "",
+            availability: [], // Will implement later
+            nameSlug: response.data.nameSlug || response.data.name_slug || nameSlug
+          };
+          
+          console.log("Mentor profile data mapped to UI model:", mentorData);
+          setMoodMentor(mentorData);
         } else {
-          console.error("Failed to load mood mentor profile:", response.error);
-          toast.error("Failed to load mood mentor profile");
-          // Fallback to mock data
-          setMoodMentor({...mockMoodMentor, id: moodMentorId || "1"});
+          console.error("Error fetching mood mentor:", response.error);
+          setError(response.error || "Failed to load mentor profile");
+          
+          // Don't set any mock data as fallback
+          setMoodMentor(null);
         }
       } catch (error) {
-        console.error("Error fetching mood mentor data:", error);
-        toast.error("An error occurred while loading the profile");
-        // Fallback to mock data
-        setMoodMentor({...mockMoodMentor, id: moodMentorId || "1"});
+        console.error("Error in fetchMoodMentorData:", error);
+        setError("An unexpected error occurred");
+        setMoodMentor(null);
       } finally {
         setLoading(false);
       }
     };
     
     fetchMoodMentorData();
-  }, [moodMentorId]);
+  }, [name]);
   
-  // Mock data for fallback if API fails
-  const mockMoodMentor: MoodMentorProfileData = {
-    id: moodMentorId || "2",
-    name: "Dr. Darren Elder",
-    credentials: "MSc in Clinical Psychology, Certified Counselor",
-    specialty: "Trauma & PTSD Specialist",
-    rating: 5,
-    totalRatings: 35,
-    feedback: 35,
-    location: "Kigali, Rwanda",
-    isFree: true,
-    therapyTypes: [
-      { name: "EMDR Therapy", icon: "https://img.icons8.com/color/96/000000/brain.png" },
-      { name: "Trauma-Focused CBT", icon: "https://img.icons8.com/color/96/000000/psychological-process.png" },
-      { name: "Group Therapy", icon: "https://img.icons8.com/color/96/000000/conference-call.png" },
-      { name: "Mindfulness", icon: "https://img.icons8.com/color/96/000000/meditation-guru.png" }
-    ],
-    image: "https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-    galleryImages: [
-      "https://images.unsplash.com/photo-1566492031773-4f4e44671857?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      "https://images.unsplash.com/photo-1531983412531-1f49a365ffed?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      "https://images.unsplash.com/photo-1535129219082-b51e1e10f47d?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-      "https://images.unsplash.com/photo-1559035636-a99258c3d1c3?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80"
-    ],
-    satisfaction: 96,
-    about: "As a mental health professional with extensive experience working in Rwanda and across East Africa, I specialize in trauma recovery and PTSD treatment. My approach combines evidence-based therapeutic methods with cultural sensitivity to provide holistic mental health support for individuals and communities. I'm committed to making mental health care accessible to all Rwandans and contributing to the healing journey of our communities.",
-    education: [
-      {
-        university: "University of Rwanda",
-        degree: "MSc in Clinical Psychology",
-        period: "1998 - 2003"
-      },
-      {
-        university: "Makerere University",
-        degree: "PhD in Psychology",
-        period: "2003 - 2005"
-      }
-    ],
-    experience: [
-      {
-        company: "Rwanda Healing Center",
-        period: "2010 - Present",
-        duration: "(5 years)"
-      },
-      {
-        company: "Kigali Mental Health Institute",
-        period: "2007 - 2010",
-        duration: "(3 years)"
-      },
-      {
-        company: "East African Trauma Recovery Program",
-        period: "2005 - 2007",
-        duration: "(2 years)"
-      }
-    ],
-    awards: [
-      {
-        date: "July 2019",
-        title: "Humanitarian Award - Rwanda Ministry of Health",
-        description: "Recognized for exceptional contributions to mental health services in rural communities of Rwanda, particularly in trauma recovery programs."
-      },
-      {
-        date: "March 2011",
-        title: "Certificate for International Volunteer Service",
-        description: "Awarded for providing pro bono mental health services to underserved communities across East Africa through Doctors Without Borders."
-      },
-      {
-        date: "May 2008",
-        title: "Mental Health Professional of The Year Award",
-        description: "Presented by the Rwanda Psychological Association for pioneering trauma recovery protocols adapted to the cultural context of Rwanda."
-      }
-    ],
-    services: [
-      "Individual Therapy",
-      "Trauma Counseling",
-      "Anxiety Treatment",
-      "Depression Therapy", 
-      "Crisis Intervention",
-      "Virtual Therapy Sessions"
-    ],
-    specializations: [
-      "Trauma",
-      "Depression & Anxiety",
-      "PTSD Treatment",
-      "Family Therapy",
-      "Grief Counseling",
-      "Youth Mental Health"
-    ],
-    phoneNumber: "+250 788 123 456",
-    availability: [
-      {
-        day: "Monday",
-        slots: ["10:00 AM", "11:00 AM", "2:00 PM", "3:00 PM", "4:00 PM"]
-      },
-      {
-        day: "Tuesday",
-        slots: ["9:00 AM", "11:00 AM", "1:00 PM", "3:00 PM"]
-      },
-      {
-        day: "Wednesday",
-        slots: ["10:00 AM", "2:00 PM", "4:00 PM"]
-      },
-      {
-        day: "Thursday",
-        slots: ["9:00 AM", "10:00 AM", "2:00 PM", "3:00 PM"]
-      },
-      {
-        day: "Friday",
-        slots: ["9:00 AM", "12:00 PM", "2:00 PM"]
-      }
-    ]
-  };
-
   // Function to handle making a call
   const handleMakeCall = () => {
     if (isAuthenticated) {
@@ -329,543 +307,447 @@ const MoodMentorProfile = () => {
   };
 
   return (
-    <div className="min-h-screen relative overflow-hidden">
-      {/* Background gradient */}
-      <div className="absolute inset-0 bg-gradient-to-r from-[#E7E1FF] to-[#FEFEFF] opacity-80"></div>
-      <div className="absolute inset-0 bg-gradient-to-br from-transparent via-white to-[#D4E6FF] opacity-90"></div>
-      
-      {/* Content with relative positioning */}
-      <div className="relative z-10">
-        {/* Hero Section - Centered */}
-        <div className="w-full flex justify-center items-center py-16">
-          <div className="text-center max-w-3xl">
-            <motion.div 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6 }}
-              className="inline-flex items-center px-4 py-2 bg-[#007BFF] rounded-full text-white text-sm font-medium mb-6"
-            >
-              <span className="text-white">Professional Profile</span>
-            </motion.div>
+    <div className="min-h-screen bg-gradient-to-tr from-blue-50 to-indigo-50">
+      {/* Debug indicator - only in development */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="absolute top-0 right-0 p-4 z-50">
+          <div className="p-3 bg-yellow-100 border border-yellow-300 rounded-lg shadow text-xs">
+            <h3 className="font-bold mb-1">Debug Mode</h3>
+            <div className="mb-1"><strong>Name:</strong> {moodMentor?.name}</div>
+            <div className="mb-1"><strong>Slug:</strong> {moodMentor?.nameSlug}</div>
+            <div className="mb-1"><strong>Specialty:</strong> {moodMentor?.specialty}</div>
+            <div className="mb-1"><strong>Bio:</strong> {moodMentor?.about?.substring(0, 20)}...</div>
+            <div className="mb-1"><strong>Education:</strong> {moodMentor?.education?.length || 0} items</div>
+            <div className="mb-1"><strong>Experience:</strong> {moodMentor?.experience?.length || 0} items</div>
             
-            <motion.h1 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.1 }}
-              className="text-4xl md:text-5xl font-bold text-[#001A41] mb-3 font-jakarta"
-            >
-              Mood Mentor Profile
-            </motion.h1>
-            
-            <motion.p 
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-              className="text-gray-500"
-            >
-              View detailed information about your mental health mood mentor, their qualifications, experience, and 
-              available appointment slots.
-            </motion.p>
+            <div className="flex gap-1 mt-1">
+              <button 
+                className="px-2 py-1 bg-blue-500 text-white rounded text-xs"
+                onClick={async () => {
+                  try {
+                    await moodMentorService.syncTestMentorProfile();
+                    toast.success("Profile data synced and refreshing...");
+                    setTimeout(() => window.location.reload(), 500);
+                  } catch (e) {
+                    console.error("Error syncing profile:", e);
+                    toast.error("Error syncing profile");
+                  }
+                }}
+              >
+                Sync & Refresh
+              </button>
+              
+              <button 
+                className="px-2 py-1 bg-green-500 text-white rounded text-xs"
+                onClick={() => {
+                  console.log("Full mentor data:", moodMentor);
+                  
+                  // Check both localStorage keys
+                  try {
+                    const testProfile = localStorage.getItem('test_mentor_profile');
+                    const mentorProfile = localStorage.getItem('mentor_profile_data');
+                    
+                    if (testProfile) {
+                      const testData = JSON.parse(testProfile);
+                      console.log("test_mentor_profile:", {
+                        name: testData.name || testData.full_name,
+                        bio: testData.bio?.substring(0, 30) + "..." || "missing",
+                        about: testData.about?.substring(0, 30) + "..." || "missing",
+                        education: testData.education?.length || 0,
+                        experience: testData.experience_details?.length || 0
+                      });
+                    }
+                    
+                    if (mentorProfile) {
+                      const profileData = JSON.parse(mentorProfile);
+                      console.log("mentor_profile_data:", {
+                        name: profileData.name || profileData.full_name,
+                        bio: profileData.bio?.substring(0, 30) + "..." || "missing",
+                        about: profileData.about?.substring(0, 30) + "..." || "missing",
+                        education: profileData.education?.length || 0,
+                        experience: profileData.experience_details?.length || 0
+                      });
+                    }
+                  } catch (e) {
+                    console.error("Error parsing localStorage data:", e);
+                  }
+                  
+                  toast.success("Profile data logged to console");
+                }}
+              >
+                Debug Data
+              </button>
+              
+              <button 
+                className="px-2 py-1 bg-red-500 text-white rounded text-xs"
+                onClick={async () => {
+                  try {
+                    // This will completely reset all profile data and create a fresh profile
+                    await moodMentorService.completeResetAndCreateTestProfile();
+                    toast.success("Profile completely reset. Refreshing...");
+                    setTimeout(() => window.location.reload(), 800);
+                  } catch (e) {
+                    console.error("Error resetting profile:", e);
+                    toast.error("Error resetting profile");
+                  }
+                }}
+              >
+                Reset Profile
+              </button>
+            </div>
           </div>
         </div>
-        
-        {/* Profile card */}
-        <div className="container mx-auto px-4 pb-16">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="bg-white rounded-lg shadow-sm overflow-hidden mb-8"
-          >
-            <div className="p-6 flex flex-col md:flex-row gap-6">
-              {/* Mood Mentor image and gallery */}
-              <div className="flex-shrink-0">
-                <div className="mb-3">
-                  <img 
-                    src={moodMentor?.image} 
-                    alt={moodMentor?.name || "Mood Mentor"}
-                    className="w-32 h-32 object-cover rounded-lg shadow-sm"
-                  />
-                </div>
-                <div className="flex gap-2 flex-wrap">
-                  {moodMentor?.therapyTypes.map((type, index) => (
-                    <div key={index} className="w-12 h-12 rounded bg-gray-100 flex items-center justify-center">
-                      <img src={type.icon} alt={type.name} className="w-6 h-6" />
-                    </div>
-                  ))}
-                </div>
-                <div className="flex text-xs text-gray-500 mt-2 justify-between">
-                  {moodMentor?.therapyTypes.map((type, index) => (
-                    <div key={index} className="text-center w-12 overflow-hidden">
-                      <span className="block truncate">{type.name}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              
-              {/* Mood Mentor info */}
-              <div className="flex-1">
-                <div className="flex flex-col md:flex-row justify-between">
-                  <div>
-                    <h2 className="text-xl font-semibold text-[#001A41] text-left">{moodMentor?.name}</h2>
-                    <p className="text-gray-600 text-sm text-left">{moodMentor?.credentials}</p>
-                    <p className="text-[#007BFF] font-medium mb-2 text-left">{moodMentor?.specialty}</p>
-                    
-                    {/* Star rating */}
-                    <div className="flex items-center mb-2">
+      )}
+      
+      <div className="container mx-auto py-12 px-4 md:px-6">
+        {/* Back button */}
+        <div className="mb-8">
+          <Link to="/mood-mentors" className="inline-flex items-center text-blue-600 hover:text-blue-800 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
+            </svg>
+            Back to Mood Mentors
+          </Link>
+        </div>
+
+        {loading ? (
+          <div className="flex flex-col items-center justify-center min-h-[400px]">
+            <div className="w-16 h-16 border-4 border-blue-400 border-t-blue-600 rounded-full animate-spin"></div>
+            <p className="mt-4 text-gray-600">Loading profile information...</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* Profile sidebar */}
+            <div className="lg:col-span-1">
+              <div className="bg-white rounded-2xl shadow-md overflow-hidden sticky top-8">
+                {/* Profile image and basic info */}
+                <div className="p-6 text-center border-b">
+                  <div className="relative mx-auto w-40 h-40 mb-4">
+                    <img 
+                      src={moodMentor?.image || "/default-avatar.png"} 
+                      alt={moodMentor?.name}
+                      className="w-full h-full object-cover rounded-full ring-4 ring-blue-100"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = "/default-avatar.png";
+                      }}
+                    />
+                    <div className="absolute bottom-2 right-2 bg-green-500 w-5 h-5 rounded-full border-2 border-white"></div>
+                  </div>
+                  
+                  <h1 className="text-2xl font-bold text-gray-900 mb-1">{moodMentor?.name}</h1>
+                  <p className="text-blue-600 font-medium mb-1">{moodMentor?.credentials}</p>
+                  <p className="text-gray-500 text-sm mb-3 flex items-center justify-center">
+                    <MapPin className="h-4 w-4 mr-1" /> 
+                    {moodMentor?.location || "Remote"}
+                  </p>
+                  
+                  {/* Rating */}
+                  <div className="flex items-center justify-center mb-4">
+                    <div className="flex">
                       {[...Array(5)].map((_, i) => (
-                        <svg key={i} className={`w-4 h-4 ${i < Math.floor(moodMentor?.rating) ? "text-amber-400" : "text-gray-200"}`} fill="currentColor" viewBox="0 0 20 20">
+                        <svg key={i} className={`w-5 h-5 ${i < Math.floor(moodMentor?.rating || 0) ? "text-yellow-400" : "text-gray-300"}`} fill="currentColor" viewBox="0 0 20 20">
                           <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
                         </svg>
                       ))}
-                      <span className="ml-1 text-sm text-gray-500">({moodMentor?.totalRatings})</span>
                     </div>
-                    
-                    {/* Location */}
-                    <div className="flex items-center gap-1 text-gray-600 mb-2 text-left">
-                      <MapPin className="h-4 w-4" />
-                      <span className="text-sm">{moodMentor?.location}</span>
-                      <span className="text-xs text-[#007BFF] ml-2 underline cursor-pointer">Get Directions</span>
-                    </div>
-                  </div>
-                  
-                  {/* Right side stats */}
-                  <div className="mt-4 md:mt-0">
-                    <div className="flex items-center justify-end mb-2">
-                      <ThumbsUp className="w-4 h-4 text-gray-500 mr-1" />
-                      <span className="text-gray-900 font-semibold">{moodMentor?.satisfaction}%</span>
-                    </div>
-                    <div className="flex items-center justify-end mb-2">
-                      <MessageSquare className="w-4 h-4 text-gray-500 mr-1" />
-                      <span className="text-sm text-gray-600">{moodMentor?.feedback} Feedback</span>
-                    </div>
-                    <div className="flex items-center justify-end mb-2">
-                      <span className="text-sm text-gray-600 flex items-center">
-                        <span className="bg-blue-100 text-blue-500 text-xs px-2 py-0.5 rounded-full flex items-center">
-                          <span className="mr-1">•</span> Free
-                        </span>
-                      </span>
-                    </div>
+                    <span className="ml-2 text-gray-600 text-sm">{moodMentor?.rating?.toFixed(1)} ({moodMentor?.totalRatings} reviews)</span>
                   </div>
                 </div>
                 
-                {/* CTA buttons - moved to the bottom right of the mood mentor info section */}
-                <div className="flex flex-col md:flex-row gap-2 justify-start items-start md:items-end mt-4 md:justify-end">
-                  <div className="flex gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="icon" 
-                      className="rounded-full" 
-                      title="Phone"
-                      onClick={handleMakeCall}
-                    >
-                      <Phone className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="icon" 
-                      className="rounded-full" 
-                      title="Video Call"
-                      onClick={handleVideoCall}
-                    >
-                      <Video className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="icon" 
-                      className="rounded-full" 
-                      title="Message"
-                      onClick={handleChat}
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      size="icon" 
-                      className="rounded-full" 
-                      title="View Availability"
-                      onClick={handleShowAvailability}
-                    >
-                      <CalendarDays className="h-4 w-4" />
-                    </Button>
+                {/* Quick stats */}
+                <div className="grid grid-cols-3 text-center border-b">
+                  <div className="p-4 border-r">
+                    <p className="text-2xl font-bold text-blue-600">{moodMentor?.satisfaction || 98}%</p>
+                    <p className="text-xs text-gray-500">Satisfaction</p>
                   </div>
-                  <BookingButton 
-                    moodMentorId={parseInt(moodMentor?.id || "2")} 
-                    className="mt-2 md:mt-0 md:ml-2" 
-                    buttonText={moodMentor?.isFree ? "BOOK APPOINTMENT" : "UNAVAILABLE"}
-                    variant="default"
-                    disabled={!moodMentor?.isFree}
-                  />
-                </div>
-              </div>
-            </div>
-          </motion.div>
-  
-          {/* Tabs section */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.4 }}
-          >
-            <Tabs defaultValue="overview" className="w-full">
-              <TabsList className="bg-white p-0 border-b border-gray-200 w-full mb-8 justify-start overflow-x-auto">
-                <TabsTrigger 
-                  value="overview" 
-                  className="data-[state=active]:text-[#007BFF] data-[state=active]:border-b-2 data-[state=active]:border-[#007BFF] rounded-none px-6 py-3"
-                >
-                  Overview
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="locations" 
-                  className="data-[state=active]:text-[#007BFF] data-[state=active]:border-b-2 data-[state=active]:border-[#007BFF] rounded-none px-6 py-3"
-                >
-                  Locations
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="reviews" 
-                  className="data-[state=active]:text-[#007BFF] data-[state=active]:border-b-2 data-[state=active]:border-[#007BFF] rounded-none px-6 py-3"
-                >
-                  Reviews
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="businessHours" 
-                  className="data-[state=active]:text-[#007BFF] data-[state=active]:border-b-2 data-[state=active]:border-[#007BFF] rounded-none px-6 py-3"
-                >
-                  Business Hours
-                </TabsTrigger>
-              </TabsList>
-              
-              {/* Overview tab content */}
-              <TabsContent value="overview" className="mt-0">
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-8 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">About Me</h3>
-                  <p className="text-gray-700">{moodMentor?.about}</p>
-                </div>
-                
-                {/* Education */}
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-8 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Education</h3>
-                  <div className="space-y-6">
-                    {moodMentor?.education.map((edu, index) => (
-                      <div key={index} className="relative pl-8 before:absolute before:left-2 before:top-2 before:w-3 before:h-3 before:bg-[#007BFF] before:rounded-full before:z-10 after:absolute after:left-3 after:top-5 after:bottom-0 after:w-0.5 after:bg-gray-200 after:-z-10">
-                        <h4 className="font-medium">{edu.university}</h4>
-                        <p className="text-sm text-gray-600">{edu.degree}</p>
-                        <p className="text-xs text-gray-500">{edu.period}</p>
-                      </div>
-                    ))}
+                  <div className="p-4 border-r">
+                    <p className="text-2xl font-bold text-blue-600">{typeof moodMentor?.experience === 'number' ? moodMentor?.experience : 5}+</p>
+                    <p className="text-xs text-gray-500">Years Exp</p>
+                  </div>
+                  <div className="p-4">
+                    <p className="text-2xl font-bold text-blue-600">{moodMentor?.feedback || 0}</p>
+                    <p className="text-xs text-gray-500">Feedback</p>
                   </div>
                 </div>
                 
-                {/* Work Experience */}
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-8 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Work & Experience</h3>
-                  <div className="space-y-6">
-                    {moodMentor?.experience.map((exp, index) => (
-                      <div key={index} className="relative pl-8 before:absolute before:left-2 before:top-2 before:w-3 before:h-3 before:bg-[#007BFF] before:rounded-full before:z-10 after:absolute after:left-3 after:top-5 after:bottom-0 after:w-0.5 after:bg-gray-200 after:-z-10">
-                        <h4 className="font-medium">{exp.company}</h4>
-                        <p className="text-sm text-gray-600">{exp.period} {exp.duration}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Awards */}
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-8 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Awards</h3>
-                  <div className="space-y-6">
-                    {moodMentor?.awards.map((award, index) => (
-                      <div key={index} className="relative pl-8 before:absolute before:left-2 before:top-2 before:w-3 before:h-3 before:bg-[#007BFF] before:rounded-full before:z-10 after:absolute after:left-3 after:top-5 after:bottom-0 after:w-0.5 after:bg-gray-200 after:-z-10">
-                        <p className="text-sm text-gray-500">{award.date}</p>
-                        <h4 className="font-medium">{award.title}</h4>
-                        <p className="text-sm text-gray-600 mt-1">{award.description}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Services */}
-                <div className="bg-white rounded-lg shadow-sm p-6 mb-8 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Services</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {moodMentor?.services.map((service, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <span className="text-[#007BFF]">→</span>
-                        <span className="text-gray-700">{service}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                {/* Specializations */}
-                <div className="bg-white rounded-lg shadow-sm p-6 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Specializations</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {moodMentor?.specializations.map((specialization, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <span className="text-[#007BFF]">→</span>
-                        <span className="text-gray-700">{specialization}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </TabsContent>
-              
-              {/* Locations tab */}
-              <TabsContent value="locations" className="mt-0">
-                <div className="bg-white rounded-lg shadow-sm p-6 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Practice Locations</h3>
-                  <div className="space-y-4">
-                    <div className="p-4 border rounded-md">
-                      <h4 className="font-medium mb-2">Kigali Main Office</h4>
-                      <p className="text-sm text-gray-600 mb-1">KG 567 St, Kimihurura, Kigali</p>
-                      <p className="text-sm text-gray-600 mb-2">Rwanda</p>
-                      <div className="flex gap-2">
-                        <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full">Primary Location</span>
-                        <span className="text-xs text-[#007BFF] underline cursor-pointer">Get Directions</span>
-                      </div>
-                    </div>
-                    <div className="p-4 border rounded-md">
-                      <h4 className="font-medium mb-2">Musanze Wellness Center</h4>
-                      <p className="text-sm text-gray-600 mb-1">Musanze District, Northern Province</p>
-                      <p className="text-sm text-gray-600 mb-2">Rwanda</p>
-                      <div className="flex gap-2">
-                        <span className="text-xs text-[#007BFF] underline cursor-pointer">Get Directions</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-              
-              {/* Reviews tab */}
-              <TabsContent value="reviews" className="mt-0">
-                <div className="bg-white rounded-lg shadow-sm p-6 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Client Reviews</h3>
-                  <div className="py-8">
-                    <p className="text-gray-600">Reviews will be available soon.</p>
-                  </div>
-                </div>
-              </TabsContent>
-              
-              {/* Business Hours tab */}
-              <TabsContent value="businessHours" className="mt-0">
-                <div className="bg-white rounded-lg shadow-sm p-6 text-left">
-                  <h3 className="text-lg font-semibold mb-4 text-[#001A41]">Business Hours</h3>
-                  <div className="space-y-1">
-                    <div className="flex justify-between py-2 border-b">
-                      <span className="font-medium">Monday</span>
-                      <span className="text-gray-600">9:00 AM - 5:00 PM</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b">
-                      <span className="font-medium">Tuesday</span>
-                      <span className="text-gray-600">9:00 AM - 5:00 PM</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b">
-                      <span className="font-medium">Wednesday</span>
-                      <span className="text-gray-600">9:00 AM - 5:00 PM</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b">
-                      <span className="font-medium">Thursday</span>
-                      <span className="text-gray-600">9:00 AM - 5:00 PM</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b">
-                      <span className="font-medium">Friday</span>
-                      <span className="text-gray-600">9:00 AM - 3:00 PM</span>
-                    </div>
-                    <div className="flex justify-between py-2 border-b">
-                      <span className="font-medium">Saturday</span>
-                      <span className="text-gray-600">10:00 AM - 2:00 PM</span>
-                    </div>
-                    <div className="flex justify-between py-2">
-                      <span className="font-medium">Sunday</span>
-                      <span className="text-gray-600">Closed</span>
-                    </div>
-                  </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </motion.div>
-        </div>
-
-        {/* Availability Dialog */}
-        <Dialog open={showAvailability} onOpenChange={setShowAvailability}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#007BFF]">Available Appointment Slots</DialogTitle>
-              <DialogDescription>
-                Select an available time slot to book an appointment with {moodMentor?.name}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-6 mt-4">
-              {moodMentor?.availability.map((day, idx) => (
-                <div key={idx} className="border-b pb-4 last:border-b-0">
-                  <h4 className="font-medium mb-2">{day.day}</h4>
+                {/* Specialties */}
+                <div className="p-6 border-b">
+                  <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">Specialties</h3>
                   <div className="flex flex-wrap gap-2">
-                    {day.slots.map((slot, index) => (
-                      <Button 
-                        key={index} 
-                        variant="outline" 
-                        size="sm" 
-                        className="text-xs"
-                        onClick={() => bookAppointment(day.day, slot)}
-                      >
-                        {slot}
-                      </Button>
+                    {moodMentor?.specializations?.map((specialty, index) => (
+                      <span key={index} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        {specialty}
+                      </span>
                     ))}
                   </div>
                 </div>
-              ))}
-            </div>
-            <DialogFooter className="mt-4 flex items-center justify-between">
-              <div className="flex items-center text-xs text-gray-500">
-                <Info className="h-3 w-3 mr-1" />
-                <span>All times are in local time (CAT)</span>
-              </div>
-              <Button variant="ghost" onClick={() => setShowAvailability(false)}>Close</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-
-        {/* Call Dialog for non-authenticated users */}
-        <Dialog open={showCallDialog} onOpenChange={setShowCallDialog}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#007BFF]">Authentication Required</DialogTitle>
-              <DialogDescription>
-                You need to be logged in to call {moodMentor?.name}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-4 text-center">
-              <p className="mb-4">Please book an appointment first or log in to access direct calling.</p>
-              <div className="flex justify-center gap-4">
-                <Button variant="outline" onClick={() => setShowCallDialog(false)}>Cancel</Button>
-                <Link to="/login">
-                  <Button className="bg-[#007BFF] hover:bg-blue-600">Log In</Button>
-                </Link>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Video Call Dialog for non-authenticated users */}
-        <Dialog open={showVideoDialog} onOpenChange={setShowVideoDialog}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#007BFF]">Authentication Required</DialogTitle>
-              <DialogDescription>
-                You need to be logged in to video call with {moodMentor?.name}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-4 text-center">
-              <p className="mb-4">Please book an appointment first or log in to access video calling.</p>
-              <div className="flex justify-center gap-4">
-                <Button variant="outline" onClick={() => setShowVideoDialog(false)}>Cancel</Button>
-                <Link to="/login">
-                  <Button className="bg-[#007BFF] hover:bg-blue-600">Log In</Button>
-                </Link>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Chat Dialog */}
-        <Dialog open={showChatDialog} onOpenChange={setShowChatDialog}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#007BFF]">Chat with {moodMentor?.name}</DialogTitle>
-              <DialogDescription>
-                Send a message and get a quick response from your mental health mood mentor.
-              </DialogDescription>
-            </DialogHeader>
-            
-            <div className="flex flex-col h-80">
-              {/* Chat messages area */}
-              <ScrollArea className="flex-1 p-4 bg-gray-50 rounded-md mb-4">
-                <div className="space-y-4">
-                  {chatMessages.map((msg, idx) => (
-                    <div 
-                      key={idx} 
-                      className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div 
-                        className={`max-w-[70%] p-3 rounded-lg ${
-                          msg.sender === 'user' 
-                            ? 'bg-[#007BFF] text-white rounded-tr-none' 
-                            : 'bg-gray-100 text-gray-800 rounded-tl-none'
-                        }`}
-                      >
-                        <p className="text-sm">{msg.message}</p>
-                        <span className="text-xs opacity-70 block text-right mt-1">{msg.time}</span>
-                      </div>
-                    </div>
-                  ))}
+                
+                {/* Contact options */}
+                <div className="p-6">
+                  <BookingButton 
+                    moodMentorId={moodMentor?.id || "2"} 
+                    moodMentorName={moodMentor?.name}
+                    nameSlug={moodMentor?.nameSlug}
+                    className="w-full mb-3" 
+                    buttonText="Book Appointment"
+                    variant="default"
+                  />
+                  <Button 
+                    onClick={handleChat} 
+                    variant="outline" 
+                    className="w-full flex items-center justify-center"
+                  >
+                    <MessageSquare className="h-4 w-4 mr-2" />
+                    Send Message
+                  </Button>
                 </div>
-              </ScrollArea>
+              </div>
+            </div>
+            
+            {/* Main content */}
+            <div className="lg:col-span-2 space-y-8">
+              {/* About section */}
+              <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+                <div className="p-6">
+                  <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                    <span className="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+                      </svg>
+                    </span>
+                    About Me
+                  </h2>
+                  
+                  {/* Bio */}
+                  <div className="prose prose-blue max-w-none text-gray-600 leading-relaxed">
+                    {process.env.NODE_ENV === 'development' && (
+                      <div className="bg-yellow-50 border border-yellow-200 p-2 mb-3 text-xs rounded">
+                        <div><strong>Bio source:</strong> {moodMentor?.about ? 'about field' : (moodMentor?.bio ? 'bio field' : 'none')}</div>
+                        <div><strong>Bio length:</strong> {(moodMentor?.bio || moodMentor?.about || '').length}</div>
+                      </div>
+                    )}
+                    
+                    <p className="whitespace-pre-line">{moodMentor?.about || moodMentor?.bio || 'No bio information available'}</p>
+                  </div>
+                </div>
+                
+                {/* Therapy approaches */}
+                <div className="bg-blue-50 p-6 border-t border-blue-100">
+                  <h3 className="text-sm font-semibold text-blue-800 uppercase tracking-wider mb-3">Therapy Approaches</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {moodMentor?.therapyTypes?.map((type, index) => (
+                      <div key={index} className="flex items-center">
+                        <span className="h-2 w-2 bg-blue-500 rounded-full mr-2"></span>
+                        <span className="text-sm text-gray-700">{type.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
               
-              {/* Message input */}
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Type your message..."
-                  value={chatMessage}
-                  onChange={(e) => setChatMessage(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') sendMessage();
-                  }}
-                  className="flex-1"
-                />
-                <Button 
-                  onClick={sendMessage} 
-                  className="bg-[#007BFF] hover:bg-blue-600"
-                  size="icon"
-                >
-                  <Send className="h-4 w-4" />
-                </Button>
+              {/* Education section */}
+              <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+                <div className="p-6">
+                  <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                    <span className="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M10.394 2.08a1 1 0 00-.788 0l-7 3a1 1 0 000 1.84L5.25 8.051a.999.999 0 01.356-.257l4-1.714a1 1 0 11.788 1.838L7.667 9.088l1.94.831a1 1 0 00.787 0l7-3a1 1 0 000-1.838l-7-3zM3.31 9.397L5 10.12v4.102a8.969 8.969 0 00-1.05-.174 1 1 0 01-.89-.89 11.115 11.115 0 01.25-3.762zM9.3 16.573A9.026 9.026 0 007 14.935v-3.957l1.818.78a3 3 0 002.364 0l5.508-2.361a11.026 11.026 0 01.25 3.762 1 1 0 01-.89.89 8.968 8.968 0 00-5.35 2.524 1 1 0 01-1.4 0zM6 18a1 1 0 001-1v-2.065a8.935 8.935 0 00-2-.712V17a1 1 0 001 1z" />
+                      </svg>
+                    </span>
+                    Education
+                  </h2>
+                  
+                  {/* Display education */}
+                  <div className="space-y-6">
+                    {moodMentor?.education && moodMentor.education.length > 0 ? (
+                      moodMentor.education.map((edu, index) => (
+                        <div key={index} className="flex">
+                          <div className="relative flex-shrink-0 w-12 flex justify-center">
+                            <div className="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center z-10">
+                              <span className="text-blue-600 font-medium">{index + 1}</span>
+                            </div>
+                            {index < moodMentor.education.length - 1 && (
+                              <div className="absolute top-8 left-1/2 transform -translate-x-1/2 w-0.5 h-full bg-blue-100"></div>
+                            )}
+                          </div>
+                          
+                          <div className="flex-1 pb-6">
+                            <h4 className="text-lg font-medium text-gray-900">{edu.degree}</h4>
+                            <p className="text-gray-600">{edu.university}</p>
+                            <p className="text-sm text-gray-500">{edu.period}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 italic">Education details not available</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Experience section */}
+              <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+                <div className="p-6">
+                  <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                    <span className="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M6 6V5a3 3 0 013-3h2a3 3 0 013 3v1h2a2 2 0 012 2v3.57A22.952 22.952 0 0110 13a22.95 22.95 0 01-8-1.43V8a2 2 0 012-2h2zm2-1a1 1 0 011-1h2a1 1 0 011 1v1H8V5zm1 5a1 1 0 011-1h.01a1 1 0 110 2H10a1 1 0 01-1-1z" clipRule="evenodd" />
+                        <path d="M2 13.692V16a2 2 0 002 2h12a2 2 0 002-2v-2.308A24.974 24.974 0 0110 15c-2.796 0-5.487-.46-8-1.308z" />
+                      </svg>
+                    </span>
+                    Work Experience
+                  </h2>
+                  
+                  {/* Display experience */}
+                  <div className="space-y-6">
+                    {moodMentor?.experience && moodMentor.experience.length > 0 ? (
+                      moodMentor.experience.map((exp, index) => (
+                        <div key={index} className="flex">
+                          <div className="relative flex-shrink-0 w-12 flex justify-center">
+                            <div className="h-8 w-8 bg-blue-100 rounded-full flex items-center justify-center z-10">
+                              <span className="text-blue-600 font-medium">{index + 1}</span>
+                            </div>
+                            {index < moodMentor.experience.length - 1 && (
+                              <div className="absolute top-8 left-1/2 transform -translate-x-1/2 w-0.5 h-full bg-blue-100"></div>
+                            )}
+                          </div>
+                          
+                          <div className="flex-1 pb-6">
+                            <h4 className="text-lg font-medium text-gray-900">{exp.company}</h4>
+                            <p className="text-sm text-gray-600">{exp.period} {exp.duration ? `(${exp.duration})` : ''}</p>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-gray-500 italic">Experience details not available</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Services section */}
+              <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+                <div className="p-6">
+                  <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                    <span className="bg-blue-100 text-blue-600 p-2 rounded-md mr-3">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                    </span>
+                    Services Offered
+                  </h2>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {(moodMentor?.services && moodMentor.services.length > 0) ? (
+                      moodMentor.services.map((service, index) => (
+                        <div key={index} className="flex items-start">
+                          <div className="flex-shrink-0 h-5 w-5 text-green-500 mt-0.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          </div>
+                          <span className="ml-2 text-gray-700">{service}</span>
+                        </div>
+                      ))
+                    ) : (
+                      // If no services, show therapy types as services
+                      moodMentor?.therapyTypes?.map((type, index) => (
+                        <div key={index} className="flex items-start">
+                          <div className="flex-shrink-0 h-5 w-5 text-green-500 mt-0.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                          </div>
+                          <span className="ml-2 text-gray-700">{type.name}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Availability Dialog for non-authenticated users */}
-        <Dialog open={showAvailabilityDialog} onOpenChange={setShowAvailabilityDialog}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#007BFF]">Authentication Required</DialogTitle>
-              <DialogDescription>
-                You need to be logged in to view availability for {moodMentor?.name}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-4 text-center">
-              <p className="mb-4">Please log in to see available appointment slots.</p>
-              <div className="flex justify-center gap-4">
-                <Button variant="outline" onClick={() => setShowAvailabilityDialog(false)}>Cancel</Button>
-                <Link to="/login">
-                  <Button className="bg-[#007BFF] hover:bg-blue-600">Log In</Button>
-                </Link>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Chat Authentication Dialog for non-authenticated users */}
-        <Dialog open={showChatAuthDialog} onOpenChange={setShowChatAuthDialog}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#007BFF]">Authentication Required</DialogTitle>
-              <DialogDescription>
-                You need to be logged in to chat with {moodMentor?.name}.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="mt-4 text-center">
-              <p className="mb-4">Please log in to start a conversation with this mood mentor.</p>
-              <div className="flex justify-center gap-4">
-                <Button variant="outline" onClick={() => setShowChatAuthDialog(false)}>Cancel</Button>
-                <Link to="/login">
-                  <Button className="bg-[#007BFF] hover:bg-blue-600">Log In</Button>
-                </Link>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
+          </div>
+        )}
       </div>
+
+      {/* Chat Dialog */}
+      <Dialog open={showChatDialog} onOpenChange={setShowChatDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-blue-600">Chat with {moodMentor?.name}</DialogTitle>
+            <DialogDescription>
+              Send a message and get a quick response from your mental health mood mentor.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex flex-col h-80">
+            {/* Chat messages area */}
+            <ScrollArea className="flex-1 p-4 bg-gray-50 rounded-md mb-4">
+              <div className="space-y-4">
+                {chatMessages.map((msg, idx) => (
+                  <div 
+                    key={idx} 
+                    className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    <div 
+                      className={`max-w-[70%] p-3 rounded-lg ${
+                        msg.sender === 'user' 
+                          ? 'bg-blue-600 text-white rounded-tr-none' 
+                          : 'bg-gray-100 text-gray-800 rounded-tl-none'
+                      }`}
+                    >
+                      <p className="text-sm">{msg.message}</p>
+                      <span className="text-xs opacity-70 block text-right mt-1">{msg.time}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+            
+            {/* Message input */}
+            <div className="flex gap-2">
+              <Input
+                placeholder="Type your message..."
+                value={chatMessage}
+                onChange={(e) => setChatMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') sendMessage();
+                }}
+                className="flex-1"
+              />
+              <Button 
+                onClick={sendMessage} 
+                className="bg-blue-600 hover:bg-blue-700"
+                size="icon"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Chat Authentication Dialog for non-authenticated users */}
+      <Dialog open={showChatAuthDialog} onOpenChange={setShowChatAuthDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-blue-600">Authentication Required</DialogTitle>
+            <DialogDescription>
+              You need to be logged in to chat with {moodMentor?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-4 text-center">
+            <p className="mb-4">Please log in to start a conversation with this mood mentor.</p>
+            <div className="flex justify-center gap-4">
+              <Button variant="outline" onClick={() => setShowChatAuthDialog(false)}>Cancel</Button>
+              <Link to="/login">
+                <Button className="bg-blue-600 hover:bg-blue-700">Log In</Button>
+              </Link>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

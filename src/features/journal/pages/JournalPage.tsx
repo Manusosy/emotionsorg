@@ -14,10 +14,23 @@ import { useMediaQuery } from "@/hooks/use-media-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { LockKeyhole, BookOpen, LineChart, Edit, ArrowRight, Shield, Sparkles, FileText, AlertCircle, Calendar } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useAuth } from "@/hooks/use-auth";
+import { useNavigate } from "react-router-dom";
 
 const AUTOSAVE_DELAY = 2000; // 2 seconds
 
-type MoodType = Database['public']['Enums']['mood_type'];
+// Replace or remove the Database reference if not needed
+// If you have an actual Database type import it, otherwise define the mood type directly
+type MoodType = 'Happy' | 'Calm' | 'Sad' | 'Angry' | 'Worried' | null;
 
 // Title suggestions for the typing animation
 const TITLE_SUGGESTIONS = [
@@ -235,41 +248,47 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
         return;
       }
 
-      const { data, error } = await dataService.addJournalEntry({
-        user_id: userData.user.id,
+      // Mapping for test mode compatibility - adapt field names to match interface
+      const entryData = {
+        userId: userData.user.id,
         title: title.trim() || "Untitled Entry",
         content: content,
         mood: selectedMood,
-        mood_score: selectedMood ? 7 : undefined, // Default mood score if mood is selected
-        ...(tomorrowsIntention ? { tomorrows_intention: tomorrowsIntention } : {}), // Only include if not empty
-        created_at: new Date().toISOString(),
-      }).select();
-
-      if (error) {
-        console.error("Error saving journal entry:", error);
-        throw error;
-      }
-
-      setLastSaved(new Date());
-      toast({
-        title: "Entry saved",
-        description: "Your journal entry has been saved successfully.",
-      });
+        isPrivate: false,
+        tags: [],
+      };
       
-      // If the user is not on dashboard, suggest viewing in dashboard
-      if (!window.location.pathname.includes('dashboard')) {
+      try {
+        const newEntry = await dataService.addJournalEntry(entryData);
+        
+        setLastSaved(new Date());
         toast({
-          title: "Entry saved to dashboard",
-          description: "You can view all your journal entries in your dashboard.",
-          action: (
-            <Button 
-              variant="outline" 
-              size="sm" 
-              onClick={() => window.location.href = '/patient-dashboard/journal'}
-            >
-              Go to Dashboard
-            </Button>
-          )
+          title: "Entry saved",
+          description: "Your journal entry has been saved successfully.",
+        });
+        
+        // If the user is not on dashboard, suggest viewing in dashboard
+        if (!window.location.pathname.includes('dashboard')) {
+          toast({
+            title: "Entry saved to dashboard",
+            description: "You can view all your journal entries in your dashboard.",
+            action: (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={() => window.location.href = '/patient-dashboard/journal'}
+              >
+                Go to Dashboard
+              </Button>
+            )
+          });
+        }
+      } catch (error) {
+        console.error("Error saving journal entry:", error);
+        toast({
+          title: "Error saving entry",
+          description: "There was a problem saving your journal entry. Please try again.",
+          variant: "destructive",
         });
       }
     } catch (error: any) {
@@ -282,7 +301,7 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
     } finally {
       setIsSaving(false);
     }
-  }, [editor, title, selectedMood, tomorrowsIntention, toast]);
+  }, [editor, title, selectedMood, toast]);
 
   // Autosave functionality
   useEffect(() => {
@@ -293,7 +312,7 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
 
     const timeoutId = setTimeout(saveEntry, AUTOSAVE_DELAY);
     return () => clearTimeout(timeoutId);
-  }, [editor, title, selectedMood, tomorrowsIntention, saveEntry]);
+  }, [editor, title, selectedMood, saveEntry]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -772,7 +791,71 @@ const JournalWelcome = ({ onStartJournaling }: { onStartJournaling: () => void }
 };
 
 const JournalPage = () => {
+  const navigate = useNavigate();
   const [showJournalEditor, setShowJournalEditor] = useState(false);
+  const [isMentor, setIsMentor] = useState(false);
+  const [showMentorAlert, setShowMentorAlert] = useState(false);
+  const { user } = useAuth();
+  
+  // Check if the user is a mood mentor
+  useEffect(() => {
+    const checkUserRole = async () => {
+      if (!user) return;
+      
+      try {
+        // Check if the user has a mentor profile
+        const profileResponse = await userService.getUserProfile(user.id);
+        const isMoodMentor = profileResponse?.role === 'mood_mentor';
+        setIsMentor(isMoodMentor);
+        
+        // If they're a mentor, show the alert dialog
+        if (isMoodMentor) {
+          setShowMentorAlert(true);
+        }
+      } catch (error) {
+        console.error("Error checking user role:", error);
+      }
+    };
+    
+    checkUserRole();
+  }, [user]);
+  
+  // Handle redirect to dashboard for mentors
+  const handleMentorRedirect = () => {
+    navigate('/mood-mentor-dashboard');
+  };
+
+  // If user is a mentor, show alert and restrict access
+  if (isMentor) {
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center">
+        <AlertDialog open={showMentorAlert} onOpenChange={setShowMentorAlert}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Feature Not Available</AlertDialogTitle>
+              <AlertDialogDescription>
+                The journaling feature is designed for patients only. As a mood mentor, you don't have access to create journal entries.
+                Instead, you can view patient journal entries when they choose to share them with you.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogAction onClick={handleMentorRedirect}>
+                Return to Dashboard
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+        
+        <div className="text-center p-8">
+          <h2 className="text-2xl font-bold text-gray-700 mb-3">Journaling Feature</h2>
+          <p className="text-slate-500 mb-5">This feature is intended for patients only.</p>
+          <Button onClick={handleMentorRedirect}>
+            Return to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>

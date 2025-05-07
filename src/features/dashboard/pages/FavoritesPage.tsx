@@ -100,8 +100,10 @@ const FavoritesPage = () => {
     }
   ];
 
-  const handleViewProfile = (moodMentorId: string) => {
-    navigate(`/mood-mentors/${moodMentorId}`);
+  const handleViewProfile = (moodMentorId: string, mentorName: string) => {
+    // Generate name-based slug
+    const nameSlug = mentorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    navigate(`/mood-mentor/${nameSlug}?id=${moodMentorId}`);
   };
 
   const handleBookNow = (moodMentorId: string) => {
@@ -118,7 +120,7 @@ const FavoritesPage = () => {
   };
 
   const handleBrowseMoodMentors = () => {
-    navigate('/mood-mentors');
+    navigate('/mood-mentor');
   };
 
   return (
@@ -217,7 +219,7 @@ const FavoritesPage = () => {
                             <Button 
                               variant="outline" 
                               className="flex-1 rounded-full border-gray-300 hover:bg-gray-50"
-                              onClick={() => handleViewProfile(moodMentor.id)}
+                              onClick={() => handleViewProfile(moodMentor.id, moodMentor.name)}
                             >
                               View Profile
                             </Button>

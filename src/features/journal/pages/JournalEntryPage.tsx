@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { useToast } from "@/components/ui/use-toast";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { useAuth } from "@/hooks/use-auth";
 
 interface JournalEntry {
   id: string;
@@ -27,9 +28,53 @@ export default function JournalEntryPage() {
   const { entryId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [entry, setEntry] = useState<JournalEntry | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isMentor, setIsMentor] = useState(false);
+  const [isRoleChecking, setIsRoleChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Check if the user is a mood mentor
+  useEffect(() => {
+    const checkUserRole = async () => {
+      if (!user) return;
+      
+      try {
+        setIsRoleChecking(true);
+        // Check if the user has a mentor profile
+        const profileResponse = await userService.getUserProfile(user.id);
+        const isMoodMentor = profileResponse?.role === 'mood_mentor';
+        
+        // If they're a mentor, redirect to mentor dashboard
+        if (isMoodMentor) {
+          navigate('/mood-mentor-dashboard');
+        }
+        
+        setIsMentor(isMoodMentor);
+      } catch (error) {
+        console.error("Error checking user role:", error);
+      } finally {
+        setIsRoleChecking(false);
+      }
+    };
+    
+    checkUserRole();
+  }, [user, navigate]);
+  
+  // If still checking role, show loading state
+  if (isRoleChecking) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="text-slate-500">Checking access...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   // Get mood color based on mood name
   const getMoodColor = (mood: string | number | undefined) => {

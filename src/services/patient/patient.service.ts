@@ -454,30 +454,199 @@ export class MockPatientService implements IPatientService {
     return assessments;
   }
   
-  getMockAppointmentReports(options: {
-    patientId?: string;
-    moodMentorId?: string;
-    limit?: number;
-    offset?: number;
-    startDate?: string;
-    endDate?: string;
-  }): AppointmentReport[] {
-    const limit = options?.limit || 10;
-    const offset = options?.offset || 0;
+  getMockAppointmentReports(filter: string = 'all'): AppointmentReport[] {
+    // Return mock appointment reports based on filter
+    // Simulate filtered data
+    let filteredReports = Object.values(this.reports);
     
-    // For mock data, simply return all reports matching the filters
-    return Object.values(this.reports)
-      .filter(report => {
-        if (options.patientId && report.patientId !== options.patientId) {
-          return false;
-        }
-        if (options.moodMentorId && report.moodMentorId !== options.moodMentorId) {
-          return false;
-        }
-        return true;
-      })
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(offset, offset + limit);
+    if (filter !== 'all') {
+      const statusMap: Record<string, string> = {
+        'upcoming': 'scheduled',
+        'completed': 'completed',
+        'cancelled': 'cancelled'
+      };
+      
+      const aptIds = Object.values(this.appointments)
+        .filter(apt => apt.status === statusMap[filter])
+        .map(apt => apt.id);
+      
+      filteredReports = filteredReports.filter(report => 
+        aptIds.includes(report.appointmentId)
+      );
+    }
+    
+    return filteredReports;
+  }
+  
+  // Implementation of getPatientDashboardData
+  async getPatientDashboardData(patientId: string): Promise<{
+    success: boolean;
+    data: PatientDashboardData | null;
+    error: string | null;
+  }> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    try {
+      // Get metrics for this patient
+      const patientMetrics = Object.values(this.metrics)
+        .filter(metric => metric.patientId === patientId);
+      
+      // Check if patient has any assessments
+      const hasAssessments = Object.values(this.assessments)
+        .some(assessment => assessment.patientId === patientId);
+      
+      // Get the latest assessment date
+      const latestAssessment = Object.values(this.assessments)
+        .filter(assessment => assessment.patientId === patientId)
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+      
+      // Calculate average mood score from metrics
+      const anxietyMetrics = patientMetrics.filter(m => m.type === 'anxiety');
+      const stressMetrics = patientMetrics.filter(m => m.type === 'stress');
+      const sleepMetrics = patientMetrics.filter(m => m.type === 'sleep_quality');
+      
+      const moodScore = anxietyMetrics.length > 0 
+        ? 10 - (anxietyMetrics.reduce((sum, m) => sum + m.value, 0) / anxietyMetrics.length)
+        : 7.5; // Default if no data
+      
+      const stressLevel = stressMetrics.length > 0
+        ? stressMetrics.reduce((sum, m) => sum + m.value, 0) / stressMetrics.length / 10
+        : 0.4; // Default if no data
+      
+      // Calculate streak (consecutive days with entries)
+      // For mock purposes we'll use a simple random value
+      const streak = Math.floor(Math.random() * 5) + 1;
+      
+      // Format the dashboard data
+      const dashboardData: PatientDashboardData = {
+        metrics: {
+          moodScore,
+          stressLevel,
+          consistency: 0.7, // Example value
+          lastCheckInStatus: hasAssessments ? "Completed" : "No check-ins yet",
+          streak,
+          firstCheckInDate: hasAssessments 
+            ? "Jan 15, 2023" // Example date
+            : "",
+          lastCheckInTime: "10:30 AM", // Example time
+          lastCheckInDate: new Date().toLocaleDateString('en-US', { 
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          }),
+          lastAssessmentDate: latestAssessment 
+            ? new Date(latestAssessment.date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric'
+              })
+            : "Not taken",
+          hasAssessments
+        },
+        journalEntries: [
+          {
+            id: "journal-1",
+            title: "Today's reflection",
+            content: "I felt much calmer after my morning meditation...",
+            mood: "Happy",
+            created_at: new Date().toISOString()
+          },
+          {
+            id: "journal-2",
+            title: "Challenging work day",
+            content: "Felt stressed during the team meeting but managed...",
+            mood: "Anxious",
+            created_at: new Date(Date.now() - 86400000 * 2).toISOString()
+          }
+        ],
+        supportGroups: [
+          {
+            id: "group-1",
+            name: "Anxiety Support",
+            members: 12,
+            nextMeeting: new Date(Date.now() + 86400000 * 3).toISOString()
+          },
+          {
+            id: "group-2",
+            name: "Mindfulness Practice",
+            members: 8,
+            nextMeeting: new Date(Date.now() + 86400000 * 5).toISOString()
+          }
+        ]
+      };
+      
+      return {
+        success: true,
+        data: dashboardData,
+        error: null
+      };
+    } catch (error) {
+      console.error("Error getting patient dashboard data:", error);
+      return {
+        success: false,
+        data: null,
+        error: "Failed to fetch dashboard data"
+      };
+    }
+  }
+  
+  // Implementation of saveAssessment
+  async saveAssessment(assessment: Omit<Assessment, 'id'>): Promise<Assessment> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 400));
+    
+    const id = `assessment-${Math.random().toString(36).substring(2, 15)}`;
+    
+    const newAssessment: Assessment = {
+      id,
+      ...assessment
+    };
+    
+    // Save to mock storage
+    this.assessments[id] = newAssessment;
+    
+    return newAssessment;
+  }
+  
+  // Implementation of updateMetrics
+  async updateMetrics(patientId: string, metricsUpdate: UserMetricsUpdate): Promise<boolean> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    try {
+      // For simplicity, create new metric entries for each field
+      const now = new Date().toISOString();
+      
+      if (metricsUpdate.stressLevel !== undefined) {
+        const id = `metric-stress-${now}`;
+        this.metrics[id] = {
+          id,
+          patientId,
+          type: 'stress',
+          value: metricsUpdate.stressLevel * 10, // Convert 0-1 scale to 0-10
+          timestamp: now
+        };
+      }
+      
+      if (metricsUpdate.moodScore !== undefined) {
+        const id = `metric-mood-${now}`;
+        this.metrics[id] = {
+          id,
+          patientId,
+          type: 'mood',
+          value: metricsUpdate.moodScore,
+          timestamp: now
+        };
+      }
+      
+      // Add other metric updates as needed
+      
+      return true;
+    } catch (error) {
+      console.error("Error updating metrics:", error);
+      return false;
+    }
   }
 }
 

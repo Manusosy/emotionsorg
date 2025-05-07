@@ -252,6 +252,20 @@ export class MockDataService implements IDataService {
     return true;
   }
   
+  // Subscription for mood entries changes (mock implementation)
+  subscribeMoodEntries(userId: string, callback: () => void): () => void {
+    console.log(`Setting up mood entries subscription for user ${userId}`);
+    
+    // In a real implementation, this would set up a real-time subscription
+    // For our mock version, we'll just return a no-op unsubscribe function
+    
+    // Return an unsubscribe function
+    return () => {
+      console.log(`Unsubscribing from mood entries for user ${userId}`);
+      // Cleanup would happen here in a real implementation
+    };
+  }
+  
   // Journal methods
   async getJournalEntries(userId: string, options?: {
     limit?: number,
@@ -267,22 +281,61 @@ export class MockDataService implements IDataService {
     const startDate = options?.startDate ? new Date(options.startDate) : undefined;
     const endDate = options?.endDate ? new Date(options.endDate) : undefined;
     
-    let entries = Object.values(this.journalEntries)
-      .filter(entry => entry.userId === userId)
-      .filter(entry => {
-        if (!startDate && !endDate) return true;
-        
-        const entryDate = new Date(entry.createdAt);
-        
-        if (startDate && entryDate < startDate) return false;
-        if (endDate && entryDate > endDate) return false;
-        
-        return true;
-      })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(offset, offset + limit);
+    // Check sessionStorage first for test mode
+    let storageEntries: any[] = [];
+    try {
+      const storageKey = 'emotions_app_journal_entries';
+      const storedEntries = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
+      storageEntries = Object.values(storedEntries).filter((entry: any) => 
+        entry.userId === userId || entry.user_id === userId
+      );
+    } catch (e) {
+      console.log('Session storage not available, using memory only');
+    }
+    
+    // Combine with in-memory entries
+    let memoryEntries = Object.values(this.journalEntries)
+      .filter(entry => entry.userId === userId);
       
-    return entries;
+    // Combine both sources, giving priority to storage entries if ids match
+    const storageIds = storageEntries.map(entry => entry.id);
+    const uniqueMemoryEntries = memoryEntries.filter(entry => !storageIds.includes(entry.id));
+    
+    let allEntries: any[] = [...storageEntries, ...uniqueMemoryEntries];
+    
+    // Apply filters
+    allEntries = allEntries.filter(entry => {
+      if (!startDate && !endDate) return true;
+      
+      const entryDate = new Date(entry.createdAt || entry.created_at || '');
+      
+      if (startDate && entryDate < startDate) return false;
+      if (endDate && entryDate > endDate) return false;
+      
+      return true;
+    })
+    .sort((a, b) => {
+      const dateA = new Date(b.createdAt || b.created_at || '').getTime();
+      const dateB = new Date(a.createdAt || a.created_at || '').getTime();
+      return dateA - dateB;
+    })
+    .slice(offset, offset + limit);
+    
+    // Map entries to consistent format before returning
+    return allEntries.map(entry => {
+      // Ensure each entry follows the JournalEntry interface
+      return {
+        id: entry.id,
+        userId: entry.userId || entry.user_id,
+        title: entry.title || '',
+        content: entry.content || '',
+        tags: entry.tags || [],
+        mood: entry.mood,
+        isPrivate: entry.isPrivate || entry.is_private || false,
+        createdAt: entry.createdAt || entry.created_at || new Date().toISOString(),
+        updatedAt: entry.updatedAt || entry.updated_at || new Date().toISOString(),
+      };
+    });
   }
   
   async getJournalEntry(id: string): Promise<JournalEntry | null> {
@@ -292,21 +345,42 @@ export class MockDataService implements IDataService {
     return this.journalEntries[id] || null;
   }
   
-  async addJournalEntry(data: Omit<JournalEntry, 'id' | 'createdAt' | 'updatedAt'>): Promise<JournalEntry> {
+  async addJournalEntry(data: Omit<JournalEntry, 'id' | 'createdAt' | 'updatedAt'> | any): Promise<JournalEntry> {
     // Simulate network delay
     await new Promise(resolve => setTimeout(resolve, 600));
     
     const id = Math.random().toString(36).substring(2, 15);
     const now = new Date().toISOString();
     
+    // Handle both formats - interface style and component style
+    // Map fields to the interface format
+    const userId = data.userId || data.user_id;
+    const tomorrowsIntention = data.tomorrowsIntention || data.tomorrows_intention;
+    const isPrivate = data.isPrivate || data.is_private || false;
+    
     const newEntry: JournalEntry = {
       id,
+      userId,
+      title: data.title || 'Untitled',
+      content: data.content || '',
+      tags: data.tags || [],
+      mood: data.mood,
+      isPrivate,
       createdAt: now,
-      updatedAt: now,
-      ...data
+      updatedAt: now
     };
     
     this.journalEntries[id] = newEntry;
+    
+    // Also store in sessionStorage for test mode persistence
+    try {
+      const storageKey = 'emotions_app_journal_entries';
+      const existingEntries = JSON.parse(sessionStorage.getItem(storageKey) || '{}');
+      existingEntries[id] = newEntry;
+      sessionStorage.setItem(storageKey, JSON.stringify(existingEntries));
+    } catch (e) {
+      console.log('Session storage not available, continuing in memory only');
+    }
     
     return newEntry;
   }
@@ -369,10 +443,9 @@ export class MockDataService implements IDataService {
   
   async getResource(id: string): Promise<Resource | null> {
     // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await new Promise(resolve => setTimeout(resolve, 200));
     
-    const resource = this.resources[id];
-    return resource || null;
+    return this.resources[id] || null;
   }
   
   async addResource(data: {
@@ -385,9 +458,9 @@ export class MockDataService implements IDataService {
     created_by?: string
   }): Promise<Resource> {
     // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 600));
+    await new Promise(resolve => setTimeout(resolve, 500));
     
-    const id = `resource-${Date.now()}`;
+    const id = Math.random().toString(36).substring(2, 15);
     const now = new Date().toISOString();
     
     const newResource: Resource = {
@@ -397,7 +470,7 @@ export class MockDataService implements IDataService {
       url: data.url,
       imageUrl: data.image_url,
       category: data.category,
-      tags: data.tags,
+      tags: data.tags || [],
       createdAt: now,
       createdBy: data.created_by
     };
@@ -407,9 +480,27 @@ export class MockDataService implements IDataService {
     return newResource;
   }
   
+  async updateResource(id: string, data: Partial<Resource>): Promise<Resource | null> {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 400));
+    
+    const resource = this.resources[id];
+    
+    if (!resource) {
+      return null;
+    }
+    
+    this.resources[id] = {
+      ...resource,
+      ...data
+    };
+    
+    return this.resources[id];
+  }
+  
   async deleteResource(id: string): Promise<boolean> {
     // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 300));
     
     if (!this.resources[id]) {
       return false;

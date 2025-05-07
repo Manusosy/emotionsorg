@@ -44,6 +44,31 @@ export interface Assessment {
   responses: Record<string, any>;
 }
 
+export interface PatientDashboardData {
+  metrics: {
+    moodScore: number;
+    stressLevel: number;
+    consistency: number;
+    lastCheckInStatus: string;
+    streak: number;
+    firstCheckInDate: string;
+    lastCheckInTime?: string;
+    lastCheckInDate?: string;
+    lastAssessmentDate?: string;
+    hasAssessments: boolean;
+  };
+  journalEntries: any[];
+  supportGroups: any[];
+}
+
+export interface UserMetricsUpdate {
+  moodScore?: number;
+  stressLevel?: number;
+  consistency?: number;
+  streak?: number;
+  lastAssessmentAt?: string;
+}
+
 export interface IPatientService {
   /**
    * Get a patient's appointments
@@ -116,4 +141,23 @@ export interface IPatientService {
     startDate?: string;
     endDate?: string;
   }): AppointmentReport[];
+  
+  /**
+   * Get patient dashboard data
+   */
+  getPatientDashboardData(patientId: string): Promise<{
+    success: boolean;
+    data: PatientDashboardData | null;
+    error: string | null;
+  }>;
+  
+  /**
+   * Save a new assessment
+   */
+  saveAssessment(assessment: Omit<Assessment, 'id'>): Promise<Assessment>;
+  
+  /**
+   * Update patient metrics
+   */
+  updateMetrics(patientId: string, metricsUpdate: UserMetricsUpdate): Promise<boolean>;
 } 

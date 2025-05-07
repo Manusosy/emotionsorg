@@ -30,7 +30,9 @@ export function MoodMentorCard({
   const navigate = useNavigate();
 
   const handleViewProfile = () => {
-    navigate(`/mood-mentors/${id}`);
+    // Generate name-based slug
+    const nameSlug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    navigate(`/mood-mentor/${nameSlug}?id=${id}`);
   };
 
   return (

@@ -10,12 +10,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
-import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Loader2 } from "lucide-react";
+import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Loader2, BookOpen } from "lucide-react";
 // Supabase import removed
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useAuth } from "@/hooks/use-auth";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { debounce } from "lodash";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Constants
 const AUTOSAVE_DELAY = 3000; // 3 seconds
@@ -30,6 +39,7 @@ interface JournalEntry {
   updated_at: string;
   user_id: string;
   tomorrows_intention?: string;
+  isPrivate?: boolean;
 }
 
 // Editor Toolbar Component
@@ -125,6 +135,49 @@ export default function JournalEditPage() {
   const [content, setContent] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
+  const [isMentor, setIsMentor] = useState(false);
+  const [isRoleChecking, setIsRoleChecking] = useState(true);
+
+  // Check if the user is a mood mentor
+  useEffect(() => {
+    const checkUserRole = async () => {
+      if (!user) return;
+      
+      try {
+        setIsRoleChecking(true);
+        // Check if the user has a mentor profile
+        const profileResponse = await userService.getUserProfile(user.id);
+        const isMoodMentor = profileResponse?.role === 'mood_mentor';
+        
+        // If they're a mentor, redirect to mentor dashboard
+        if (isMoodMentor) {
+          navigate('/mood-mentor-dashboard');
+        }
+        
+        setIsMentor(isMoodMentor);
+      } catch (error) {
+        console.error("Error checking user role:", error);
+      } finally {
+        setIsRoleChecking(false);
+      }
+    };
+    
+    checkUserRole();
+  }, [user, navigate]);
+  
+  // If still checking role, show loading state
+  if (isRoleChecking) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="text-slate-500">Checking access...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   // Initialize editor with content
   const editor = useEditor({
@@ -149,19 +202,13 @@ export default function JournalEditPage() {
       try {
         setIsLoading(true);
         
-        const { data, error } = await supabase
-          .from("journal_entries")
-          .select("*")
-          .eq("id", entryId)
-          .single();
-
-        if (error) throw error;
-
+        const data = await dataService.getJournalEntry(entryId);
+        
         if (data) {
           setEntry(data as JournalEntry);
           setTitle(data.title);
           setContent(data.content);
-          setSelectedMood(data.mood.toString());
+          setSelectedMood(data.mood ? data.mood.toString() : null);
           setTomorrowsPlan(data.tomorrows_intention || "");
           setTags(data.tags || []);
           
@@ -263,21 +310,22 @@ export default function JournalEditPage() {
       
       // Only save if changes were made
       if (htmlContent !== entry?.content || title !== entry?.title || 
-          selectedMood !== entry?.mood.toString() || tomorrowsPlan !== entry?.tomorrows_intention) {
+          selectedMood !== entry?.mood?.toString() || tomorrowsPlan !== entry?.tomorrows_intention) {
         
-        const { error } = await supabase
-          .from("journal_entries")
-          .update({
-            title: title,
-            content: htmlContent,
-            mood: selectedMood,
-            tomorrows_intention: tomorrowsPlan,
-            tags: tags,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", entryId);
-
-        if (error) throw error;
+        // Format data for interface compatibility  
+        const updateData: any = {
+          title: title,
+          content: htmlContent,
+          mood: selectedMood,
+          tags: tags,
+          isPrivate: entry?.isPrivate || false
+        };
+        
+        if (tomorrowsPlan) {
+          updateData.tomorrowsIntention = tomorrowsPlan;
+        }
+        
+        await dataService.updateJournalEntry(entryId, updateData);
         
         setLastSaved(new Date());
       }
@@ -324,19 +372,20 @@ export default function JournalEditPage() {
       setIsSaving(true);
       const htmlContent = editor.getHTML();
 
-      const { error } = await supabase
-        .from("journal_entries")
-        .update({
-          title: title,
-          content: htmlContent,
-          mood: selectedMood,
-          tomorrows_intention: tomorrowsPlan,
-          tags: tags,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", entryId);
-
-      if (error) throw error;
+      // Format data for interface compatibility  
+      const updateData: any = {
+        title: title,
+        content: htmlContent,
+        mood: selectedMood,
+        tags: tags,
+        isPrivate: entry?.isPrivate || false
+      };
+      
+      if (tomorrowsPlan) {
+        updateData.tomorrowsIntention = tomorrowsPlan;
+      }
+      
+      await dataService.updateJournalEntry(entryId, updateData);
 
       toast({
         title: "Success",
@@ -425,6 +474,7 @@ export default function JournalEditPage() {
     </div>
   );
 
+  // Show loading state
   if (isLoading) {
     return (
       <DashboardLayout>

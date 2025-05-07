@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [localAuthState, setLocalAuthState] = useState({ isAuthenticated: false, userRole: null });
-  const { isAuthenticated, userRole, signout, getDashboardUrlForRole } = useAuth();
+  const { isAuthenticated, userRole, signOut, getDashboardUrlForRole } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -90,13 +90,13 @@ export default function Navbar() {
       // Single toast for feedback
       const toastId = toast.loading("Signing out...");
       
-      await signout();
+      await signOut();
       
       // Clear the loading toast
       toast.dismiss(toastId);
       
-      // Force redirect to home page
-      window.location.href = '/';
+      // Use navigate instead of window.location.href to avoid full page reload
+      navigate('/', { replace: true });
     } catch (error) {
       console.error("Signout failed:", error);
       toast.error("Failed to sign out. Please try again.");
@@ -142,6 +142,18 @@ export default function Navbar() {
   const handleDashboardClick = (e: React.MouseEvent) => {
     e.preventDefault();
     
+    // Debug information
+    console.group("Dashboard Click Debug");
+    console.log("Event:", e);
+    console.log("Auth state from context:", { isAuthenticated, userRole });
+    console.log("Local auth state:", localAuthState);
+    console.log("Effective values:", { 
+      effectiveIsAuthenticated, 
+      effectiveUserRole,
+      dashboardUrl 
+    });
+    console.groupEnd();
+    
     // Get the most reliable role information
     const role = effectiveUserRole;
     console.log("Dashboard click - Role:", role);
@@ -153,15 +165,15 @@ export default function Navbar() {
     }
     
     // Get the dashboard URL for the role
-    const url = getDashboardUrlForRole(role);
-    console.log("Navigating to dashboard:", url);
+    const dashboardPath = getDashboardUrlForRole(role);
+    console.log("Navigating to dashboard:", dashboardPath);
     
-    // Use a more direct approach to prevent async navigation issues
     // First close the menu if open
     setIsMobileMenuOpen(false);
     
-    // Then navigate - use simple navigation without complex async logic
-    navigate(url, { replace: true });
+    // Use the most direct approach - directly set window.location.href
+    // This bypasses any React Router issues
+    window.location.href = dashboardPath.startsWith('/') ? dashboardPath : `/${dashboardPath}`;
   };
 
   return (
@@ -253,19 +265,15 @@ export default function Navbar() {
           <div className="flex md:hidden items-center space-x-4 mr-4">
             {effectiveIsAuthenticated ? (
               <div className="flex items-center space-x-2">
-                <a 
-                  href="#" 
+                <Button 
+                  variant="ghost" 
+                  size="sm"
                   onClick={handleDashboardClick}
+                  className="text-white hover:bg-[#fda802] rounded-full font-medium transition-all flex items-center"
                 >
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    className="text-white hover:bg-[#fda802] rounded-full font-medium transition-all flex items-center"
-                  >
-                    <LayoutDashboard className="h-4 w-4 mr-1" />
-                    <span className="text-xs">Dashboard</span>
-                  </Button>
-                </a>
+                  <LayoutDashboard className="h-4 w-4 mr-1" />
+                  <span className="text-xs">Dashboard</span>
+                </Button>
                 <Button 
                   id="signout-button-mobile"
                   variant="ghost" 
@@ -344,12 +352,15 @@ export default function Navbar() {
             <div className="py-2 border-t border-blue-600/20">
               {effectiveIsAuthenticated ? (
                 <>
-                  <a href="#" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={handleDashboardClick}>
+                  <button 
+                    className="w-full text-left px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors"
+                    onClick={handleDashboardClick}
+                  >
                     <span className="flex items-center">
                       <LayoutDashboard className="mr-2 h-4 w-4" />
                       Dashboard
                     </span>
-                  </a>
+                  </button>
                   <button 
                     onClick={handleSignout}
                     className="w-full text-left px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors"

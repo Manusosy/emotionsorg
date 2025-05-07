@@ -17,15 +17,76 @@ export default function EmotionalHealthWheel({
   onViewDetails,
   hasAssessments
 }: EmotionalHealthWheelProps) {
+  // Local state for test mode
+  const [localStressLevel, setLocalStressLevel] = useState(stressLevel);
+  const [localHasAssessments, setLocalHasAssessments] = useState(hasAssessments);
+  const [localLastCheckIn, setLocalLastCheckIn] = useState(lastCheckIn);
+  
+  // Listen for test data updates
+  useEffect(() => {
+    // Update local state when props change
+    setLocalStressLevel(stressLevel);
+    setLocalHasAssessments(hasAssessments);
+    setLocalLastCheckIn(lastCheckIn);
+    
+    // Check for test data in session storage
+    try {
+      const testDataString = sessionStorage.getItem('test_stress_assessment');
+      if (testDataString) {
+        const testData = JSON.parse(testDataString);
+        if (testData.stressLevel) {
+          setLocalStressLevel(testData.stressLevel);
+        }
+        if (testData.hasAssessments) {
+          setLocalHasAssessments(true);
+        }
+        if (testData.lastAssessment) {
+          const date = new Date(testData.lastAssessment);
+          setLocalLastCheckIn(date.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric'
+          }));
+        }
+      }
+    } catch (error) {
+      console.error("Error reading test data in wheel:", error);
+    }
+    
+    // Listen for stress assessment events
+    const handleStressAssessmentCompleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        stressLevel: number;
+        score: number;
+        status: string;
+      }>;
+      
+      setLocalStressLevel(customEvent.detail.stressLevel);
+      setLocalHasAssessments(true);
+      setLocalLastCheckIn(new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      }));
+    };
+    
+    window.addEventListener('stress-assessment-completed', handleStressAssessmentCompleted as EventListener);
+    
+    // Clean up
+    return () => {
+      window.removeEventListener('stress-assessment-completed', handleStressAssessmentCompleted as EventListener);
+    };
+  }, [stressLevel, hasAssessments, lastCheckIn]);
+  
   // Calculate health percentage (inverse of stress)
   // Clamping health percentage between 0 and 100
-  const healthPercentage = hasAssessments 
-    ? Math.max(0, Math.min(100, Math.round((10 - stressLevel) * 10)))
+  const healthPercentage = localHasAssessments 
+    ? Math.max(0, Math.min(100, Math.round((10 - localStressLevel) * 10)))
     : 0; // Default to 0 for new users with no assessments
   
   // Determine color and status based on health percentage
   const getWheelColor = () => {
-    if (!hasAssessments) return "#cccccc"; // Gray for no data
+    if (!localHasAssessments) return "#cccccc"; // Gray for no data
     if (healthPercentage >= 80) return "#4ade80"; // Green
     if (healthPercentage >= 60) return "#a3e635"; // Light green
     if (healthPercentage >= 40) return "#facc15"; // Yellow
@@ -34,7 +95,7 @@ export default function EmotionalHealthWheel({
   };
   
   const getHealthStatus = () => {
-    if (!hasAssessments) return "No Assessment";
+    if (!localHasAssessments) return "No Assessment";
     if (healthPercentage >= 80) return "Excellent";
     if (healthPercentage >= 60) return "Good";
     if (healthPercentage >= 40) return "Fair";
@@ -49,7 +110,7 @@ export default function EmotionalHealthWheel({
   
   // Adjusted to start from bottom (6 o'clock position)
   // When no assessments, don't show any progress
-  const strokeDashoffset = hasAssessments 
+  const strokeDashoffset = localHasAssessments 
     ? circumference - (healthPercentage / 100) * circumference
     : circumference; // Full offset = empty circle
   
@@ -98,10 +159,10 @@ export default function EmotionalHealthWheel({
           
           {/* Center text - show last assessment time or message for new users */}
           <div className="absolute flex flex-col items-center justify-center text-center px-6">
-            {hasAssessments ? (
+            {localHasAssessments ? (
               <>
                 <p className="text-sm text-slate-600">Last assessment</p>
-                <p className="font-medium">{lastCheckIn}</p>
+                <p className="font-medium">{localLastCheckIn}</p>
               </>
             ) : (
               <p className="text-sm text-slate-600 font-medium">You have not taken any assessment yet</p>
@@ -115,7 +176,7 @@ export default function EmotionalHealthWheel({
             {getHealthStatus()}
           </p>
           <p className="text-sm text-slate-500 mt-1">
-            {hasAssessments ? "Your assessment result" : "Complete your first assessment"}
+            {localHasAssessments ? "Your assessment result" : "Complete your first assessment"}
           </p>
         </div>
         
@@ -124,10 +185,10 @@ export default function EmotionalHealthWheel({
           <Button 
             className="text-white bg-blue-600 hover:bg-blue-700 w-full" 
             onClick={onViewDetails}
-            disabled={!hasAssessments}
+            disabled={!localHasAssessments}
           >
             <BarChart className="mr-2 h-4 w-4" />
-            {hasAssessments ? "View Details" : "No Data Available"}
+            {localHasAssessments ? "View Details" : "No Data Available"}
           </Button>
         </div>
       </CardContent>

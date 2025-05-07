@@ -17,6 +17,25 @@ export interface MoodMentor {
   availability: AvailabilitySlot[];
   avatarUrl?: string;
   profileCompleted: boolean;
+  location?: string;
+  gender?: string;
+  languages?: string[];
+  nameSlug?: string; // URL-friendly slug derived from the name
+  
+  // Additional fields for compatibility with different data sources
+  full_name?: string;
+  avatar_url?: string;
+  name_slug?: string;
+  therapyTypes?: string[];
+  credentials?: string;
+  specialty?: string;
+  satisfaction?: number;
+  about?: string; // Alternate field for bio used in some UI components
+  description?: string; // Another alternate field for bio
+  
+  // Fields for education and detailed experience
+  education?: Array<{degree: string, institution: string, year: string}>;
+  experience_details?: Array<{title: string, place: string, duration: string}>;
 }
 
 export interface AvailabilitySlot {
@@ -159,6 +178,16 @@ export interface IMoodMentorService {
   getDashboardStats(mentorId: string): Promise<MoodMentorStats>;
   
   /**
+   * Debug helper to clear and reset mentor profiles
+   */
+  resetMentorProfiles(): Promise<void>;
+  
+  /**
+   * Register a test mentor profile directly for testing
+   */
+  registerTestMentorProfile(): Promise<void>;
+  
+  /**
    * Ensure mood mentor profile schema is created
    * Used for data migration and initialization
    */
@@ -175,4 +204,19 @@ export interface IMoodMentorService {
     success: boolean;
     error: string | null;
   }>;
+  
+  /**
+   * Get a specific mood mentor by name slug
+   */
+  getMoodMentorBySlug(nameSlug: string): Promise<{
+    success: boolean;
+    data: MoodMentor | null;
+    error: string | null;
+  }>;
+
+  /**
+   * Debug helper methods for testing
+   */
+  syncTestMentorProfile(): Promise<void>;
+  completeResetAndCreateTestProfile(): Promise<void>;
 } 

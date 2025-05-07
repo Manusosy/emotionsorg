@@ -16,7 +16,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { HeartHandshake, BookOpen, Heart, Activity, BrainCircuit } from "lucide-react";
 
-export default function WelcomeDialog() {
+interface WelcomeDialogProps {
+  forceShow?: boolean;
+}
+
+export default function WelcomeDialog({ forceShow = false }: WelcomeDialogProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -25,10 +29,10 @@ export default function WelcomeDialog() {
   // Check if this is the user's first visit
   useEffect(() => {
     const hasSeenWelcome = localStorage.getItem("hasSeenWelcome");
-    if (!hasSeenWelcome && user) {
+    if ((forceShow || !hasSeenWelcome) && user) {
       setOpen(true);
     }
-  }, [user]);
+  }, [user, forceShow]);
 
   const createWelcomeNotification = async () => {
     if (!user?.id) return;
@@ -60,7 +64,10 @@ export default function WelcomeDialog() {
   };
 
   const handleClose = () => {
-    localStorage.setItem("hasSeenWelcome", "true");
+    // Only set the localStorage flag if not in force mode
+    if (!forceShow) {
+      localStorage.setItem("hasSeenWelcome", "true");
+    }
     setOpen(false);
     createWelcomeNotification();
   };
@@ -73,6 +80,11 @@ export default function WelcomeDialog() {
   const handleStressAnalysis = () => {
     handleClose();
     navigate("/patient-dashboard/reports");
+  };
+
+  // New method to reset the welcome dialog to show again
+  const resetWelcomeDialog = () => {
+    localStorage.removeItem("hasSeenWelcome");
   };
 
   return (
@@ -93,7 +105,7 @@ export default function WelcomeDialog() {
         <div className="grid grid-cols-1 gap-4 my-4">
           <Button 
             variant="outline" 
-            className="flex items-center justify-center gap-2 h-auto py-4 hover:bg-blue-50 border-blue-200"
+            className="flex items-center justify-center gap-2 h-auto py-4 hover:bg-[#20C0F3]/10 border-blue-200"
             onClick={handleEmotionalCheckin}
           >
             <Heart className="h-5 w-5 text-rose-600 flex-shrink-0" />
@@ -107,7 +119,7 @@ export default function WelcomeDialog() {
           
           <Button 
             variant="outline" 
-            className="flex items-center justify-center gap-2 h-auto py-4 hover:bg-blue-50 border-blue-200"
+            className="flex items-center justify-center gap-2 h-auto py-4 hover:bg-[#20C0F3]/10 border-blue-200"
             onClick={handleStressAnalysis}
           >
             <BrainCircuit className="h-5 w-5 text-blue-600 flex-shrink-0" />
@@ -126,7 +138,7 @@ export default function WelcomeDialog() {
           </AlertDialogCancel>
           <AlertDialogAction 
             onClick={handleEmotionalCheckin} 
-            className="bg-blue-600 hover:bg-blue-700"
+            className="bg-[#20C0F3] hover:bg-[#20C0F3]/90"
           >
             Start Check-in
           </AlertDialogAction>
@@ -135,5 +147,10 @@ export default function WelcomeDialog() {
     </AlertDialog>
   );
 } 
+
+// Export the reset method so it can be called from outside
+export const resetWelcomeDialog = () => {
+  localStorage.removeItem("hasSeenWelcome");
+};
 
 

@@ -29,6 +29,8 @@ export * from './patient/patient.service';
 
 // Mood Mentor Service
 export * from './mood-mentor/mood-mentor.interface';
+import { moodMentorService } from './mood-mentor/mood-mentor.service';
+export { moodMentorService };
 export * from './mood-mentor/mood-mentor.service';
 
 // Appointment Service

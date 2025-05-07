@@ -15,7 +15,7 @@ export class MockAuthService implements IAuthService {
       email: 'user@example.com',
       password: 'password123',
       name: 'Test User',
-      role: 'user',
+      role: 'patient',
       avatarUrl: 'https://ui-avatars.com/api/?name=Test+User'
     },
     'mentor@example.com': {
@@ -77,7 +77,7 @@ export class MockAuthService implements IAuthService {
       email: credentials.email,
       password: credentials.password,
       name: userData?.name || credentials.email.split('@')[0],
-      role: userData?.role || 'user',
+      role: userData?.role || 'patient',
       avatarUrl: userData?.avatarUrl || `https://ui-avatars.com/api/?name=${credentials.email.split('@')[0]}`
     };
     

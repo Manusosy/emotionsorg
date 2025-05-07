@@ -25,6 +25,7 @@ interface MoodMentor {
   languages: string[];
   education: string;
   experience: string;
+  name_slug?: string;
 }
 
 // Sample mock data to use as fallback when API calls fail
@@ -40,7 +41,8 @@ const mockMoodMentors: MoodMentor[] = [
     available: true,
     languages: ["English", "Spanish"],
     education: "PhD Psychology, Harvard",
-    experience: "10+ years"
+    experience: "10+ years",
+    name_slug: "dr-sarah-johnson"
   },
   {
     id: "mock-2",
@@ -53,7 +55,8 @@ const mockMoodMentors: MoodMentor[] = [
     available: true,
     languages: ["English", "Mandarin"],
     education: "MD Psychiatry, Oxford",
-    experience: "8 years"
+    experience: "8 years",
+    name_slug: "dr-michael-chen"
   },
   {
     id: "mock-3",
@@ -66,7 +69,8 @@ const mockMoodMentors: MoodMentor[] = [
     available: false,
     languages: ["English", "French"],
     education: "PhD Clinical Psychology, Toronto",
-    experience: "12 years"
+    experience: "12 years",
+    name_slug: "dr-olivia-rodriguez"
   }
 ];
 
@@ -115,7 +119,8 @@ export default function MoodMentorGrid() {
                 (mentor.education && mentor.education[0]?.degree) || 'Mental Health Professional',
               experience: (typeof mentor.experience === 'string') ? 
                 mentor.experience : 
-                `${mentor.experience || 3}+ years`
+                `${mentor.experience || 3}+ years`,
+              name_slug: mentor.name_slug
             }));
             
             setMoodMentors(mappedMoodMentors);
@@ -138,11 +143,11 @@ export default function MoodMentorGrid() {
     }
   };
 
-  const viewMoodMentorProfile = (mentorId: string, mentorName: string) => {
-    // Create a URL-friendly version of the name
-    const nameSlug = mentorName.toLowerCase().replace(/ /g, '-');
-    // Navigate to the mood mentor profile with the name-based URL and ID as a query parameter
-    navigate(`/mood-mentors/${nameSlug}?id=${mentorId}`);
+  const viewMoodMentorProfile = (mentorId: string, mentorName: string, mentorSlug?: string) => {
+    // Use the stored nameSlug if available, otherwise generate it from the name
+    const nameSlug = mentorSlug || mentorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    // Navigate to the mood mentor profile with the name-based URL only
+    navigate(`/mood-mentor/${nameSlug}`);
   };
 
   // Show loading state
@@ -194,7 +199,7 @@ export default function MoodMentorGrid() {
         {moodMentors.map((mentor) => (
           <Card key={mentor.id} className="overflow-hidden hover:shadow-lg transition-shadow">
             <div className="flex flex-col gap-4 p-6">
-              <div className="flex items-center gap-4 cursor-pointer" onClick={() => viewMoodMentorProfile(mentor.id, mentor.full_name)}>
+              <div className="flex items-center gap-4 cursor-pointer" onClick={() => viewMoodMentorProfile(mentor.id, mentor.full_name, mentor.name_slug)}>
                 <img
                   src={mentor.avatar_url || '/default-avatar.png'}
                   alt={mentor.full_name}
@@ -264,7 +269,9 @@ export default function MoodMentorGrid() {
               </div>
 
               <BookingButton
-                moodMentorId={parseInt(mentor.id) || 0}
+                moodMentorId={mentor.id}
+                moodMentorName={mentor.full_name}
+                nameSlug={mentor.name_slug}
                 className="text-white bg-blue-600 hover:bg-blue-700"
                 buttonText={mentor.available ? "Book Session" : "Unavailable"}
                 disabled={!mentor.available}

@@ -7,11 +7,20 @@ import Highlight from "@tiptap/extension-highlight";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Type } from "lucide-react";
+import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Type, BookOpen } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useAuth } from "@/hooks/use-auth";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { debounce } from "lodash";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Constants
 const AUTOSAVE_DELAY = 3000; // 3 seconds
@@ -103,6 +112,49 @@ export default function NewJournalEntryPage() {
   const [isSaving, setIsSaving] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [content, setContent] = useState("");
+  const [isMentor, setIsMentor] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
+
+  // Check if the user is a mood mentor
+  useEffect(() => {
+    const checkUserRole = async () => {
+      if (!user) return;
+      
+      try {
+        setIsChecking(true);
+        // Check if the user has a mentor profile
+        const profileResponse = await userService.getUserProfile(user.id);
+        const isMoodMentor = profileResponse?.role === 'mood_mentor';
+        
+        // If they're a mentor, redirect to mentor dashboard
+        if (isMoodMentor) {
+          navigate('/mood-mentor-dashboard');
+        }
+        
+        setIsMentor(isMoodMentor);
+      } catch (error) {
+        console.error("Error checking user role:", error);
+      } finally {
+        setIsChecking(false);
+      }
+    };
+    
+    checkUserRole();
+  }, [user, navigate]);
+  
+  // If still checking role or confirmed as mentor, show loading state
+  if (isChecking) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="text-slate-500">Checking access...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   const todayDate = new Date().toLocaleDateString("en-US", {
     weekday: "long",
@@ -124,6 +176,81 @@ export default function NewJournalEntryPage() {
       autosaveContent(editor.getHTML());
     },
   });
+
+  // Save the journal entry
+  const saveEntry = useCallback(async () => {
+    if (!editor) return;
+
+    const content = editor.getHTML();
+    if (!content.trim() && !title.trim()) {
+      return; // Don't save empty entries
+    }
+
+    setIsSaving(true);
+
+    try {
+      if (!user) {
+        toast({
+          title: "Authentication Error",
+          description: "You must be logged in to save journal entries. Please sign in.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      try {
+        // Format data for interface compatibility
+        const entryData = {
+          userId: user.id,
+          title: title.trim() || "Untitled Entry",
+          content: content,
+          mood: selectedMood,
+          tags: [],
+          isPrivate: false,
+          ...(tomorrowsPlan ? { tomorrowsIntention: tomorrowsPlan } : {})
+        };
+        
+        const newEntry = await dataService.addJournalEntry(entryData);
+
+        setLastSaved(new Date());
+        toast({
+          title: "Entry saved",
+          description: "Your journal entry has been saved successfully.",
+        });
+        
+        // Navigate back to journal page
+        navigate("/patient-dashboard/journal");
+      } catch (error) {
+        console.error("Error saving journal entry:", error);
+        throw error;
+      }
+    } catch (error: any) {
+      console.error("Error saving journal entry:", error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to save your journal entry. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }, [editor, title, selectedMood, tomorrowsPlan, navigate, toast, user]);
+
+  // Add autosave function
+  const autosaveContent = useCallback(
+    debounce((htmlContent: string) => {
+      // Only autosave if we have content and a title
+      if ((htmlContent.trim().length > 0 || title.trim().length > 0) && !isSaving) {
+        // Show mood reminder if the user has written content but hasn't selected a mood
+        setShowMoodReminder((htmlContent.trim().length > 0 || title.trim().length > 0) && !selectedMood);
+        // Only call saveEntry for automatic saving if needed
+        if (!lastSaved || (new Date().getTime() - lastSaved.getTime() > AUTOSAVE_DELAY)) {
+          saveEntry();
+        }
+      }
+    }, 1000),
+    [title, selectedMood, isSaving, lastSaved]
+  );
 
   // Add custom styles for the editor
   useEffect(() => {
@@ -180,163 +307,7 @@ export default function NewJournalEntryPage() {
     }
   }, []);
 
-  // Add autosave function
-  const autosaveContent = useCallback(
-    debounce((htmlContent: string) => {
-      // Only autosave if we have content and a title
-      if ((htmlContent.trim().length > 0 || title.trim().length > 0) && !isSaving) {
-        // Show mood reminder if the user has written content but hasn't selected a mood
-        setShowMoodReminder((htmlContent.trim().length > 0 || title.trim().length > 0) && !selectedMood);
-        saveDraft();
-      }
-    }, 1000),
-    [title, selectedMood, isSaving]
-  );
-
-  // Save the journal entry
-  const saveEntry = useCallback(async () => {
-    if (!editor) return;
-
-    const content = editor.getHTML();
-    if (!content.trim() && !title.trim()) {
-      return; // Don't save empty entries
-    }
-
-    setIsSaving(true);
-
-    try {
-      if (!user) {
-        toast({
-          title: "Authentication Error",
-          description: "You must be logged in to save journal entries. Please sign in.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const { data, error } = await dataService.addJournalEntry({
-        user_id: user.id,
-        title: title.trim() || "Untitled Entry",
-        content: content,
-        mood: selectedMood,
-        mood_score: selectedMood ? 7 : undefined,
-        ...(tomorrowsPlan ? { tomorrows_intention: tomorrowsPlan } : {}),
-        created_at: new Date().toISOString(),
-      }).select();
-
-      if (error) {
-        console.error("Error saving journal entry:", error);
-        throw error;
-      }
-
-      setLastSaved(new Date());
-      toast({
-        title: "Entry saved",
-        description: "Your journal entry has been saved successfully.",
-      });
-      
-      // Navigate back to journal page
-      navigate("/patient-dashboard/journal");
-    } catch (error: any) {
-      console.error("Error saving journal entry:", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save your journal entry. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [editor, title, selectedMood, tomorrowsPlan, navigate, toast, user]);
-
-  // Autosave functionality
-  useEffect(() => {
-    if (!editor) return;
-    
-    const content = editor.getText().trim();
-    if (!content && !title.trim()) return;
-
-    const timeoutId = setTimeout(saveEntry, AUTOSAVE_DELAY);
-    return () => clearTimeout(timeoutId);
-  }, [editor, title, selectedMood, tomorrowsPlan, saveEntry]);
-
-  // Handle manually saving
-  const handleSave = async () => {
-    if (!selectedMood) {
-      setShowMoodReminder(true);
-      toast({
-        title: "Please select a mood",
-        description: "Select a mood before saving your journal entry.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsSaving(true);
-    
-    try {
-      // Get the current date and time
-      const now = new Date().toISOString();
-      
-      const { error } = await dataService.addJournalEntry({
-        title,
-        content: content,
-        mood: selectedMood as "Happy" | "Calm" | "Sad" | "Angry" | "Worried",
-        user_id: user?.id,
-        created_at: now,
-        updated_at: now,
-        is_encrypted: false,
-      });
-
-      if (error) {
-        console.error("Error saving journal entry:", error);
-        throw error;
-      }
-
-      setLastSaved(new Date());
-      toast({
-        title: "Entry saved",
-        description: "Your journal entry has been saved successfully.",
-      });
-      
-      // Navigate back to journal page
-      navigate("/patient-dashboard/journal");
-    } catch (error: any) {
-      console.error("Error saving journal entry:", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save your journal entry. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Handle cancel
-  const handleCancel = () => {
-    navigate("/patient-dashboard/journal");
-  };
-
-  // Mood selection component
-  const MoodSelector = () => (
-    <div className="flex flex-wrap gap-2 mt-4">
-      <p className="w-full text-sm font-medium mb-1">How are you feeling today?</p>
-      {["Happy", "Grateful", "Calm", "Anxious", "Sad", "Overwhelmed"].map((mood) => (
-        <Button
-          key={mood}
-          type="button"
-          variant={selectedMood === mood ? "default" : "outline"}
-          size="sm"
-          onClick={() => setSelectedMood(mood)}
-          className={selectedMood === mood ? "bg-blue-600" : ""}
-        >
-          {mood}
-        </Button>
-      ))}
-    </div>
-  );
-
+  // Regular component starts here for patients
   return (
     <DashboardLayout>
       <div className="container max-w-4xl mx-auto">
@@ -359,7 +330,21 @@ export default function NewJournalEntryPage() {
             />
           </div>
 
-          <MoodSelector />
+          <div className="flex flex-wrap gap-2 mt-4">
+            <p className="w-full text-sm font-medium mb-1">How are you feeling today?</p>
+            {["Happy", "Grateful", "Calm", "Anxious", "Sad", "Overwhelmed"].map((mood) => (
+              <Button
+                key={mood}
+                type="button"
+                variant={selectedMood === mood ? "default" : "outline"}
+                size="sm"
+                onClick={() => setSelectedMood(mood)}
+                className={selectedMood === mood ? "bg-blue-600" : ""}
+              >
+                {mood}
+              </Button>
+            ))}
+          </div>
           
           {showMoodReminder && !selectedMood && (
             <div className="my-4 p-3 rounded-md bg-amber-50 border border-amber-200 flex items-center gap-2 text-sm text-amber-700">
@@ -385,7 +370,7 @@ export default function NewJournalEntryPage() {
           </div>
 
           <div className="flex justify-between mt-6">
-            <Button variant="outline" onClick={handleCancel}>
+            <Button variant="outline" onClick={() => navigate("/patient-dashboard/journal")}>
               Cancel
             </Button>
             <div className="flex items-center gap-2">
@@ -394,7 +379,7 @@ export default function NewJournalEntryPage() {
                   Last saved: {lastSaved.toLocaleTimeString()}
                 </span>
               )}
-              <Button onClick={handleSave} disabled={isSaving}>
+              <Button onClick={saveEntry} disabled={isSaving}>
                 {isSaving ? "Saving..." : "Save Entry"}
               </Button>
             </div>

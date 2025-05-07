@@ -67,6 +67,9 @@ export interface IDataService {
   
   deleteMoodEntry(id: string): Promise<boolean>;
   
+  // Subscribe to mood entries (for real-time updates)
+  subscribeMoodEntries(userId: string, callback: () => void): () => void;
+  
   // Journal entries
   getJournalEntries(userId: string, options?: {
     limit?: number,

@@ -45,13 +45,17 @@ interface JournalEntry {
   id: string;
   title: string;
   content: string;
-  mood?: string;
+  mood?: string | number;
   mood_score?: number;
   tags?: string[];
-  created_at: string;
+  created_at?: string;
   updated_at?: string;
-  user_id: string;
+  createdAt?: string; // For test mode
+  updatedAt?: string; // For test mode
+  user_id?: string;
+  userId?: string; // For test mode
   is_favorite?: boolean;
+  isPrivate?: boolean; // For test mode
   tomorrows_intention?: string;
 }
 
@@ -66,10 +70,53 @@ export default function JournalPage() {
   const [tomorrowsPlan, setTomorrowsPlan] = useState('');
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [activeTab, setActiveTab] = useState('entries');
+  const [isMentor, setIsMentor] = useState(false);
+  const [isRoleChecking, setIsRoleChecking] = useState(true);
+  
+  // Check if the user is a mood mentor
+  useEffect(() => {
+    const checkUserRole = async () => {
+      if (!user) return;
+      
+      try {
+        setIsRoleChecking(true);
+        // Check if the user has a mentor profile
+        const profileResponse = await userService.getUserProfile(user.id);
+        const isMoodMentor = profileResponse?.role === 'mood_mentor';
+        
+        // If they're a mentor, redirect to mentor dashboard
+        if (isMoodMentor) {
+          navigate('/mood-mentor-dashboard');
+        }
+        
+        setIsMentor(isMoodMentor);
+      } catch (error) {
+        console.error("Error checking user role:", error);
+      } finally {
+        setIsRoleChecking(false);
+      }
+    };
+    
+    checkUserRole();
+  }, [user, navigate]);
+  
+  // If still checking role, show loading state
+  if (isRoleChecking) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="text-slate-500">Checking access...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   // Fetch journal entries
   useEffect(() => {
-    const fetchJournalEntries = async () => {
+    const fetchEntries = async () => {
       if (!user) return;
       
       try {
@@ -78,8 +125,23 @@ export default function JournalPage() {
           
         if (error) throw error;
         
-        setJournalEntries(data || []);
-        setFilteredEntries(data || []);
+        // Normalize data fields to handle both production and test mode formats
+        const normalizedEntries = (data || []).map(entry => ({
+          id: entry.id,
+          title: entry.title,
+          content: entry.content,
+          mood: entry.mood,
+          mood_score: entry.mood_score,
+          tags: entry.tags,
+          created_at: entry.created_at || entry.createdAt,
+          updated_at: entry.updated_at || entry.updatedAt,
+          user_id: entry.user_id || entry.userId,
+          is_favorite: entry.is_favorite,
+          tomorrows_intention: entry.tomorrows_intention
+        }));
+
+        setJournalEntries(normalizedEntries);
+        setFilteredEntries(normalizedEntries);
       } catch (error) {
         console.error('Error fetching journal entries:', error);
         toast.error("Failed to load journal entries");
@@ -88,11 +150,11 @@ export default function JournalPage() {
       }
     };
     
-    fetchJournalEntries();
+    fetchEntries();
     
     // Set up data refresher - polling instead of real-time subscription
     const intervalId = setInterval(() => {
-      fetchJournalEntries();
+      fetchEntries();
     }, 60000); // Refresh every minute
       
     return () => {
@@ -132,7 +194,9 @@ export default function JournalPage() {
   };
   
   // Format date
-  const formatDate = (dateStr: string) => {
+  const formatDate = (dateStr: string | undefined) => {
+    if (!dateStr) return "Invalid date";
+    
     try {
       return format(new Date(dateStr), "MMM d, yyyy");
     } catch (e) {
@@ -564,7 +628,7 @@ export default function JournalPage() {
                     </div>
                     <span className="font-semibold">
                       {journalEntries.filter(e => {
-                        const entryDate = new Date(e.created_at);
+                        const entryDate = new Date(e.created_at || '');
                         const now = new Date();
                         return entryDate.getMonth() === now.getMonth() && 
                                entryDate.getFullYear() === now.getFullYear();

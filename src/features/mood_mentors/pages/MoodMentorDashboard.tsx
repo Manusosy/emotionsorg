@@ -583,18 +583,35 @@ export default function MoodMentorDashboard() {
     }
   };
   
-  // Get random positive message for the dashboard
-  const getRandomPositiveMessage = () => {
-    const messages = [
-      "You're making a difference in your patients' lives today!",
-      "Your expertise helps people find their emotional balance.",
-      "Today is a great day to inspire positive change!",
-      "Remember, your guidance matters more than you know.",
-      "Your support creates ripples of wellness in many lives."
-    ];
+  // Get random positive message for the dashboard based on time of day
+  const getMotivationalMessage = () => {
+    const hour = new Date().getHours();
     
-    const randomIndex = Math.floor(Math.random() * messages.length);
-    return messages[randomIndex];
+    if (hour < 12) {
+      const morningMessages = [
+        "A fresh start to positively impact your patients today.",
+        "Begin your day by making a difference in someone's emotional wellbeing.",
+        "Morning energy to guide others toward emotional balance.",
+        "Early bird catches the opportunity to help others heal."
+      ];
+      return morningMessages[Math.floor(Math.random() * morningMessages.length)];
+    } else if (hour < 18) {
+      const afternoonMessages = [
+        "Your guidance continues to create positive change this afternoon.",
+        "Keep up the great work supporting your patients' journey.",
+        "Your afternoon sessions help build emotional resilience.",
+        "Your expertise is making a meaningful difference today."
+      ];
+      return afternoonMessages[Math.floor(Math.random() * afternoonMessages.length)];
+    } else {
+      const eveningMessages = [
+        "Reflect on the positive impact you've made today.",
+        "Your evening dedication helps patients find peace.",
+        "Winding down after a day of meaningful connections.",
+        "Your compassion has brightened someone's day."
+      ];
+      return eveningMessages[Math.floor(Math.random() * eveningMessages.length)];
+    }
   };
 
   return (
@@ -654,9 +671,9 @@ export default function MoodMentorDashboard() {
         {/* Welcome Section */}
         <section className="space-y-2">
           <h1 className="text-2xl font-bold text-gray-900">
-            {getTimeBasedGreeting()}, {getFullName()}
+            {getTimeBasedGreeting()}, {getFullName().split(' ')[0]}
           </h1>
-          <p className="text-gray-600">{getRandomPositiveMessage()}</p>
+          <p className="text-gray-600">{getMotivationalMessage()}</p>
         </section>
         
         {/* Stats Section */}

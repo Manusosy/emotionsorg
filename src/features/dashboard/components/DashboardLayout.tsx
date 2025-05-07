@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "@/hooks/use-toast";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useAuth } from "@/hooks/use-auth";
-import WelcomeDialog from "@/components/WelcomeDialog";
+// import WelcomeDialog from "@/components/WelcomeDialog";
 import {
   Dialog,
   DialogContent,
@@ -223,7 +223,7 @@ const searchableItems: SearchResult[] = [
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const { user, signout, isAuthenticated, authLoading, userRole } = useAuth();
+  const { user, signOut, isAuthenticated, isLoading: authLoading, userRole } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
@@ -241,7 +241,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const searchRef = useRef<HTMLDivElement>(null);
 
   // Check if user is admin
-  const isAdmin = user?.user_metadata?.role === 'admin';
+  const isAdmin = user?.role === 'admin';
   
   // Create dynamic navigation based on user role
   const navigationWithAdminLink = useMemo(() => {
@@ -279,29 +279,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   };
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading) {
+      return;
+    }
     
     if (!isAuthenticated) {
-      console.log("User not authenticated, redirecting to signin from dashboard layout");
-      navigate('/signin', { replace: true });
-      return;
-    }
-    
-    if (!userRole) {
-      console.log("No user role found, redirecting to signin");
-      navigate('/signin', { replace: true });
-      return;
-    }
-    
-    if (requiredRole && userRole !== requiredRole) {
-      console.log(`User role ${userRole} does not match required role ${requiredRole}, redirecting to signin`);
-      const appropriateDashboard = getDashboardUrlForRole(userRole);
-      navigate(appropriateDashboard, { replace: true });
+      navigate("/signin");
       return;
     }
     
     setCurrentPath(window.location.pathname);
-  }, [isAuthenticated, navigate, authLoading, userRole, requiredRole, getDashboardUrlForRole]);
+  }, [isAuthenticated, navigate, authLoading, userRole]);
 
   useEffect(() => {
     setSidebarOpen(!isMobile);
@@ -313,6 +301,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       try {
         if (!user?.id) return;
         
+        // Mock data for demo - replace with actual API calls later
+        setUnreadNotifications(3);
+        setUnreadMessages(2);
+        
+        /* Removed supabase references 
         const [notificationsResponse, messagesResponse] = await Promise.all([
           supabase
             .from('notifications')
@@ -328,6 +321,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
         setUnreadNotifications(notificationsResponse.count || 0);
         setUnreadMessages(messagesResponse.count || 0);
+        */
       } catch (error) {
         console.error('Error fetching unread counts:', error);
       }
@@ -344,15 +338,6 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       if (!user?.id) return;
 
       try {
-        const { data, error } = await supabase
-          .from('notifications')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(10);
-        
-        if (error) throw error;
-
         // Create welcome notification for new users
         const welcomeNotification = {
           id: 'welcome-1',
@@ -362,6 +347,40 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           read: false,
           type: 'welcome' as const
         } as Notification;
+
+        // Add mock notifications
+        const mockNotifications: Notification[] = [
+          welcomeNotification,
+          {
+            id: 'notif-1',
+            title: 'New mood insights available',
+            content: 'We\'ve analyzed your mood patterns from the past week. Check out your personalized insights!',
+            created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+            read: false,
+            type: 'update' as const
+          },
+          {
+            id: 'notif-2',
+            title: 'Journal entry reminder',
+            content: 'It\'s been a few days since your last journal entry. Take a moment to reflect on your day.',
+            created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+            read: true,
+            type: 'reminder' as const
+          }
+        ];
+        
+        setNotifications(mockNotifications);
+        setUnreadNotifications(2);
+
+        /* Removed supabase references
+        const { data, error } = await supabase
+          .from('notifications')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        
+        if (error) throw error;
 
         if (data && data.length > 0) {
           // Map database fields to our Notification interface
@@ -392,6 +411,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           // Set unread notification counter to 1 for the welcome message
           setUnreadNotifications(1);
         }
+        */
       } catch (error) {
         console.error('Error fetching notifications:', error);
       }
@@ -458,6 +478,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     if (!user?.id) return;
 
     try {
+      // Mock notification count
+      setUnreadNotifications(2);
+      
+      /* Removed supabase references
       const { data, error } = await supabase
         .from('notifications')
         .select('id, read')
@@ -475,6 +499,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       const unreadCount = filteredData.filter(item => !item.read).length;
       
       setUnreadNotifications(unreadCount > 0 || (unreadCount === 0 && data?.length === 0) ? unreadCount : 0);
+      */
     } catch (error) {
       console.error('Error fetching notification count:', error);
     }
@@ -492,6 +517,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         }
       }
 
+      // Update notifications list
+      setNotifications(prev => 
+        prev.map(n => n.id === id ? {...n, read: true} : n)
+      );
+
+      /* Removed supabase references
       // For demo notifications, don't update database
       if (id === 'welcome-1') {
         return;
@@ -510,6 +541,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       if (error) {
         throw error;
       }
+      */
     } catch (error) {
       console.error('Error marking notification as read:', error);
       // On error, still keep localStorage updated to ensure the best UX
@@ -530,6 +562,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         setUnreadNotifications(prev => Math.max(0, prev - 1));
       }
       
+      // Use toast function without methods
+      console.log("Notification deleted");
+      
+      /* Removed supabase references
       // If this is a real notification (not mock), delete from database
       if (id !== 'welcome-1' && user?.id) {
         await supabase
@@ -540,9 +576,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           
         toast.success("Notification deleted");
       }
+      */
     } catch (error) {
       console.error('Error deleting notification:', error);
-      toast.error("Failed to delete notification");
+      // toast.error("Failed to delete notification");
+      console.log("Failed to delete notification");
     }
   };
 
@@ -578,13 +616,12 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         }
       });
       
-      // Show single toast
-      const toastId = toast.loading("Signing out...");
+      // Show loading message
+      console.log("Signing out...");
       
-      await signout();
+      await signOut();
       
-      // Clear the toast
-      toast.dismiss(toastId);
+      console.log("Signed out successfully");
       
       // Force redirect to home page
       window.location.href = '/';
@@ -604,15 +641,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   // Add this function to mark all notifications as read
   const markAllNotificationsAsRead = async () => {
     try {
-      // First, get all notifications for this user
-      const { data, error: fetchError } = await supabase
-        .from('notifications')
-        .select('id')
-        .eq('user_id', user?.id || '');
-
-      if (fetchError) throw fetchError;
-
-      // Create a batch of notifications to mark as read
+      // Mark all notifications as read in the UI
       const notificationsToUpdate = [...notifications].filter(n => !n.read);
       
       // Mark all as read in localStorage for immediate UI effect
@@ -628,6 +657,15 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         prev.map(notification => ({ ...notification, read: true }))
       );
       setUnreadNotifications(0);
+
+      /* Removed supabase references
+      // First, get all notifications for this user
+      const { data, error: fetchError } = await supabase
+        .from('notifications')
+        .select('id')
+        .eq('user_id', user?.id || '');
+
+      if (fetchError) throw fetchError;
 
       // Update database - include retry logic
       const updateNotifications = async (retryCount = 0) => {
@@ -650,6 +688,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       };
 
       await updateNotifications();
+      */
       
       // Refresh notification count after successful update
       fetchNotificationCount();
@@ -659,14 +698,13 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     }
   };
 
-  const firstName = user?.user_metadata?.first_name || 'User';
-  const lastName = user?.user_metadata?.last_name || '';
+  // Use safe approach to access user data
+  const firstName = user?.first_name || 'User';
+  const lastName = user?.last_name || '';
+  const avatarUrl = user?.avatar_url || '';
   
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Include the welcome dialog */}
-      <WelcomeDialog />
-      
       {/* Notification dialog */}
       <Dialog open={notificationDialogOpen} onOpenChange={setNotificationDialogOpen}>
         <DialogContent>
@@ -895,7 +933,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
                   <Avatar className="h-9 w-9 cursor-pointer border-2 border-blue-100">
-                    <AvatarImage src={user?.user_metadata?.avatar_url} />
+                    <AvatarImage src={avatarUrl} />
                     <AvatarFallback className="bg-blue-600 text-white">
                       {firstName[0]?.toUpperCase() || 'U'}
                     </AvatarFallback>

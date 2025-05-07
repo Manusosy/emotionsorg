@@ -279,7 +279,7 @@ export default function MessagesPage() {
               Connect with mood mentors through your dashboard to start conversations.
             </p>
             <Button
-              onClick={() => window.location.href = "/mood-mentors"}
+              onClick={() => window.location.href = "/mood-mentor"}
               className="bg-blue-600 hover:bg-blue-700"
             >
               Find Mood Mentors
@@ -353,7 +353,12 @@ export default function MessagesPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => window.open(`/mood-mentors/${otherUserData?.id}`, '_blank')}
+                      onClick={() => {
+                        if (otherUserData) {
+                          const nameSlug = otherUserData.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+                          window.open(`/mood-mentor/${nameSlug}?id=${otherUserData.id}`, '_blank');
+                        }
+                      }}
                     >
                       View Profile
                     </Button>
@@ -413,7 +418,7 @@ export default function MessagesPage() {
                     Select a conversation to start messaging or browse mood mentors to start new conversations.
                   </p>
                   <Button
-                    onClick={() => window.location.href = "/mood-mentors"}
+                    onClick={() => window.location.href = "/mood-mentor"}
                     className="bg-blue-600 hover:bg-blue-700"
                   >
                     Find Mood Mentors
