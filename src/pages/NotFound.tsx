@@ -1,12 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, useContext } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 
 export default function NotFound() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, userRole } = useAuth();
+  const { user, userRole } = useContext(AuthContext);
   
   // Handle navigation based on context
   useEffect(() => {
@@ -30,22 +30,12 @@ export default function NotFound() {
     }
   }, [location.pathname, navigate, userRole]);
   
-  // Determine where to redirect the user based on context
-  const getRedirectPath = () => {
-    const path = location.pathname;
-    
-    if (path.includes('/patient-dashboard')) {
-      return '/patient-dashboard';
-    } else if (path.includes('/mood-mentor-dashboard')) {
+  // Get appropriate dashboard link based on user role
+  const getDashboardLink = () => {
+    if (userRole === 'mood_mentor') {
       return '/mood-mentor-dashboard';
-    } else if (userRole === 'patient') {
-      return '/patient-dashboard';
-    } else if (userRole === 'mood_mentor') {
-      return '/mood-mentor-dashboard';
-    } else if (userRole === 'admin') {
-      return '/admin-dashboard';
     } else {
-      return '/';
+      return '/patient-dashboard';
     }
   };
 
@@ -65,7 +55,7 @@ export default function NotFound() {
             Go Back
           </Button>
           <Button variant="outline" asChild>
-            <Link to={getRedirectPath()}>
+            <Link to={getDashboardLink()}>
               {location.pathname.includes('patient-dashboard') 
                 ? 'Patient Dashboard' 
                 : location.pathname.includes('mood-mentor-dashboard')

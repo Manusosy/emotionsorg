@@ -1,188 +1,274 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { Link, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import AuthLayout from "../components/AuthLayout";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { Mail, Lock, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
-import { Spinner } from "@/components/ui/spinner";
+import { supabase } from "@/lib/supabase";
 
-export default function SignIn() {
+interface SignInProps {
+  userType: 'patient' | 'mentor';
+}
+
+export default function SignIn({ userType }: SignInProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  
+  const { signIn, isAuthenticated, user, getDashboardUrlForRole } = useContext(AuthContext);
+  const userRole = user?.user_metadata?.role;
   const navigate = useNavigate();
   const location = useLocation();
-  const { signIn, isAuthenticated, userRole, getDashboardUrlForRole, isLoading: authLoading } = useAuth();
+
+  const searchParams = new URLSearchParams(location.search);
+  const redirectTo = searchParams.get('redirectTo');
   
-  // Get redirect URL from query parameters if it exists
-  const getRedirectUrl = () => {
-    const searchParams = new URLSearchParams(location.search);
-    return searchParams.get("redirect");
-  };
-  
-  // If user is already authenticated, redirect immediately to their dashboard
-  if (!authLoading && isAuthenticated && userRole) {
+  // Check for state passed from the journal page
+  const fromState = location.state as { from: string, returnToJournal?: boolean } | null;
+  const returnToJournal = fromState?.returnToJournal;
+
+  // If already authenticated, redirect to appropriate destination
+  if (isAuthenticated) {
+    // If coming from journal with returnToJournal flag, go back to journal
+    if (returnToJournal) {
+      return <Navigate to="/journal" replace />;
+    }
+    
+    // Otherwise use normal redirect logic
+    const fromPath = fromState?.from;
     const dashboardUrl = getDashboardUrlForRole(userRole);
-    console.log("User already authenticated, redirecting to dashboard:", dashboardUrl);
-    return <Navigate to={dashboardUrl} replace />;
+    return <Navigate to={redirectTo || fromPath || dashboardUrl} replace />;
   }
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
+    setError("");
+    
+    if (!email || !password) {
+      setError("Please enter both email and password");
+      return;
+    }
     
     try {
-      console.log("Attempting sign in with email:", email);
+      setIsLoading(true);
+      
+      // First, check if there's a user with this email to provide a better error message
+      const { data: authData, error: checkError } = await supabase
+        .from(userType === 'mentor' ? 'mood_mentor_profiles' : 'patient_profiles')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle();
+      
+      // If we couldn't find the user in the right profile table, they might be using the wrong signin form
+      if (!authData && !checkError) {
+        const otherType = userType === 'mentor' ? 'patient' : 'mentor';
+        const { data: otherAuthData } = await supabase
+          .from(otherType === 'mentor' ? 'mood_mentor_profiles' : 'patient_profiles')
+          .select('id')
+          .eq('email', email)
+          .maybeSingle();
+          
+        if (otherAuthData) {
+          const errorMessage = userType === 'mentor' 
+            ? "This email is registered as a patient. Please use the Patient sign in."
+            : "This email is registered as a mood mentor. Please use the Mentor sign in.";
+          setError(errorMessage);
+          toast.error(errorMessage);
+          return;
+        }
+      }
+      
+      // Proceed with the actual sign in attempt
       const response = await signIn({ email, password });
-
+      
+      if (response.error) {
+        // Handle specific error cases
+        if (response.error.includes('Invalid login credentials')) {
+          setError("Incorrect email or password. Please try again.");
+        } else if (response.error.includes('Email not confirmed')) {
+          setError("Please verify your email address before signing in.");
+        } else {
+          setError(response.error);
+        }
+        toast.error(response.error);
+        return;
+      }
+      
       if (response.user) {
+        // Check if user role matches the expected type
+        const expectedRole = userType === 'mentor' ? 'mood_mentor' : 'patient';
+        const userRole = response.user.user_metadata?.role;
+        
+        if (userRole !== expectedRole) {
+          const errorMessage = userType === 'mentor' 
+            ? "This login is only for Mood Mentors. Please use the Patient login if you're a patient."
+            : "This login is only for Patients. Please use the Mood Mentor login if you're a mentor.";
+          setError(errorMessage);
+          toast.error(errorMessage);
+          
+          // Sign out the user since they're using the wrong form
+          await supabase.auth.signOut();
+          return;
+        }
+        
         toast.success("Signed in successfully!");
         
-        // Check if there's a redirect URL in the query parameters
-        const redirectUrl = getRedirectUrl();
-        
-        if (redirectUrl) {
-          console.log(`Sign in successful, redirecting to: ${redirectUrl}`);
-          navigate(decodeURIComponent(redirectUrl), { replace: true });
-        } else {
-          // If no redirect URL, get the dashboard URL for the user's role
-          let dashboardPath;
-          
-          // Check if response.user.role exists
-          if (response.user.role) {
-            dashboardPath = getDashboardUrlForRole(response.user.role);
-          } else {
-            // Map the user's email to the default role based on the mock accounts
-            const role = email === 'mentor@example.com' ? 'mood_mentor' : 'patient';
-            dashboardPath = getDashboardUrlForRole(role);
-          }
-          
-          console.log(`Sign in successful, redirecting to dashboard: ${dashboardPath}`);
-          
-          // Force a complete page reload with direct navigation
-          window.location.href = dashboardPath;
+        // Handle navigation based on returnToJournal flag
+        if (returnToJournal) {
+          navigate('/journal', { replace: true });
         }
+        // Component will otherwise re-render and redirect due to isAuthenticated changing
       } else {
-        throw new Error(response.error || "Sign in failed");
+        const unknownErrorMsg = "Sign in attempt completed with no user and no error.";
+        setError(unknownErrorMsg);
+        toast.error("An unexpected issue occurred during sign in.");
       }
-    } catch (error) {
-      console.error('Sign in error:', error);
-      toast.error("Sign in failed. Please check your credentials.");
+    } catch (error: any) {
+      const errorMsg = error.message || "An unexpected server error occurred.";
+      setError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const togglePasswordVisibility = () => {
-    setShowPassword(!showPassword);
+  const handleGoogleSignIn = async () => {
+    try {
+      setIsLoading(true);
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?userType=${userType}`
+        }
+      });
+      
+      if (error) {
+        toast.error(error.message);
+      }
+    } catch (error: any) {
+      toast.error("Failed to sign in with Google");
+      console.error("Google sign-in error:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleGoogleLogin = () => {
-    // TO BE CONFIGURED LATER
-    toast.info("Google sign in will be configured later");
-  };
+  const title = userType === 'mentor' ? 'Mood Mentor Sign In' : 'Patient Sign In';
+  const subtitle = userType === 'mentor' 
+    ? 'Enter your credentials below to access your Mentor dashboard'
+    : 'Enter your credentials below to access your personal dashboard';
 
   return (
-    <AuthLayout>
-      <div className="mb-6 text-center">
-        <h1 className="text-2xl font-bold">Welcome Back</h1>
-        <p className="text-muted-foreground mt-1">Sign in to your account to continue</p>
-      </div>
+    <AuthLayout
+      title={title}
+      subtitle={subtitle}
+      formType={userType}
+    >
+      {error && (
+        <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-md text-sm">
+          {error}
+        </div>
+      )}
+
+      <form className="space-y-6 w-full" onSubmit={handleSignIn}>
+        <div className="space-y-1">
+          <Label htmlFor="email">Email</Label>
+          <div className="relative">
+            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 h-5 w-5" />
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="name@example.com"
+              className="pl-10"
+              required
+            />
+          </div>
+        </div>
+        
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <Label htmlFor="password">Password</Label>
+            <Link to="/forgot-password" className="text-sm text-blue-600 hover:underline">
+              Forgot password?
+            </Link>
+          </div>
+          <div className="relative">
+            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500 h-5 w-5" />
+            <Input
+              id="password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="pl-10"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500 hover:text-gray-700"
+            >
+              {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+            </button>
+          </div>
+        </div>
+
+        <Button 
+          type="submit" 
+          className="w-full" 
+          size="lg"
+          disabled={isLoading || !email || !password}
+        >
+          {isLoading ? "Signing In..." : "Sign In"}
+        </Button>
+
+        <p className="text-center text-sm text-gray-600">
+          Don't have an account?{" "}
+          <Link to={userType === 'mentor' ? "/mentor-signup" : "/patient-signup"} className="text-blue-600 hover:underline">
+            Sign up
+          </Link>
+        </p>
+        
+        <p className="text-center text-sm text-gray-600">
+          {userType === 'mentor' ? 'Are you a Patient?' : 'Are you a Mood Mentor?'}{" "}
+          <Link to={userType === 'mentor' ? "/patient-signin" : "/mentor-signin"} className="text-blue-600 hover:underline">
+            Sign in here
+          </Link>
+        </p>
+      </form>
       
-      <div className="mb-4">
+      <div className="mt-6">
+        <div className="relative mb-4">
+          <div className="absolute inset-0 flex items-center">
+            <div className="w-full border-t border-gray-300"></div>
+          </div>
+          <div className="relative flex justify-center text-sm">
+            <span className="px-2 bg-white text-gray-500">Or continue with</span>
+          </div>
+        </div>
+        
         <Button 
           type="button" 
           variant="outline" 
           className="w-full flex items-center justify-center gap-2 py-5"
-          onClick={handleGoogleLogin}
+          onClick={handleGoogleSignIn}
           disabled={isLoading}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M15.545 6.558C15.545 6.044 15.4979 5.52933 15.4129 5.03333H8V7.36667H12.2896C12.1146 8.10667 11.5663 8.71533 10.7913 9.11533V10.6153H13.2546C14.7054 9.56667 15.545 8.216 15.545 6.558Z" fill="#4285F4"/>
-            <path d="M8 15.9999C10.16 15.9999 11.9708 15.292 13.2546 10.6153L10.7912 9.11533C10.0938 9.65866 9.15833 9.9853 8 9.9853C5.99583 9.9853 4.2975 8.89967 3.64583 7.36667H1.0975V8.91667C2.3775 12.9932 5.00667 15.9999 8 15.9999Z" fill="#34A853"/>
-            <path d="M3.64583 7.36667C3.49583 6.99267 3.41 6.59133 3.41 6.17267C3.41 5.754 3.49583 5.35267 3.64583 4.97867V3.42867H1.0975C0.64 4.25133 0.375 5.184 0.375 6.17267C0.375 7.16133 0.64 8.094 1.0975 8.91667L3.64583 7.36667Z" fill="#FBBC05"/>
-            <path d="M8 2.36C9.15667 2.36 10.1992 2.75267 11.0283 3.54333L13.1975 1.374C11.9658 0.22333 10.155 -0.000671387 8 -0.000671387C5.00667 -0.000671387 2.3775 3.00733 1.0975 7.084L3.64583 8.634C4.2975 7.10067 5.99583 2.36 8 2.36Z" fill="#EA4335"/>
-          </svg>
+          <img 
+            src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
+            alt="Google" 
+            className="w-5 h-5" 
+          />
           Sign in with Google
         </Button>
       </div>
-
-      <div className="relative mb-4">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-gray-300"></div>
-        </div>
-        <div className="relative flex justify-center text-sm">
-          <span className="px-2 bg-white text-gray-500">Or continue with</span>
-        </div>
-      </div>
-
-      <form onSubmit={handleSignIn} className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
-          <div className="relative">
-            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              id="email"
-              type="email"
-              placeholder="Enter your email"
-              className="pl-10"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              disabled={isLoading}
-            />
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              id="password"
-              type={showPassword ? "text" : "password"}
-              placeholder="Enter your password"
-              className="pl-10 pr-10"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={isLoading}
-            />
-            <button 
-              type="button"
-              onClick={togglePasswordVisibility}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-500"
-              tabIndex={-1}
-            >
-              {showPassword ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-            </button>
-          </div>
-        </div>
-        <Button 
-          type="submit" 
-          className="w-full mt-6" 
-          disabled={isLoading}
-          variant="brand"
-        >
-          {isLoading ? "Signing in..." : "Sign In"}
-        </Button>
-        
-        <div className="flex items-center justify-between mt-4">
-          <Link to="/signup" className="text-sm text-primary hover:underline">
-            Don't have an account? Sign up
-          </Link>
-          <Link to="/forgot-password" className="text-sm text-primary hover:underline">
-            Forgot password?
-          </Link>
-        </div>
-      </form>
     </AuthLayout>
   );
 } 

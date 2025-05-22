@@ -1,8 +1,10 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import React, { useState, useEffect, useRef } from "react";
-import { DashboardLayout } from "../components/DashboardLayout";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/authContext';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -34,11 +36,7 @@ import {
   Link as LinkIcon,
   Upload,
 } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
-import { toast } from "sonner";
 import { Resource } from "../../../types/database.types";
-// Supabase import removed
-// Supabase import removed
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -83,6 +81,10 @@ const ResourcesPage = () => {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState<AddResourceFormData>({
@@ -100,9 +102,7 @@ const ResourcesPage = () => {
       
       if (!user?.id) return;
       
-      const { data, error } = await dataService.getResources();
-      
-      if (error) throw error;
+      const data = await supabase.from('resources').select();
       
       setResources(data || []);
     } catch (error: any) {
@@ -130,9 +130,7 @@ const ResourcesPage = () => {
       const downloadUrl = resource.file_url || resource.url;
       
       // Increment download count
-      const { error } = await dataService.incrementResourceDownloads(resource.id);
-      
-      if (error) throw error;
+      await supabase.from('resources').update({ downloads: resource.downloads + 1 }).eq('id', resource.id);
       
       // Update local state
       setResources(prev => 
@@ -157,9 +155,7 @@ const ResourcesPage = () => {
       await navigator.clipboard.writeText(resource.url);
       
       // Increment share count
-      const { error } = await dataService.incrementResourceShares(resource.id);
-      
-      if (error) throw error;
+      await supabase.from('resources').update({ shares: resource.shares + 1 }).eq('id', resource.id);
       
       // Update local state
       setResources(prev => 
@@ -180,7 +176,7 @@ const ResourcesPage = () => {
   const handleDelete = async (resourceId: string) => {
     if (window.confirm("Are you sure you want to delete this resource?")) {
       try {
-        await deleteResource(resourceId);
+        await supabase.from('resources').delete().eq('id', resourceId);
       } catch (error) {
         console.error('Error in handleDelete:', error);
         toast.error("Failed to delete resource");
@@ -200,6 +196,7 @@ const ResourcesPage = () => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     setFormData(prev => ({ ...prev, file }));
+    setUploadedFile(file);
   };
 
   const resetForm = () => {
@@ -214,6 +211,7 @@ const ResourcesPage = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+    setUploadedFile(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -236,15 +234,15 @@ const ResourcesPage = () => {
         const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
         const filePath = `resources/${fileName}`;
         
-        const { error, url } = await uploadFile(file);
+        const { data, error } = await supabase.storage.from('resources').upload(filePath, file);
         
         if (error) throw error;
-        if (!url) throw new Error("Failed to get file URL");
+        if (!data) throw new Error("Failed to get file URL");
         
-        fileUrl = url;
+        fileUrl = data.publicUrl;
         // If no direct URL was provided, use the file URL as the resource URL
         if (!resourceUrl) {
-          resourceUrl = url;
+          resourceUrl = data.publicUrl;
         }
       } else if (formData.type === "link") {
         // For link type, URL is required
@@ -255,7 +253,7 @@ const ResourcesPage = () => {
       if (!resourceUrl) throw new Error("Either a file or URL must be provided");
       
       // Create the resource in the database
-      const { data, error } = await dataService.createResource({
+      const { data: dbData, error: dbError } = await supabase.from('resources').insert({
         title: formData.title,
         description: formData.description,
         type: formData.type,
@@ -263,13 +261,13 @@ const ResourcesPage = () => {
         url: resourceUrl,
         file_url: fileUrl || null,
         mood_mentor_id: user.id
-      });
+      }).select();
       
-      if (error) throw error;
+      if (dbError) throw dbError;
       
       // Update the local state with the new resource
-      if (data && data.length > 0) {
-        setResources(prev => [data[0], ...prev]);
+      if (dbData && dbData.length > 0) {
+        setResources(prev => [dbData[0], ...prev]);
       }
       
       // Reset form and close dialog
@@ -299,63 +297,22 @@ const ResourcesPage = () => {
     }
   };
 
-  const handleUploadResource = async (formData: any) => {
-    setUploading(true);
-    try {
-      const fileExt = formData.file?.name?.split('.').pop();
-      const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
-      const filePath = `${fileName}`;
-      
-      let imageUrl = '';
-      
-      // Upload image if provided
-      if (formData.file) {
-        // Use a mock file upload service instead of Supabase storage
-        const { success, url, error } = await uploadFile(formData.file);
-        
-        if (!success || !url) {
-          throw new Error(error || "Failed to upload file");
-        }
-        
-        imageUrl = url;
-      }
-      
-      // Create resource in database
-      const newResource = {
-        title: formData.title,
-        description: formData.description,
-        url: formData.url,
-        image_url: imageUrl,
-        category: formData.category,
-        tags: formData.tags,
-        created_by: user?.id
-      };
-      
-      // Use the dataService to add the resource
-      await dataService.addResource(newResource);
-      
-      toast.success("Resource added successfully");
-      setFormOpen(false);
-      loadResources(); // Refresh the resources list
-    } catch (error) {
-      console.error("Error uploading resource:", error);
-      toast.error("Failed to upload resource");
-    } finally {
-      setUploading(false);
-    }
-  };
-  
   // Mock function for file upload (to be replaced with a real implementation)
-  const uploadFile = async (file: File): Promise<{ success: boolean, url: string | null, error: string | null }> => {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 800));
-    
-    // For demo purposes, just return a mock URL
-    return {
-      success: true,
-      url: 'https://images.unsplash.com/photo-1629195634308-77f0a2356341?ixlib=rb-4.0.3',
-      error: null
-    };
+  const uploadFile = async (file: File): Promise<{ success: boolean, url: string | null, error: Error | null }> => {
+    setIsUploading(true);
+    try {
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
+      // For demo purposes, just return a mock URL
+      return {
+        success: true,
+        url: 'https://images.unsplash.com/photo-1629195634308-77f0a2356341?ixlib=rb-4.0.3',
+        error: null
+      };
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const deleteResource = async (resourceId: string) => {
@@ -364,11 +321,16 @@ const ResourcesPage = () => {
       await dataService.deleteResource(resourceId);
       
       toast.success("Resource deleted successfully");
-      loadResources(); // Refresh the resources list
+      fetchResources(); // Refresh the resources list
     } catch (error) {
       console.error("Error deleting resource:", error);
       toast.error("Failed to delete resource");
     }
+  };
+
+  // Function to load resources
+  const loadResources = () => {
+    fetchResources();
   };
 
   // Add the missing onSubmit function for the form
@@ -378,10 +340,9 @@ const ResourcesPage = () => {
       toast.info("Editing resources is not yet implemented");
     } else {
       // Handle creating a new resource
-      await handleUploadResource({
-        ...data,
-        file: uploadedFile
-      });
+      await handleSubmit({
+        preventDefault: () => {}
+      } as React.FormEvent);
     }
   };
 

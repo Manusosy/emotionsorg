@@ -5,6 +5,20 @@
 
 import { UserProfile } from '../user/user.interface';
 
+export interface PatientProfile {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone_number?: string;
+  date_of_birth?: string;
+  country?: string;
+  city?: string;
+  state?: string;
+  avatar_url?: string;
+  created_at: string;
+}
+
 export interface Appointment {
   id: string;
   patientId: string;
@@ -70,6 +84,16 @@ export interface UserMetricsUpdate {
 }
 
 export interface IPatientService {
+  /**
+   * Get all patients
+   */
+  getAllPatients(): Promise<PatientProfile[]>;
+
+  /**
+   * Subscribe to patient updates
+   */
+  subscribeToPatientUpdates(callback: () => void): (() => void) | undefined;
+
   /**
    * Get a patient's appointments
    */

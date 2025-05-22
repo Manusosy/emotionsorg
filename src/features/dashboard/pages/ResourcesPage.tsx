@@ -1,7 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useContext, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "../../../components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,9 +21,11 @@ import {
   Share2,
   Download,
   ChevronRight,
-  Clock3
+  Clock3,
+  Loader2
 } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
+import { dataService } from "@/services";
 import { toast } from "sonner";
 
 // Resource type definition
@@ -49,115 +51,39 @@ interface Resource {
   mood_mentor_id?: string;
 }
 
-// Sample resources data
-const resources: Resource[] = [
-  {
-    id: "article-1",
-    title: "Understanding Emotional Well-being",
-    type: "article",
-    category: "education",
-    author: "Dr. Ruby Perrin",
-    authorRole: "Depression & Anxiety Specialist",
-    authorAvatar: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-    date: "April 12, 2025",
-    readTime: "6 min read",
-    imageUrl: "https://images.unsplash.com/photo-1499209974431-9dddcece7f88?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80",
-    description: "Learn the fundamentals of emotional health and how it impacts your daily life.",
-    tags: ["basics", "wellbeing", "mental health"],
-    url: "/resources/understanding-emotional-wellbeing",
-    featured: true,
-    mood_mentor_id: "1"
-  },
-  {
-    id: "video-1",
-    title: "Guided Meditation for Anxiety Relief",
-    type: "video",
-    category: "meditation",
-    author: "Dr. Deborah Angel",
-    authorRole: "Relationship & Family Specialist",
-    authorAvatar: "https://images.unsplash.com/photo-1594824476967-48c8b964273f?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-    date: "April 15, 2025",
-    duration: "15 minutes",
-    imageUrl: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80",
-    description: "A calming guided meditation to help reduce anxiety and promote relaxation.",
-    tags: ["meditation", "anxiety", "relaxation"],
-    url: "/resources/guided-meditation-anxiety",
-    featured: true,
-    mood_mentor_id: "3"
-  },
-  {
-    id: "document-1",
-    title: "Managing Anxiety Guide",
-    type: "document",
-    category: "anxiety",
-    author: "Dr. Darren Elder",
-    authorRole: "Trauma & PTSD Specialist",
-    authorAvatar: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-    date: "April 8, 2025",
-    readTime: "12 min read",
-    imageUrl: "https://images.unsplash.com/photo-1576671414121-aa2d0967ca99?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80",
-    description: "A comprehensive guide to understanding and managing anxiety",
-    tags: ["anxiety", "management", "self-help"],
-    url: "/resources/managing-anxiety-guide",
-    downloads: 128,
-    shares: 45,
-    mood_mentor_id: "2"
-  },
-  {
-    id: "podcast-1",
-    title: "The Science of Happiness",
-    type: "podcast",
-    category: "education",
-    author: "Dr. Ruby Perrin",
-    authorRole: "Depression & Anxiety Specialist",
-    authorAvatar: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-    date: "April 5, 2025",
-    duration: "42 minutes",
-    imageUrl: "https://images.unsplash.com/photo-1478737270239-2f02b77fc618?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80",
-    description: "Exploring the scientific research behind happiness and practical ways to boost your mood.",
-    tags: ["science", "happiness", "research"],
-    url: "/resources/science-of-happiness",
-    mood_mentor_id: "1"
-  },
-  {
-    id: "group-1",
-    title: "Anxiety Support Community",
-    type: "group",
-    category: "support",
-    author: "Jennifer Lopez",
-    authorRole: "Licensed Therapist",
-    date: "Weekly",
-    imageUrl: "https://images.unsplash.com/photo-1536080805909-cef9abad7c25?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80",
-    description: "A supportive community for individuals dealing with anxiety and stress.",
-    tags: ["anxiety", "support", "community"],
-    url: "/resources/anxiety-support-community",
-    mood_mentor_id: "3"
-  },
-  {
-    id: "workshop-1",
-    title: "Building Resilience Workshop",
-    type: "workshop",
-    category: "education",
-    author: "Dr. Darren Elder",
-    authorRole: "Trauma & PTSD Specialist",
-    authorAvatar: "https://images.unsplash.com/photo-1582750433449-648ed127bb54?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-    date: "April 18, 2025",
-    duration: "3 hours",
-    imageUrl: "https://images.unsplash.com/photo-1515187029135-18ee286d815b?ixlib=rb-1.2.1&auto=format&fit=crop&w=400&q=80",
-    description: "Learn practical skills to build emotional resilience and overcome life's challenges.",
-    tags: ["resilience", "workshop", "skills"],
-    url: "/resources/building-resilience-workshop",
-    mood_mentor_id: "2",
-    featured: true
-  }
-];
-
 export default function ResourcesPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [savedResources, setSavedResources] = useState<string[]>([]);
+  const [hoveredResourceId, setHoveredResourceId] = useState<string | null>(null);
+
+  useEffect(() => {
+    loadResources();
+  }, [user]);
+
+  const loadResources = async () => {
+    try {
+      setIsLoading(true);
+      const response = await dataService.getResources();
+      
+      if (response.error) {
+        console.error('Error loading resources:', response.error);
+        toast.error('Failed to load resources');
+        return;
+      }
+      
+      setResources(response.data || []);
+    } catch (error) {
+      console.error('Error:', error);
+      toast.error('Failed to load resources');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Filter resources based on search and active tab
   const filteredResources = resources.filter(resource => {

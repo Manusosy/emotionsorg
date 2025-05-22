@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DashboardLayout } from "../components/DashboardLayout";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { TableHead, TableRow, TableHeader, TableCell, TableBody, Table } from "@/components/ui/table";

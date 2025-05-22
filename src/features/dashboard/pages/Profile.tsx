@@ -1,5 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useEffect, useState } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -26,7 +26,7 @@ import {
   Key
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { format } from "date-fns";
 import { UserProfile } from "../../../types/database.types";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("personal");

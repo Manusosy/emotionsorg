@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import BookingButton from '@/features/booking/components/BookingButton';
+import { slugify } from '@/utils/formatters';
 
 interface MoodMentorCardProps {
   id: string;
@@ -13,6 +14,8 @@ interface MoodMentorCardProps {
   rating: number;
   imageUrl: string;
   isAvailable: boolean;
+  specialty?: string;
+  education?: string | {degree: string, institution: string, year: string} | Array<{degree: string, institution: string, year: string}>;
   onFavorite?: () => void;
   isFavorited?: boolean;
 }
@@ -24,14 +27,33 @@ export function MoodMentorCard({
   rating,
   imageUrl,
   isAvailable,
+  specialty,
+  education,
   onFavorite,
   isFavorited = false,
 }: MoodMentorCardProps) {
   const navigate = useNavigate();
 
+  // Format education appropriately based on its type
+  const getFormattedEducation = () => {
+    if (!education) return null;
+    
+    if (typeof education === 'string') {
+      return education;
+    } else if (Array.isArray(education) && education.length > 0) {
+      return education[0].degree || '';
+    } else if (typeof education === 'object' && 'degree' in education) {
+      return education.degree || '';
+    }
+    
+    return null;
+  };
+
   const handleViewProfile = () => {
     // Generate name-based slug
-    const nameSlug = name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    const nameSlug = slugify(name);
+    
+    // Use ID as-is (don't use parseInt which can cause errors with UUID strings)
     navigate(`/mood-mentor/${nameSlug}?id=${id}`);
   };
 
@@ -72,10 +94,12 @@ export function MoodMentorCard({
       </div>
 
       <div className="p-6">
-        {/* Role Badge */}
-        <Badge className="mb-2" variant="outline">
-          M.H Mood Mentor
-        </Badge>
+        {/* Specialty Badge - in blue */}
+        {specialty && (
+          <Badge className="mb-2 bg-blue-100 text-blue-800 hover:bg-blue-200" variant="outline">
+            {specialty}
+          </Badge>
+        )}
 
         {/* Name and Location */}
         <h3 
@@ -84,6 +108,14 @@ export function MoodMentorCard({
         >
           {name}
         </h3>
+        
+        {/* Education - in gray/muted text */}
+        {getFormattedEducation() && (
+          <p className="text-muted-foreground mb-2">
+            {getFormattedEducation()}
+          </p>
+        )}
+        
         <p className="text-muted-foreground mb-4">
           📍 {location} • 30 Min
         </p>
@@ -101,7 +133,8 @@ export function MoodMentorCard({
             </span>
           </div>
           <BookingButton
-            moodMentorId={parseInt(id)}
+            moodMentorId={id}
+            moodMentorName={name}
             disabled={!isAvailable}
             size="sm"
             className={!isAvailable ? "opacity-50 cursor-not-allowed" : ""}

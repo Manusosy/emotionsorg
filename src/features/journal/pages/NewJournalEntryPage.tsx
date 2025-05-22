@@ -1,5 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect, useRef, useCallback } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { useState, useEffect, useRef, useCallback, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -8,8 +8,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Type, BookOpen } from "lucide-react";
-import { useIsMobile } from "@/hooks/use-is-mobile";
-import { useAuth } from "@/hooks/use-auth";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { AuthContext } from "@/contexts/authContext";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { debounce } from "lodash";
 import {
@@ -103,7 +103,7 @@ export default function NewJournalEntryPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [title, setTitle] = useState("");
   const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [tomorrowsPlan, setTomorrowsPlan] = useState("");
@@ -113,56 +113,9 @@ export default function NewJournalEntryPage() {
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [content, setContent] = useState("");
   const [isMentor, setIsMentor] = useState(false);
-  const [isChecking, setIsChecking] = useState(true);
+  const [isRoleChecking, setIsRoleChecking] = useState(true);
 
-  // Check if the user is a mood mentor
-  useEffect(() => {
-    const checkUserRole = async () => {
-      if (!user) return;
-      
-      try {
-        setIsChecking(true);
-        // Check if the user has a mentor profile
-        const profileResponse = await userService.getUserProfile(user.id);
-        const isMoodMentor = profileResponse?.role === 'mood_mentor';
-        
-        // If they're a mentor, redirect to mentor dashboard
-        if (isMoodMentor) {
-          navigate('/mood-mentor-dashboard');
-        }
-        
-        setIsMentor(isMoodMentor);
-      } catch (error) {
-        console.error("Error checking user role:", error);
-      } finally {
-        setIsChecking(false);
-      }
-    };
-    
-    checkUserRole();
-  }, [user, navigate]);
-  
-  // If still checking role or confirmed as mentor, show loading state
-  if (isChecking) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-96">
-          <div className="flex flex-col items-center gap-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            <p className="text-slate-500">Checking access...</p>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  const todayDate = new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-
+  // Initialize editor
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -177,79 +130,83 @@ export default function NewJournalEntryPage() {
     },
   });
 
-  // Save the journal entry
+  // Check user role
+  useEffect(() => {
+    const checkUserRole = async () => {
+      if (!user) return;
+      
+      try {
+        setIsRoleChecking(true);
+        const profileResponse = await userService.getUserProfile(user.id);
+        const isMoodMentor = profileResponse?.role === 'mood_mentor';
+        
+        if (isMoodMentor) {
+          setIsMentor(true);
+          toast.error("Mood mentors do not have access to the journaling feature");
+          navigate('/mood-mentor-dashboard');
+        }
+      } catch (error) {
+        console.error("Error checking user role:", error);
+      } finally {
+        setIsRoleChecking(false);
+      }
+    };
+    
+    checkUserRole();
+  }, [user, navigate, toast]);
+
+  // Save entry function
   const saveEntry = useCallback(async () => {
-    if (!editor) return;
+    if (!editor || !user) return;
 
     const content = editor.getHTML();
-    if (!content.trim() && !title.trim()) {
-      return; // Don't save empty entries
-    }
+    if (!content.trim() && !title.trim()) return;
 
     setIsSaving(true);
 
     try {
-      if (!user) {
-        toast({
-          title: "Authentication Error",
-          description: "You must be logged in to save journal entries. Please sign in.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      try {
-        // Format data for interface compatibility
-        const entryData = {
-          userId: user.id,
-          title: title.trim() || "Untitled Entry",
-          content: content,
-          mood: selectedMood,
-          tags: [],
-          isPrivate: false,
-          ...(tomorrowsPlan ? { tomorrowsIntention: tomorrowsPlan } : {})
-        };
-        
-        const newEntry = await dataService.addJournalEntry(entryData);
-
-        setLastSaved(new Date());
-        toast({
-          title: "Entry saved",
-          description: "Your journal entry has been saved successfully.",
-        });
-        
-        // Navigate back to journal page
-        navigate("/patient-dashboard/journal");
-      } catch (error) {
-        console.error("Error saving journal entry:", error);
-        throw error;
-      }
-    } catch (error: any) {
+      const entryData = {
+        userId: user.id,
+        title: title.trim() || "Untitled Entry",
+        content: content,
+        mood: selectedMood,
+        tags: [],
+        isPrivate: false,
+        ...(tomorrowsPlan ? { tomorrowsIntention: tomorrowsPlan } : {})
+      };
+      
+      await dataService.addJournalEntry(entryData);
+      setLastSaved(new Date());
+      
+      toast({
+        title: "Success",
+        description: "Your journal entry has been saved.",
+      });
+      
+      navigate("/journal");
+    } catch (error) {
       console.error("Error saving journal entry:", error);
       toast({
         title: "Error",
-        description: error.message || "Failed to save your journal entry. Please try again.",
+        description: "Failed to save your journal entry. Please try again.",
         variant: "destructive",
       });
     } finally {
       setIsSaving(false);
     }
-  }, [editor, title, selectedMood, tomorrowsPlan, navigate, toast, user]);
+  }, [editor, title, selectedMood, tomorrowsPlan, user, navigate, toast]);
 
-  // Add autosave function
+  // Autosave function
   const autosaveContent = useCallback(
     debounce((htmlContent: string) => {
-      // Only autosave if we have content and a title
       if ((htmlContent.trim().length > 0 || title.trim().length > 0) && !isSaving) {
-        // Show mood reminder if the user has written content but hasn't selected a mood
         setShowMoodReminder((htmlContent.trim().length > 0 || title.trim().length > 0) && !selectedMood);
-        // Only call saveEntry for automatic saving if needed
         if (!lastSaved || (new Date().getTime() - lastSaved.getTime() > AUTOSAVE_DELAY)) {
           saveEntry();
         }
       }
     }, 1000),
-    [title, selectedMood, isSaving, lastSaved]
+    [title, selectedMood, isSaving, lastSaved, saveEntry]
   );
 
   // Add custom styles for the editor
@@ -300,88 +257,109 @@ export default function NewJournalEntryPage() {
     };
   }, []);
 
-  // Focus the title input on mount
+  // Focus title input on mount
   useEffect(() => {
     if (titleInputRef.current) {
       titleInputRef.current.focus();
     }
   }, []);
 
-  // Regular component starts here for patients
-  return (
-    <DashboardLayout>
-      <div className="container max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-semibold">New Journal Entry</h1>
-          <div className="text-sm text-muted-foreground">
-            {todayDate}
+  if (isRoleChecking) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <div className="flex flex-col items-center gap-4">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+            <p className="text-slate-500">Checking access...</p>
           </div>
         </div>
+      </DashboardLayout>
+    );
+  }
 
+  if (isMentor) {
+    return null;
+  }
+
+  return (
+    <DashboardLayout>
+      <div className="container max-w-4xl mx-auto py-6 px-4">
         <Card className="p-6">
-          <div className="mb-4">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-semibold">New Journal Entry</h1>
+              <p className="text-slate-500">{new Date().toLocaleDateString("en-US", {
+                weekday: "long",
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })}</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
             <input
               ref={titleInputRef}
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full text-xl font-bold bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-200 rounded"
-              placeholder="Title your entry..."
+              placeholder="Give your entry a title..."
+              className="w-full text-2xl font-bold bg-transparent border-none outline-none"
             />
-          </div>
 
-          <div className="flex flex-wrap gap-2 mt-4">
-            <p className="w-full text-sm font-medium mb-1">How are you feeling today?</p>
-            {["Happy", "Grateful", "Calm", "Anxious", "Sad", "Overwhelmed"].map((mood) => (
-              <Button
-                key={mood}
-                type="button"
-                variant={selectedMood === mood ? "default" : "outline"}
-                size="sm"
-                onClick={() => setSelectedMood(mood)}
-                className={selectedMood === mood ? "bg-blue-600" : ""}
-              >
-                {mood}
-              </Button>
-            ))}
-          </div>
-          
-          {showMoodReminder && !selectedMood && (
-            <div className="my-4 p-3 rounded-md bg-amber-50 border border-amber-200 flex items-center gap-2 text-sm text-amber-700">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              <p>Selecting a mood helps track your emotional patterns over time.</p>
+            <div className="flex flex-wrap gap-2 mt-4">
+              <p className="w-full text-sm font-medium mb-1">How are you feeling today?</p>
+              {["Happy", "Grateful", "Calm", "Anxious", "Sad", "Overwhelmed"].map((mood) => (
+                <Button
+                  key={mood}
+                  type="button"
+                  variant={selectedMood === mood ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSelectedMood(mood)}
+                  className={selectedMood === mood ? "bg-blue-600" : ""}
+                >
+                  {mood}
+                </Button>
+              ))}
             </div>
-          )}
+            
+            {showMoodReminder && !selectedMood && (
+              <div className="my-4 p-3 rounded-md bg-amber-50 border border-amber-200 flex items-center gap-2 text-sm text-amber-700">
+                <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                <p>Selecting a mood helps track your emotional patterns over time.</p>
+              </div>
+            )}
 
-          <div className="my-4 border rounded-md">
-            <EditorToolbar editor={editor} />
-            <EditorContent editor={editor} className="min-h-[40vh]" />
-          </div>
+            <div className="my-4 border rounded-md">
+              <EditorToolbar editor={editor} />
+              <EditorContent editor={editor} className="min-h-[40vh] p-4" />
+            </div>
 
-          <div className="mt-6">
-            <h3 className="font-medium text-gray-700 mb-2 text-sm">Tomorrow's plan:</h3>
-            <textarea
-              placeholder="What do you plan to accomplish tomorrow?"
-              value={tomorrowsPlan}
-              onChange={(e) => setTomorrowsPlan(e.target.value)}
-              className="w-full border border-gray-200 rounded p-3 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              rows={3}
-            />
-          </div>
+            <div className="mt-6">
+              <h3 className="font-medium text-gray-700 mb-2">Tomorrow's plan:</h3>
+              <textarea
+                placeholder="What do you plan to accomplish tomorrow?"
+                value={tomorrowsPlan}
+                onChange={(e) => setTomorrowsPlan(e.target.value)}
+                className="w-full border rounded p-3 focus:outline-none focus:ring-2"
+                rows={3}
+              />
+            </div>
 
-          <div className="flex justify-between mt-6">
-            <Button variant="outline" onClick={() => navigate("/patient-dashboard/journal")}>
-              Cancel
-            </Button>
-            <div className="flex items-center gap-2">
-              {lastSaved && (
-                <span className="text-xs text-gray-500">
-                  Last saved: {lastSaved.toLocaleTimeString()}
-                </span>
-              )}
-              <Button onClick={saveEntry} disabled={isSaving}>
-                {isSaving ? "Saving..." : "Save Entry"}
+            <div className="flex justify-between mt-6">
+              <Button variant="outline" onClick={() => navigate("/journal")}>
+                Cancel
               </Button>
+              <div className="flex items-center gap-2">
+                {lastSaved && (
+                  <span className="text-xs text-gray-500">
+                    Last saved: {lastSaved.toLocaleTimeString()}
+                  </span>
+                )}
+                <Button onClick={saveEntry} disabled={isSaving}>
+                  {isSaving ? "Saving..." : "Save Entry"}
+                </Button>
+              </div>
             </div>
           </div>
         </Card>

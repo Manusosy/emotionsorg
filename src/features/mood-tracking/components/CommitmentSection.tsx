@@ -116,7 +116,7 @@ const WhyBookSection = () => {
               size="lg" 
               className="bg-gradient-to-r from-brand-blue to-brand-purple hover:from-brand-blue/90 hover:to-brand-purple/90 shadow-lg shadow-brand-blue/20"
             >
-              <Link to="/signup" className="flex items-center">
+              <Link to="/patient-signup" className="flex items-center">
                 Start Your Journey
               </Link>
             </Button>

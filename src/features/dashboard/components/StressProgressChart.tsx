@@ -123,8 +123,9 @@ export default function StressProgressChart({
   
   // Calculate health score (inverse of stress level)
   const calculateHealthScore = (stressLevel: number): number => {
-    // Convert stress level (0-10) to health percentage (100-0)
-    return Math.max(0, 100 - (stressLevel * 10));
+    // Convert stress level (0-10) to health percentage (0-100)
+    const percentage = Math.max(0, 100 - (stressLevel * 10));
+    return Math.round(percentage);
   };
   
   // Format date for X-axis

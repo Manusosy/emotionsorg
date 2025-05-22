@@ -1,10 +1,9 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { format, formatDistanceToNow } from "date-fns";
 import { Bell } from "lucide-react";
-// Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import {
   Popover,
   PopoverContent,
@@ -13,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/lib/supabase";
 
 interface Notification {
   id: string;
@@ -32,7 +32,7 @@ export default function NotificationDropdown() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
 
   useEffect(() => {
     if (open) {
@@ -54,7 +54,17 @@ export default function NotificationDropdown() {
         .order('created_at', { ascending: false })
         .limit(5);
       
-      if (error) throw error;
+      if (error) {
+        // Handle table not found errors gracefully
+        if (error.code === '42P01' || error.message?.includes('does not exist')) {
+          console.warn('Notifications table does not exist yet. This is normal if the app is newly deployed.');
+          setNotifications([]);
+          setUnreadCount(0);
+          setLoading(false);
+          return;
+        }
+        throw error;
+      }
 
       // Map database notifications to our interface and check localStorage for read status
       const mappedNotifications: Notification[] = (data || []).map(item => {
@@ -78,6 +88,9 @@ export default function NotificationDropdown() {
     } catch (error) {
       console.error('Error fetching notifications:', error);
       setError('Failed to load notifications');
+      // Set empty notifications to avoid undefined errors
+      setNotifications([]);
+      setUnreadCount(0);
     } finally {
       setLoading(false);
     }

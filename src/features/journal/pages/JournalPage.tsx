@@ -1,5 +1,4 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, useContext } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Highlight from "@tiptap/extension-highlight";
@@ -7,9 +6,8 @@ import Typewriter from 'typewriter-effect/dist/core';
 import { Card } from "@/components/ui/card";
 import JournalSidebar from "../components/JournalSidebar";
 import JournalToolbar from "../components/JournalToolbar";
-// Supabase import removed
+import { supabase } from '@/lib/supabase';
 import { useToast } from "@/components/ui/use-toast";
-// Supabase import removed
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -23,8 +21,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth } from "@/contexts/authContext";
 import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 const AUTOSAVE_DELAY = 2000; // 2 seconds
 
@@ -56,7 +55,29 @@ const JOURNAL_PROMPTS = [
   "Something I need to let go of...",
 ];
 
-const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => {
+interface UserProfile {
+  role?: string;
+  // Add other profile fields as needed
+}
+
+interface JournalEntry {
+  user_id: string;
+  title: string;
+  content: string;
+  mood: MoodType;
+  is_private: boolean;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+const JournalEditor = ({ 
+  onBackToWelcome, 
+  onSaveAttempt = () => true
+}: { 
+  onBackToWelcome: () => void, 
+  onSaveAttempt?: () => boolean 
+}) => {
   const [title, setTitle] = useState("");
   const [selectedMood, setSelectedMood] = useState<MoodType | null>(null);
   const [tomorrowsIntention, setTomorrowsIntention] = useState("");
@@ -233,13 +254,19 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
     if (!content.trim() && !title.trim()) {
       return; // Don't save empty entries
     }
+    
+    // Check if user can save (is authenticated)
+    const canSave = onSaveAttempt();
+    if (!canSave) {
+      return; // Don't proceed if user isn't authenticated
+    }
 
     setIsSaving(true);
 
     try {
-      const { data: userData, error: userError } = await authService.getCurrentUser();
+      const { user: userData } = useContext(AuthContext);
       
-      if (userError || !userData.user) {
+      if (!userData) {
         toast({
           title: "Authentication Error",
           description: "You must be logged in to save journal entries. Please sign in.",
@@ -248,18 +275,24 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
         return;
       }
 
-      // Mapping for test mode compatibility - adapt field names to match interface
-      const entryData = {
-        userId: userData.user.id,
+      // Create journal entry data
+      const entryData: JournalEntry = {
+        user_id: userData.id,
         title: title.trim() || "Untitled Entry",
         content: content,
         mood: selectedMood,
-        isPrivate: false,
+        is_private: false,
         tags: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
       
       try {
-        const newEntry = await dataService.addJournalEntry(entryData);
+        const { error } = await supabase
+          .from('journal_entries')
+          .insert(entryData);
+
+        if (error) throw error;
         
         setLastSaved(new Date());
         toast({
@@ -301,7 +334,7 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
     } finally {
       setIsSaving(false);
     }
-  }, [editor, title, selectedMood, toast]);
+  }, [editor, title, selectedMood, toast, onSaveAttempt]);
 
   // Autosave functionality
   useEffect(() => {
@@ -440,6 +473,7 @@ const JournalEditor = ({ onBackToWelcome }: { onBackToWelcome: () => void }) => 
 };
 
 const JournalWelcome = ({ onStartJournaling }: { onStartJournaling: () => void }) => {
+  const { isAuthenticated } = useAuth();
   return (
     <div className="min-h-screen bg-white">
       {/* Hero Section with curved bottom */}
@@ -728,8 +762,11 @@ const JournalWelcome = ({ onStartJournaling }: { onStartJournaling: () => void }
             className="lg:w-1/2 text-left"
           >
             <h2 className="text-2xl font-bold text-gray-800 mb-4">Express Yourself</h2>
-            <p className="text-gray-600 mb-6">
+            <p className="text-gray-600 mb-2">
               Our journal provides a structured yet flexible way to document your thoughts, feelings, and growth.
+            </p>
+            <p className="text-amber-600 text-sm mb-6">
+              {!isAuthenticated && "You can try journaling without an account, but you'll need to sign in as a patient to save your entries."}
             </p>
             
             <ul className="space-y-4 mb-8">
@@ -795,34 +832,38 @@ const JournalPage = () => {
   const [showJournalEditor, setShowJournalEditor] = useState(false);
   const [isMentor, setIsMentor] = useState(false);
   const [showMentorAlert, setShowMentorAlert] = useState(false);
-  const { user } = useAuth();
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false);
+  const { user, isAuthenticated } = useAuth();
   
-  // Check if the user is a mood mentor
+  // Check user role only if authenticated - but allow access regardless
   useEffect(() => {
     const checkUserRole = async () => {
-      if (!user) return;
-      
-      try {
-        // Check if the user has a mentor profile
-        const profileResponse = await userService.getUserProfile(user.id);
-        const isMoodMentor = profileResponse?.role === 'mood_mentor';
-        setIsMentor(isMoodMentor);
-        
-        // If they're a mentor, show the alert dialog
-        if (isMoodMentor) {
-          setShowMentorAlert(true);
+      // Only check role if authenticated
+      if (isAuthenticated && user) {
+        try {
+          const isMoodMentor = user.user_metadata?.role === 'mood_mentor';
+          
+          if (isMoodMentor) {
+            setIsMentor(true);
+            setShowMentorAlert(true);
+          }
+        } catch (error) {
+          console.error("Error checking user role:", error);
+          toast.error("Failed to verify user access");
         }
-      } catch (error) {
-        console.error("Error checking user role:", error);
       }
     };
     
     checkUserRole();
-  }, [user]);
-  
-  // Handle redirect to dashboard for mentors
-  const handleMentorRedirect = () => {
-    navigate('/mood-mentor-dashboard');
+  }, [user, isAuthenticated]);
+
+  // Modify saveEntry to check for authentication
+  const handleSaveAttempt = () => {
+    if (!isAuthenticated) {
+      setShowAuthPrompt(true);
+      return false; // Indicate that save can't proceed
+    }
+    return true; // Allow save to proceed
   };
 
   // If user is a mentor, show alert and restrict access
@@ -839,20 +880,12 @@ const JournalPage = () => {
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogAction onClick={handleMentorRedirect}>
+              <AlertDialogAction onClick={() => navigate('/mood-mentor-dashboard')}>
                 Return to Dashboard
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-        
-        <div className="text-center p-8">
-          <h2 className="text-2xl font-bold text-gray-700 mb-3">Journaling Feature</h2>
-          <p className="text-slate-500 mb-5">This feature is intended for patients only.</p>
-          <Button onClick={handleMentorRedirect}>
-            Return to Dashboard
-          </Button>
-        </div>
       </div>
     );
   }
@@ -860,7 +893,39 @@ const JournalPage = () => {
   return (
     <>
       {showJournalEditor ? (
-        <JournalEditor onBackToWelcome={() => setShowJournalEditor(false)} />
+        <>
+          <JournalEditor 
+            onBackToWelcome={() => setShowJournalEditor(false)} 
+            onSaveAttempt={handleSaveAttempt}
+          />
+          
+          {/* Authentication prompt dialog */}
+          <AlertDialog open={showAuthPrompt} onOpenChange={setShowAuthPrompt}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Sign in to Save Your Journal</AlertDialogTitle>
+                <AlertDialogDescription>
+                  You need to sign in as a patient to save your journal entries. Would you like to sign in now?
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowAuthPrompt(false)}
+                >
+                  Continue Without Saving
+                </Button>
+                <Button 
+                  onClick={() => navigate('/patient-signin', { 
+                    state: { from: '/journal', returnToJournal: true } 
+                  })}
+                >
+                  Sign In
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
       ) : (
         <JournalWelcome onStartJournaling={() => setShowJournalEditor(true)} />
       )}

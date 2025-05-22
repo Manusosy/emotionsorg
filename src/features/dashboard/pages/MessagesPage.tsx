@@ -1,5 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect, useRef } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { useState, useEffect, useRef, useContext } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/messaging/MessageBubble";
 import { ConversationList, ConversationItem, ConversationUser } from "@/components/messaging/ConversationList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 // Supabase import removed
 // Supabase import removed
 import { Loader2, Search, Send, MessageSquare, AlertCircle } from "lucide-react";
@@ -22,7 +22,7 @@ import DashboardLayout from "../components/DashboardLayout";
 // rather than patients, and some UI elements are tailored for patients
 
 export default function MessagesPage() {
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [isLoading, setIsLoading] = useState(true);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);

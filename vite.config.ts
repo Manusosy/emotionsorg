@@ -11,6 +11,20 @@ export default defineConfig({
     }
   },
   server: {
-    port: 8080
+    port: 5173,
+    open: true,
+    host: true,
+    hmr: {
+      timeout: 120000,
+      overlay: false
+    },
+    watch: {
+      usePolling: true,
+      interval: 1000
+    }
+  },
+  define: {
+    'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(process.env.VITE_SUPABASE_URL),
+    'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(process.env.VITE_SUPABASE_ANON_KEY),
   }
 });

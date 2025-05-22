@@ -1,11 +1,12 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useEffect, useState } from "react";
+import { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
+import { supabase } from '@/lib/supabase';
+import { Loader2 } from "lucide-react";
 import { 
   Calendar, 
   MessageSquare, 
@@ -39,93 +40,41 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import MoodAnalytics from "../components/MoodAnalytics";
-import MoodAssessment from "../components/MoodAssessment";
 import MoodSummaryCard from "../components/MoodSummaryCard";
 import EmotionalHealthWheel from "../components/EmotionalHealthWheel";
 import { Appointment as DbAppointment, Message, UserProfile } from "../../../types/database.types";
 import { format, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
 import 'jspdf-autotable';
-import WelcomeDialog, { resetWelcomeDialog } from "@/components/WelcomeDialog";
+import { WelcomeDialog } from "@/components/WelcomeDialog";
 import NotificationManager from '../components/NotificationManager';
+import StressAssessmentModal from "../components/StressAssessmentModal";
+import { PostgrestSingleResponse } from '@supabase/supabase-js';
 
 // Define interfaces for appointment data
 interface MoodMentor {
+  id: string;
   name: string;
   specialization: string;
   avatar_url?: string;
 }
 
-interface Appointment {
-  id: string;
-  date: string;
-  time: string;
-  type: string;
-  status: string;
-  moodMentor?: MoodMentor;
-  notes?: string;
+interface AppointmentWithMentor extends DbAppointment {
+  mood_mentor?: MoodMentor;
+  time?: string;
+  type?: string;
 }
 
 export default function PatientDashboard() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, signOut } = useContext(AuthContext);
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [appointments, setAppointments] = useState<AppointmentWithMentor[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [showWelcomeDialog, setShowWelcomeDialog] = useState(false);
-  const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([
-    {
-      id: 'EMHA01',
-      date: '12 Nov 2023',
-      time: '10:00 AM',
-      type: 'Video Consultation',
-      status: 'Upcoming',
-      moodMentor: {
-        name: 'Dr. Sophie Chen',
-        specialization: 'Psychiatrist'
-      },
-      notes: 'Follow-up on medication efficacy'
-    },
-    {
-      id: 'EMHA02',
-      date: '18 Nov 2023',
-      time: '2:30 PM',
-      type: 'Phone Call',
-      status: 'Upcoming',
-      moodMentor: {
-        name: 'Michael Roberts',
-        specialization: 'Wellness Coach'
-      },
-      notes: 'Weekly check-in'
-    },
-    {
-      id: 'EMHA03',
-      date: '25 Nov 2023',
-      time: '11:15 AM',
-      type: 'In-person',
-      status: 'Upcoming',
-      moodMentor: {
-        name: 'Dr. James Wilson',
-        specialization: 'Therapist'
-      },
-      notes: 'Therapy session'
-    },
-    {
-      id: 'EMHA04',
-      date: '30 Nov 2023',
-      time: '4:00 PM',
-      type: 'Video Consultation',
-      status: 'Upcoming',
-      moodMentor: {
-        name: 'Emma Thompson',
-        specialization: 'Nutritionist'
-      },
-      notes: 'Dietary plan review'
-    }
-  ]);
+  const [upcomingAppointments, setUpcomingAppointments] = useState<AppointmentWithMentor[]>([]);
   const [supportGroups, setSupportGroups] = useState<any[]>([]);
   const [recentJournalEntries, setRecentJournalEntries] = useState<any[]>([]);
   const [appointmentFilter, setAppointmentFilter] = useState<string>("all");
@@ -141,586 +90,351 @@ export default function PatientDashboard() {
     firstCheckInDate: ""
   });
   const [hasAssessments, setHasAssessments] = useState(false);
-  const [appointmentReports, setAppointmentReports] = useState<any[]>([]);
-  const [reportsLoading, setReportsLoading] = useState(true);
+  const [appointmentReports, setAppointmentReports] = useState<AppointmentWithMentor[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
   const [checkInDates, setCheckInDates] = useState<Date[]>([]);
+  const [isStressModalOpen, setIsStressModalOpen] = useState(false);
+  // Extract user's first name for display
+  const firstName = user?.user_metadata?.first_name || 
+                    user?.user_metadata?.name?.split(' ')[0] || 
+                    user?.email?.split('@')[0] || 
+                    'User';
+
+  // Add code to skip any loading states
+  const skipLoadingStates = () => {
+    setReportsLoading(false);
+  };
 
   useEffect(() => {
+    skipLoadingStates();
     let isMounted = true;
-
-    // Set last check-in time to current time (for mood tracking)
-    const now = new Date();
-    const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    setLastCheckIn(timeString);
     
-    // For the date display
-    const today = new Date();
-    setLastCheckInDate(`${today.toLocaleString('default', { month: 'short' })} ${today.getDate()}, ${today.getFullYear()}`);
-    
-    // Initialize last assessment date to "Not taken" by default
+    // Initialize with empty values - we'll only set real values if we have data
+    setLastCheckIn("");
+    setLastCheckInDate("Not available");
     setLastAssessmentDate("Not taken");
+    setHasAssessments(false);
 
     const fetchDashboardData = async () => {
       try {
-        setIsLoading(true);
-        const { data: { session } } = await authService.getCurrentUser();
+        console.log('PatientDashboard: Fetching dashboard data...');
         
-        // Check local storage for auth data when no session found
-        if (!session) {
-          const storedAuthState = localStorage.getItem('auth_state');
-          if (storedAuthState) {
-            try {
-              const { isAuthenticated, userRole } = JSON.parse(storedAuthState);
-              if (!isAuthenticated || userRole !== 'patient') {
-                navigate('/login');
-                return;
-              }
-              // Continue with stored auth - we'll use default/mock data
-            } catch (e) {
-              console.error("Error parsing stored auth state:", e);
-              navigate('/login');
-              return;
-            }
-          } else {
-            navigate('/login');
-            return;
-          }
+        if (!user) {
+          console.log("No authenticated user found, redirecting to login");
+          navigate('/patient-signin');
+          return;
         }
+        
+        console.log("Fetching dashboard data for user:", user.id);
 
-        // Create profile from user metadata or use default data if not available
-        const userProfile: UserProfile = {
-          id: session?.user?.id || 'unknown',
-          patient_id: session?.user?.user_metadata?.patient_id || 'EMHA01P',
-          first_name: session?.user?.user_metadata?.first_name || 'Demo',
-          last_name: session?.user?.user_metadata?.last_name || 'User',
-          email: session?.user?.email || 'demo@example.com',
-          phone_number: session?.user?.user_metadata?.phone_number || '',
-          date_of_birth: session?.user?.user_metadata?.date_of_birth || '',
-          country: session?.user?.user_metadata?.country || 'United States',
-          address: session?.user?.user_metadata?.address || '',
-          city: session?.user?.user_metadata?.city || '',
-          state: session?.user?.user_metadata?.state || '',
-          pincode: session?.user?.user_metadata?.pincode || '',
-          avatar_url: session?.user?.user_metadata?.avatar_url || '',
-          created_at: new Date().toISOString()
+        // Create profile from user metadata
+        const userProfileData: UserProfile = {
+          id: user?.id || '',
+          first_name: user?.user_metadata?.first_name || '',
+          last_name: user?.user_metadata?.last_name || '',
+          email: user?.email || '',
+          phone_number: user?.user_metadata?.phone_number || '',
+          country: user?.user_metadata?.country || '',
+          address: user?.user_metadata?.address || '',
+          city: user?.user_metadata?.city || '',
+          state: user?.user_metadata?.state || '',
+          pincode: user?.user_metadata?.pincode || '',
+          avatar_url: user?.user_metadata?.avatar_url || '',
+          created_at: new Date().toISOString(),
+          name: user?.user_metadata?.name || user?.email?.split('@')[0] || 'User',
+          role: user?.user_metadata?.role || 'patient',
+          updated_at: new Date().toISOString()
         };
 
         if (isMounted) {
-          setProfile(userProfile);
+          setProfile(userProfileData);
         }
 
-        // Fetch appointments
-        try {
-          const { data: appointmentsData, error: appointmentsError } = await appointmentService.getPatientAppointments(session.user.id);
-          
-          if (appointmentsError) {
-            console.error("Error fetching appointments:", appointmentsError);
-            // Use mock data instead
-            const mockAppointments: Appointment[] = [
-              {
-                id: "1",
-                date: "2023-10-15", // These properties are for mock appointments only
-                time: "10:00 AM",
-                type: "video",
-                status: "upcoming",
-                patient_id: session.user.id,
-                moodMentor_id: "mood-mentor-123",
-                notes: null,
-                duration: "60 minutes"
-              },
-              {
-                id: "2",
-                date: "2023-10-20",
-                time: "2:30 PM",
-                type: "voice",
-                status: "upcoming",
-                patient_id: session.user.id,
-                moodMentor_id: "mood-mentor-456",
-                notes: null,
-                duration: "45 minutes"
-              }
-            ] as any; // Type assertion to avoid properties mismatch
+        // Fetch most critical data in parallel - mood entries and appointments
+        const criticalDataPromises = [
+          // Fetch mood entries (critical)
+          supabase
+            .from('mood_entries')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(10), // Limit to 10 most recent entries for faster load
             
-            if (isMounted) {
-              setAppointments(mockAppointments);
-            }
-          } else {
-            // Use the mapped appointments from the service
-            if (isMounted) {
-              setAppointments(appointmentsData);
-            }
+          // Fetch appointments (critical)
+          fetchAppointments(user.id)
+        ];
+        
+        // Execute critical data fetch in parallel
+        const [moodEntriesResult, appointmentsResult] = await Promise.all(criticalDataPromises);
+        
+        // Process mood entries
+        const { data: moodEntriesData, error: moodError } = moodEntriesResult;
+        if (moodError) {
+          console.error("Error fetching mood entries:", moodError);
+        } else if (moodEntriesData && moodEntriesData.length > 0) {
+          // User has mood entries
+          setHasAssessments(true);
+          
+          // Calculate average mood score
+          const moodValues = moodEntriesData.map(entry => Number(entry.mood));
+          const avgMood = moodValues.reduce((sum, mood) => sum + mood, 0) / moodValues.length;
+          
+          // Update user metrics
+          setUserMetrics(prev => ({
+            ...prev,
+            moodScore: parseFloat(avgMood.toFixed(1)),
+            lastCheckInStatus: "Completed",
+            firstCheckInDate: format(parseISO(moodEntriesData[moodEntriesData.length - 1].created_at), 'MMM d, yyyy')
+          }));
+          
+          // Set last assessment date
+          if (moodEntriesData[0]) {
+            setLastAssessmentDate(format(parseISO(moodEntriesData[0].created_at), 'MMM d, yyyy'));
+            setLastCheckIn(format(parseISO(moodEntriesData[0].created_at), 'h:mm a'));
+            setLastCheckInDate(format(parseISO(moodEntriesData[0].created_at), 'MMM d, yyyy'));
           }
-        } catch (error) {
-          console.error("Error fetching appointments:", error);
-          if (isMounted) {
-            setAppointments([]);
+          
+          // Calculate streak
+          const dates = moodEntriesData.map(entry => new Date(entry.created_at));
+          setCheckInDates(dates);
+          
+          if (dates.length > 0) {
+            let streak = 0;
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            
+            const hasCheckInToday = dates.some(date => {
+              const checkInDate = new Date(date);
+              checkInDate.setHours(0, 0, 0, 0);
+              return checkInDate.getTime() === today.getTime();
+            });
+            
+            if (hasCheckInToday) {
+              streak = 1;
+              
+              let currentDate = new Date(today);
+              currentDate.setDate(currentDate.getDate() - 1);
+              
+              let streakContinues = true;
+              while (streakContinues) {
+                const hasCheckIn = dates.some(date => {
+                  const checkInDate = new Date(date);
+                  checkInDate.setHours(0, 0, 0, 0);
+                  return checkInDate.getTime() === currentDate.getTime();
+                });
+                
+                if (hasCheckIn) {
+                  streak++;
+                  currentDate.setDate(currentDate.getDate() - 1);
+                } else {
+                  streakContinues = false;
+                }
+              }
+              
+              // Update user metrics with streak
+              setUserMetrics(prev => ({
+                ...prev,
+                streak: streak
+              }));
+            }
           }
         }
         
-        // Fetch messages
-        try {
-          const { data: messagesData, error: messagesError } = await messageService.getMessages(session.user.id, 5);
-          
-          if (messagesError) {
-            console.error("Error fetching messages:", messagesError);
-            // Use mock data instead
-            const mockMessages: Message[] = [
-              {
-                id: "1",
-                sender: {
-                  id: "1",
-                  full_name: "Sarah Johnson (Mood Mentor)",
-                  avatar_url: "/lovable-uploads/47ac3dae-2498-4dd3-a729-73086f5c34f8.png"
-                },
-                content: "Hi there! Just checking in on how you're feeling after our last session.",
-                created_at: new Date().toISOString(),
-                timestamp: "10:30 AM",
-                unread: true
-              },
-              {
-                id: "2",
-                sender: {
-                  id: "2",
-                  full_name: "Michael Chen (Mood Mentor)",
-                  avatar_url: ""
-                },
-                content: "Don't forget to complete your daily mood tracking exercise.",
-                created_at: new Date().toISOString(),
-                timestamp: "Yesterday",
-                unread: false
-              }
-            ];
-            
-            if (isMounted) {
-              setMessages(mockMessages);
-            }
-          } else if (messagesData) {
-            if (isMounted) {
-              setMessages(messagesData);
-            }
-          }
-        } catch (error) {
-          console.error("Error fetching messages:", error);
-          if (isMounted) {
-            setMessages([]);
-          }
-        }
-
-        // Fetch upcoming appointments
-        try {
-          const { data: upcomingAppointmentsData, error: upcomingAppointmentsError } = 
-            await appointmentService.getUpcomingAppointments(session.user.id, 5);
-
-          if (upcomingAppointmentsError) {
-            console.error("Error fetching upcoming appointments:", upcomingAppointmentsError);
-            setUpcomingAppointments([]);
-          } else {
-            setUpcomingAppointments(upcomingAppointmentsData || []);
-          }
-        } catch (error) {
-          console.error("Error fetching upcoming appointments:", error);
+        // Process appointments
+        if (appointmentsResult?.error) {
+          console.error("Error fetching appointments:", appointmentsResult.error);
+          setAppointments([]);
           setUpcomingAppointments([]);
-        }
-
-        // Fetch user metrics and data
-        try {
-          // Get the patient's data including journal entries, support groups, and metrics
-          const { data: patientData, error: patientError } = await patientService.getPatientDashboardData(session.user.id);
-          
-          if (patientError) {
-            console.error("Error fetching patient data:", patientError);
-          } else if (patientData) {
-            setSupportGroups(patientData.supportGroups || []);
-            setRecentJournalEntries(patientData.journalEntries || []);
+        } else {
+          if (isMounted) {
+            setAppointments(appointmentsResult?.data || []);
             
-            if (patientData.metrics) {
-              setUserMetrics({
-                moodScore: patientData.metrics.moodScore || 0,
-                stressLevel: patientData.metrics.stressLevel || 0,
-                consistency: patientData.metrics.consistency || 0,
-                lastCheckInStatus: patientData.metrics.lastCheckInStatus || "No check-ins yet",
-                streak: patientData.metrics.streak || 0,
-                firstCheckInDate: patientData.metrics.firstCheckInDate || ""
-              });
-              
-              setLastCheckIn(patientData.metrics.lastCheckInTime || timeString);
-              setLastCheckInDate(patientData.metrics.lastCheckInDate || `${today.toLocaleString('default', { month: 'short' })} ${today.getDate()}, ${today.getFullYear()}`);
-              setLastAssessmentDate(patientData.metrics.lastAssessmentDate || "Not taken");
-              setHasAssessments(patientData.metrics.hasAssessments || false);
-            }
+            // Filter for upcoming appointments
+            const upcoming = appointmentsResult?.data?.filter(
+              (apt: any) => apt.status.toLowerCase() === 'upcoming' || apt.status.toLowerCase() === 'scheduled'
+            ) || [];
+            setUpcomingAppointments(upcoming);
           }
-        } catch (error) {
-          console.error("Error fetching patient dashboard data:", error);
         }
-
-        // Fetch appointment reports using patientService
-        setReportsLoading(true);
-        try {
-          const { success, data, error } = await patientService.getAppointmentReports(
-            session.user.id, 
-            appointmentFilter
-          );
+        
+        // Load non-critical data in parallel after critical data is processed
+        // This allows the UI to be responsive while less important data loads
+        Promise.all([
+          // Fetch messages (non-critical)
+          fetchMessages(user.id),
           
-          if (success && data) {
-            setAppointmentReports(data);
-          } else if (error) {
-            console.error("Error fetching appointment reports:", error);
-            // Fall back to mock reports if real data fetch fails
-            setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
+          // Fetch journal entries (non-critical)
+          supabase
+            .from('journal_entries')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(5),
+            
+          // Fetch stress assessments (non-critical)
+          supabase
+            .from('stress_assessments')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+        ]).then(([messagesResult, journalResult, stressResult]) => {
+          // Process messages
+          if (messagesResult?.error) {
+            console.error("Error fetching messages:", messagesResult.error);
           } else {
-            // If no data or empty array, use mock data
-            setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
+            setMessages(messagesResult?.data || []);
           }
-        } catch (err) {
-          console.error("Exception in appointment reports fetch:", err);
-          setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-        } finally {
-          setReportsLoading(false);
-        }
+          
+          // Process journal entries
+          if (journalResult.error) {
+            console.error("Error fetching journal entries:", journalResult.error);
+          } else {
+            setRecentJournalEntries(journalResult.data || []);
+          }
+          
+          // Process stress assessments
+          if (stressResult.error) {
+            console.error("Error fetching stress assessments:", stressResult.error);
+          } else if (stressResult.data && stressResult.data.length > 0) {
+            // User has stress assessments
+            setHasAssessments(true);
+            
+            // Get the most recent assessment
+            const latestAssessment = stressResult.data[0];
+            
+            // Format the date properly
+            const assessmentDate = format(new Date(latestAssessment.created_at), "MMM d, yyyy");
+            setLastAssessmentDate(assessmentDate);
+            
+            // Update user metrics with normalized stress level
+            setUserMetrics(prev => ({
+              ...prev,
+              stressLevel: latestAssessment.raw_score,
+              lastCheckInStatus: "Completed"
+            }));
+          }
+        }).catch(error => {
+          console.error("Error fetching secondary dashboard data:", error);
+        }).finally(() => {
+          console.timeEnd('dashboard-total-load');
+        });
+        
+        // Lazy load appointment reports - this data is less critical
+        const loadAppointmentReports = () => {
+          setReportsLoading(true);
+          fetchAppointmentReports(user.id)
+            .then((result) => {
+              const reportsData = (result as any)?.data || (Array.isArray(result) ? result : []);
+              const reportsError = (result as any)?.error;
+
+              if (reportsData && !(result as any)?.error) {
+                setAppointmentReports(reportsData);
+              } else if (reportsError) {
+                console.error("Error fetching appointment reports:", reportsError);
+                setAppointmentReports([]);
+              } else {
+                setAppointmentReports([]);
+              }
+            })
+            .catch(error => {
+              console.error("Exception in appointment reports fetch:", error);
+              setAppointmentReports([]);
+            })
+            .finally(() => {
+              setReportsLoading(false);
+            });
+        };
+        
+        // Delay loading reports to prioritize critical UI elements
+        setTimeout(loadAppointmentReports, 1000);
+        
       } catch (error: any) {
         console.error("Error fetching dashboard data:", error);
         if (isMounted) {
           toast.error(error.message || "Failed to load dashboard data");
         }
-      } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setShowWelcomeDialog(false);
+        }
       }
     };
 
     fetchDashboardData();
+
+    // Set up listeners for mood assessment completion events
+    const handleMoodAssessmentCompleted = () => {
+      console.log('PatientDashboard: Mood assessment completed event received');
+      // Use toast to notify user their assessment was received by the dashboard
+      toast.success("Mood assessment recorded! Dashboard updating...");
+      // Fetch fresh data
+      fetchDashboardData();
+    };
+    
+    const handleDashboardReloadNeeded = () => {
+      console.log('PatientDashboard: Dashboard reload event received');
+      // Fetch fresh data and show indicator
+      fetchDashboardData();
+    };
+    
+    // Check sessionStorage for recently saved mood assessments (backup mechanism)
+    const checkForRecentAssessments = () => {
+      try {
+        const lastAssessmentStr = sessionStorage.getItem('last_mood_assessment');
+        if (lastAssessmentStr) {
+          const lastAssessment = JSON.parse(lastAssessmentStr);
+          const saveTime = new Date(lastAssessment.saveTime || lastAssessment.timestamp);
+          const now = new Date();
+          const timeDiff = now.getTime() - saveTime.getTime();
+          
+          // If assessment was saved in the last 30 seconds and dashboard hasn't updated
+          if (timeDiff < 30000) {
+            console.log('PatientDashboard: Recent mood assessment found in storage, reloading data');
+            // Show a message so the user knows the dashboard is updating
+            toast.info("Updating dashboard with your latest mood assessment...");
+            fetchDashboardData();
+            // Clear it so we don't reload again
+            sessionStorage.removeItem('last_mood_assessment');
+          }
+        }
+      } catch (error) {
+        console.error('Error checking for recent assessments:', error);
+      }
+    };
+    
+    // Listen for the events using addEventListener
+    window.addEventListener('mood-assessment-completed', handleMoodAssessmentCompleted);
+    window.addEventListener('dashboard-reload-needed', handleDashboardReloadNeeded);
+    
+    // Check for recent assessments once
+    checkForRecentAssessments();
+    
+    // Also check again in 3 seconds in case there are delays
+    const checkTimeout = setTimeout(checkForRecentAssessments, 3000);
+    
     return () => {
       isMounted = false;
+      window.removeEventListener('mood-assessment-completed', handleMoodAssessmentCompleted);
+      window.removeEventListener('dashboard-reload-needed', handleDashboardReloadNeeded);
+      clearTimeout(checkTimeout);
     };
-  }, [navigate]);
-
-  // Update appointment reports when filter changes
-  useEffect(() => {
-    const updateAppointmentReports = async () => {
-      if (!user?.id) return;
-      
-      setReportsLoading(true);
-      try {
-        const { success, data, error } = await patientService.getAppointmentReports(
-          user.id, 
-          appointmentFilter
-        );
-        
-        if (success && data) {
-          setAppointmentReports(data);
-        } else if (error) {
-          console.error("Error fetching filtered appointment reports:", error);
-          setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-        } else {
-          setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-        }
-      } catch (err) {
-        console.error("Exception in filtered appointment reports fetch:", err);
-        setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-      } finally {
-        setReportsLoading(false);
-      }
-    };
-    
-    updateAppointmentReports();
-  }, [user, appointmentFilter]);
-
-  // Add testing mode listener for stress assessment completion
-  useEffect(() => {
-    // Check if there's test data in session storage on component mount
-    try {
-      const testDataString = sessionStorage.getItem('test_stress_assessment');
-      if (testDataString) {
-        const testData = JSON.parse(testDataString);
-        
-        // Update UI with test data
-        setUserMetrics(prevMetrics => ({
-          ...prevMetrics,
-          stressLevel: testData.stressLevel || prevMetrics.stressLevel,
-          lastCheckInStatus: "Completed",
-          // Streak is no longer incremented here - will be managed in the day tracking logic
-        }));
-        
-        setHasAssessments(true);
-        setLastAssessmentDate(new Date().toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric'
-        }));
-      }
-    } catch (error) {
-      console.error("Error reading test data from session storage:", error);
-    }
-    
-    // Listen for custom event from stress assessment
-    const handleStressAssessmentCompleted = (event: Event) => {
-      const customEvent = event as CustomEvent<{
-        stressLevel: number;
-        score: number;
-        status: string;
-      }>;
-      
-      // Update UI immediately with the assessment data
-      setUserMetrics(prevMetrics => ({
-        ...prevMetrics,
-        stressLevel: customEvent.detail.stressLevel || prevMetrics.stressLevel,
-        lastCheckInStatus: "Completed",
-        // Streak is no longer incremented here - will be managed in the day tracking logic
-      }));
-      
-      setHasAssessments(true);
-      setLastAssessmentDate(new Date().toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      }));
-      
-      // Check for day tracking and increment streak if it's a new day
-      updateDayStreak();
-      
-      // Show a toast notification
-      toast.success("Dashboard updated with new assessment data", {
-        duration: 3000
-      });
-    };
-    
-    window.addEventListener('stress-assessment-completed', handleStressAssessmentCompleted as EventListener);
-    
-    // Clean up
-    return () => {
-      window.removeEventListener('stress-assessment-completed', handleStressAssessmentCompleted as EventListener);
-    };
-  }, []);
-
-  // Add listener for mood assessment completion
-  useEffect(() => {
-    // Check if there's test mood data in session storage on component mount
-    try {
-      const moodEntriesStr = sessionStorage.getItem('test_mood_entries');
-      if (moodEntriesStr) {
-        const moodEntries = JSON.parse(moodEntriesStr);
-        if (moodEntries && moodEntries.length > 0) {
-          // Get the most recent mood entry
-          const latestEntry = moodEntries[moodEntries.length - 1];
-          
-          // Update UI with mood data
-          setUserMetrics(prevMetrics => ({
-            ...prevMetrics,
-            moodScore: latestEntry.mood_score || prevMetrics.moodScore,
-            lastCheckInStatus: "Completed",
-            // Streak is no longer incremented here - will be managed in the day tracking logic
-          }));
-          
-          // Update last check-in date
-          const entryDate = new Date(latestEntry.created_at);
-          setLastCheckInDate(entryDate.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-          }));
-          
-          const timeString = entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          setLastCheckIn(timeString);
-        }
-      }
-    } catch (error) {
-      console.error("Error reading test mood data from session storage:", error);
-    }
-    
-    // Listen for custom event from mood assessment
-    const handleMoodAssessmentCompleted = (event: Event) => {
-      const customEvent = event as CustomEvent<{
-        moodScore: number;
-        assessmentResult: string;
-        timestamp: string;
-      }>;
-      
-      // Update UI immediately with the mood assessment data
-      setUserMetrics(prevMetrics => ({
-        ...prevMetrics,
-        moodScore: customEvent.detail.moodScore || prevMetrics.moodScore,
-        lastCheckInStatus: "Completed",
-        // Streak is no longer incremented here - will be managed in the day tracking logic
-      }));
-      
-      // Update last check-in time
-      const entryDate = new Date(customEvent.detail.timestamp);
-      setLastCheckInDate(entryDate.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric'
-      }));
-      
-      const timeString = entryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setLastCheckIn(timeString);
-      
-      // Check for day tracking and increment streak if it's a new day
-      updateDayStreak();
-      
-      // Show a toast notification
-      toast.success("Dashboard updated with new mood data", {
-        duration: 3000
-      });
-    };
-    
-    window.addEventListener('mood-assessment-completed', handleMoodAssessmentCompleted as EventListener);
-    
-    // Clean up
-    return () => {
-      window.removeEventListener('mood-assessment-completed', handleMoodAssessmentCompleted as EventListener);
-    };
-  }, []);
-
-  // Function to manage the day-based streak counter
-  const updateDayStreak = () => {
-    try {
-      // Get or initialize the streak record from sessionStorage
-      const streakDataStr = sessionStorage.getItem('test_streak_data');
-      let streakData = streakDataStr 
-        ? JSON.parse(streakDataStr) 
-        : { 
-            days: [], // Array of date strings that have been logged
-            currentStreak: 0,
-            lastUpdated: ''
-          };
-      
-      // Get today's date in YYYY-MM-DD format for consistent comparison
-      const today = new Date();
-      const todayStr = today.toISOString().split('T')[0];
-      
-      // Check if we already logged today
-      if (!streakData.days.includes(todayStr)) {
-        // Today hasn't been logged yet, add it
-        streakData.days.push(todayStr);
-        
-        // Determine if this continues a streak by checking if yesterday was logged
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        
-        if (streakData.days.includes(yesterdayStr) || streakData.currentStreak === 0) {
-          // Either yesterday was logged, or this is the first day (start streak)
-          streakData.currentStreak += 1;
-        } else {
-          // Gap detected, reset streak to 1 (today)
-          streakData.currentStreak = 1;
-        }
-        
-        // Update the last updated date
-        streakData.lastUpdated = todayStr;
-        
-        // Save back to sessionStorage
-        sessionStorage.setItem('test_streak_data', JSON.stringify(streakData));
-        
-        // Update the UI
-        setUserMetrics(prevMetrics => ({
-          ...prevMetrics,
-          streak: streakData.currentStreak,
-          // Update any other metrics as needed
-        }));
-      }
-      // If today is already logged, no need to update streak
-      
-    } catch (error) {
-      console.error("Error updating streak data:", error);
-    }
-  };
-  
-  // Check initial streak on component mount
-  useEffect(() => {
-    try {
-      const streakDataStr = sessionStorage.getItem('test_streak_data');
-      if (streakDataStr) {
-        const streakData = JSON.parse(streakDataStr);
-        
-        // Update UI with existing streak data
-        setUserMetrics(prevMetrics => ({
-          ...prevMetrics,
-          streak: streakData.currentStreak || 0
-        }));
-        
-        // If there are days logged, we have assessments
-        if (streakData.days && streakData.days.length > 0) {
-          setHasAssessments(true);
-        }
-      }
-    } catch (error) {
-      console.error("Error reading streak data:", error);
-    }
-  }, []);
-
-  // Update checkInDates whenever assessments are completed
-  useEffect(() => {
-    // Add check-in dates from sessionStorage
-    const loadCheckInDates = () => {
-      try {
-        // Get stress assessment dates
-        const stressDataString = sessionStorage.getItem('test_stress_assessment');
-        const stressDates: Date[] = [];
-        
-        if (stressDataString) {
-          const stressData = JSON.parse(stressDataString);
-          if (stressData.created_at) {
-            stressDates.push(new Date(stressData.created_at));
-          }
-        }
-        
-        // Get mood assessment dates
-        const moodEntriesString = sessionStorage.getItem('test_mood_entries');
-        const moodDates: Date[] = [];
-        
-        if (moodEntriesString) {
-          const entries = JSON.parse(moodEntriesString);
-          if (Array.isArray(entries)) {
-            entries.forEach(entry => {
-              if (entry.created_at) {
-                moodDates.push(new Date(entry.created_at));
-              }
-            });
-          }
-        }
-        
-        // Combine all dates
-        setCheckInDates([...stressDates, ...moodDates]);
-      } catch (error) {
-        console.error("Error loading check-in dates:", error);
-      }
-    };
-    
-    // Load initial check-in dates
-    loadCheckInDates();
-    
-    // Listen for new check-ins to update dates
-    const handleStressAssessment = (e: CustomEvent) => {
-      const newDate = new Date();
-      setCheckInDates(prev => [...prev, newDate]);
-    };
-    
-    const handleMoodAssessment = (e: CustomEvent) => {
-      const newDate = new Date();
-      setCheckInDates(prev => [...prev, newDate]);
-    };
-    
-    // Add event listeners
-    window.addEventListener('stress-assessment-completed', handleStressAssessment as EventListener);
-    window.addEventListener('mood-assessment-completed', handleMoodAssessment as EventListener);
-    
-    return () => {
-      // Remove event listeners
-      window.removeEventListener('stress-assessment-completed', handleStressAssessment as EventListener);
-      window.removeEventListener('mood-assessment-completed', handleMoodAssessment as EventListener);
-    };
-  }, []);
+  }, [user, navigate]);
 
   const handleUpdateProfile = async (updatedData: Partial<UserProfile>) => {
     try {
       if (!profile?.id) return;
 
-      const { data, error } = await userService.updateUserProfile(profile.id, updatedData);
+      const result = await supabase
+        .from('user_profiles')
+        .update(updatedData)
+        .eq('id', profile.id)
+        .select('*')
+        .single();
 
-      if (error) throw error;
+      if (result.error) throw result.error;
 
-      if (data) {
-        setProfile(data);
+      if (result.data) {
+        setProfile(result.data);
         toast.success("Profile updated successfully");
       }
     } catch (error: any) {
@@ -739,7 +453,7 @@ export default function PatientDashboard() {
 
   const handleSignout = async () => {
     try {
-      await authService.signOut();
+      await signOut();
       navigate('/login');
     } catch (error) {
       toast.error("Failed to sign out");
@@ -764,7 +478,7 @@ export default function PatientDashboard() {
       // Create data for table
       const tableRows = appointmentReports.map(report => [
         report.id, 
-        report.moodMentor?.name,
+        report.mood_mentor?.name,
         `${report.date}, ${report.time}`,
         report.type,
         report.status
@@ -823,8 +537,8 @@ export default function PatientDashboard() {
       
       // Appointment details
       doc.text(`ID: ${appointment.id}`, 14, 35);
-      doc.text(`Mood Mentor: ${appointment.moodMentor?.name}`, 14, 45);
-      doc.text(`Specialization: ${appointment.moodMentor?.specialization}`, 14, 55);
+      doc.text(`Mood Mentor: ${appointment.mood_mentor?.name}`, 14, 45);
+      doc.text(`Specialization: ${appointment.mood_mentor?.specialization}`, 14, 55);
       doc.text(`Date: ${appointment.date}`, 14, 65);
       doc.text(`Time: ${appointment.time}`, 14, 75);
       doc.text(`Type: ${appointment.type}`, 14, 85);
@@ -851,10 +565,52 @@ export default function PatientDashboard() {
     }
   };
 
-  // Function to show welcome dialog for testing
   const handleShowWelcomeDialog = () => {
-    resetWelcomeDialog(); // Reset the localStorage flag
     setShowWelcomeDialog(true);
+  };
+
+  const getHealthStatus = (stressLevel: number): 'excellent' | 'good' | 'fair' | 'concerning' | 'worrying' => {
+    // Convert raw stress score (1-5) to health percentage (0-100)
+    const healthPercentage = Math.max(0, Math.min(100, ((5 - stressLevel) / 4) * 100));
+    
+    if (healthPercentage >= 80) return 'excellent';
+    if (healthPercentage >= 60) return 'good';
+    if (healthPercentage >= 40) return 'fair';
+    if (healthPercentage >= 20) return 'concerning';
+    return 'worrying';
+  };
+
+  // Replace appointmentService.getPatientAppointments with direct Supabase call
+  const fetchAppointments = async (userId: string) => {
+    return await supabase
+      .from('appointments')
+      .select(`
+        *,
+        mood_mentor:mood_mentors(*)
+      `)
+      .eq('patient_id', userId)
+      .order('created_at', { ascending: false });
+  };
+
+  // Replace messageService.getMessages with direct Supabase call
+  const fetchMessages = async (userId: string) => {
+    return await supabase
+      .from('messages')
+      .select('*')
+      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+  };
+
+  // Replace patientService.getAppointmentReports with direct Supabase call
+  const fetchAppointmentReports = async (userId: string) => {
+    return await supabase
+      .from('appointments')
+      .select(`
+        *,
+        mood_mentor:mood_mentors(*)
+      `)
+      .eq('patient_id', userId)
+      .order('created_at', { ascending: false });
   };
 
   return (
@@ -873,13 +629,15 @@ export default function PatientDashboard() {
         />
       )}
 
+      <StressAssessmentModal open={isStressModalOpen} onOpenChange={setIsStressModalOpen} />
+
       <div className="space-y-6">
         {/* Title and User Welcome */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex flex-col gap-1">
             <h1 className="text-2xl font-semibold">Dashboard</h1>
             <p className="text-slate-500">
-              Welcome back, {profile?.first_name || "User"}
+              Welcome back, {firstName}
             </p>
           </div>
           {/* Testing Controls */}
@@ -889,15 +647,17 @@ export default function PatientDashboard() {
             onClick={handleShowWelcomeDialog}
             className="sm:self-start"
           >
-            <div className="flex items-center gap-1">
-              <HeartHandshake className="w-4 h-4" />
-              <span>Show Welcome Dialog</span>
-            </div>
+            Show Welcome Dialog
           </Button>
         </div>
 
         {/* Welcome Dialog for testing */}
-        {showWelcomeDialog && <WelcomeDialog forceShow={true} />}
+        {showWelcomeDialog && (
+          <WelcomeDialog 
+            isOpen={showWelcomeDialog} 
+            onClose={() => setShowWelcomeDialog(false)}
+          />
+        )}
 
         {/* Health Records Overview */}
         <div>
@@ -938,17 +698,17 @@ export default function PatientDashboard() {
                 {userMetrics.stressLevel > 0 ? (
                   <>
                     <div className="text-3xl font-bold mb-1">
-                      {Math.round(userMetrics.stressLevel * 10)}%
+                      {Math.round(((5 - userMetrics.stressLevel) / 4) * 100)}%
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
                       <div 
                         className="h-2 rounded-full transition-all duration-500 ease-in-out"
                         style={{ 
-                          width: `${Math.round(userMetrics.stressLevel * 10)}%`,
-                          backgroundColor: userMetrics.stressLevel < 3 ? '#4ade80' : 
-                                           userMetrics.stressLevel < 5 ? '#a3e635' : 
-                                           userMetrics.stressLevel < 7 ? '#facc15' : 
-                                           userMetrics.stressLevel < 8 ? '#fb923c' : '#ef4444'
+                          width: `${((5 - userMetrics.stressLevel) / 4) * 100}%`,
+                          backgroundColor: userMetrics.stressLevel < 2 ? '#4ade80' : 
+                                         userMetrics.stressLevel < 3 ? '#a3e635' : 
+                                         userMetrics.stressLevel < 4 ? '#facc15' : 
+                                         userMetrics.stressLevel < 4.5 ? '#fb923c' : '#ef4444'
                         }}
                       ></div>
                     </div>
@@ -957,17 +717,9 @@ export default function PatientDashboard() {
                     </p>
                   </>
                 ) : (
-                  <>
-                    <div className="text-3xl font-bold mb-1">
-                      <span className="opacity-70">—</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                      <div className="h-2 rounded-full bg-gray-300 w-0"></div>
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      Complete your first assessment
-                    </p>
-                  </>
+                  <div className="text-center py-2">
+                    <p className="text-sm text-slate-500">No assessment data</p>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1036,6 +788,11 @@ export default function PatientDashboard() {
             lastCheckIn={lastAssessmentDate}
             onViewDetails={() => navigate('/patient-dashboard/reports')}
             hasAssessments={hasAssessments}
+            statusText={getHealthStatus(userMetrics.stressLevel)}
+            onTakeAssessment={() => {
+              console.log("EmotionalHealthWheel onTakeAssessment clicked on PatientDashboard - opening modal.");
+              setIsStressModalOpen(true);
+            }}
           />
 
           {/* Mood Summary Card */}
@@ -1174,25 +931,25 @@ export default function PatientDashboard() {
                             </td>
                             <td className="p-4">
                               <div className="flex items-center gap-3">
-                                {report.moodMentor?.avatar_url ? (
+                                {report.mood_mentor?.avatar_url ? (
                                   <Avatar className="h-10 w-10 relative">
                                     <AvatarImage 
-                                      src={report.moodMentor?.avatar_url}
-                                      alt={report.moodMentor?.name}
+                                      src={report.mood_mentor?.avatar_url}
+                                      alt={report.mood_mentor?.name}
                                       className="object-cover"
                                     />
                                     <AvatarFallback>
-                                      {(report.moodMentor?.name || "").split(' ').map(n => n[0]).join('')}
+                                      {(report.mood_mentor?.name || "").split(' ').map(n => n[0]).join('')}
                                     </AvatarFallback>
                                   </Avatar>
                                 ) : (
                                   <span className="text-blue-500 font-medium">
-                                    {(report.moodMentor?.name || "").split(' ').map(n => n[0]).join('')}
+                                    {(report.mood_mentor?.name || "").split(' ').map(n => n[0]).join('')}
                                   </span>
                                 )}
                                 <div>
-                                  <div className="font-medium">{report.moodMentor?.name}</div>
-                                  <div className="text-xs text-slate-500">{report.moodMentor?.specialization}</div>
+                                  <div className="font-medium">{report.mood_mentor?.name}</div>
+                                  <div className="text-xs text-slate-500">{report.mood_mentor?.specialization}</div>
                                 </div>
                               </div>
                             </td>
@@ -1241,25 +998,7 @@ export default function PatientDashboard() {
           </div>
           
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {isLoading ? (
-              // Loading skeletons for journal entries
-              Array.from({ length: 3 }).map((_, index) => (
-                <Card key={index} className="hover:border-blue-200 cursor-pointer transition-colors">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between mb-3">
-                      <Skeleton className="h-5 w-20" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                    <Skeleton className="h-5 w-3/4 mb-2" />
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-2/3" />
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : recentJournalEntries.length === 0 ? (
+            {recentJournalEntries.length === 0 ? (
               // No entries message
               <Card className="col-span-full p-5 text-center">
                 <CardContent>
@@ -1310,6 +1049,7 @@ export default function PatientDashboard() {
     </DashboardLayout>
   );
 }
+
 
 
 

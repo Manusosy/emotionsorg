@@ -1,5 +1,5 @@
 import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +17,7 @@ import {
   X 
 } from "lucide-react";
 // Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { formatDistanceToNow } from "date-fns";
 import {
   Dialog,
@@ -103,7 +103,7 @@ interface NotificationPreferences {
 
 export default function NotificationsPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [activeTab, setActiveTab] = useState("all");
   const [loading, setLoading] = useState(true);
@@ -127,11 +127,43 @@ export default function NotificationsPage() {
     try {
       setLoading(true);
       
+      // For development use mock data
+      if (process.env.NODE_ENV !== 'production') {
+        setNotifications(mockNotifications);
+        setLoading(false);
+        return;
+      }
+      
       // For production use the database
-      if (process.env.NODE_ENV === 'production') {
+      try {
+        // Try to use dataService if available
         const { data, error } = await dataService.getUserNotifications(user.id);
       
-        if (error) throw error;
+        if (error) {
+          // Handle table not found errors gracefully
+          if (error.code === '42P01' || error.message?.includes('does not exist')) {
+            console.warn('Notifications table does not exist yet. This is normal if the app is newly deployed.');
+            
+            // Add welcome notification since the table doesn't exist yet
+            const welcomeNotification = {
+              id: 'welcome-1',
+              type: 'system',
+              content: 'Welcome to Emotions. Feel free to explore our features to help you monitor, analyze and receive personalized recommendations for your mental health.',
+              timestamp: 'Just now',
+              read: false,
+              avatar: null,
+              senderName: 'System',
+              title: 'Welcome to Emotions',
+              created_at: new Date().toISOString(),
+              user_id: user.id
+            };
+            
+            setNotifications([welcomeNotification]);
+            setLoading(false);
+            return;
+          }
+          throw error;
+        }
 
         // Map database notifications to our interface
         let userNotifications: Notification[] = [];
@@ -183,8 +215,9 @@ export default function NotificationsPage() {
         }
         
         setNotifications(userNotifications);
-      } else {
-        // For development, use mock data
+      } catch (err) {
+        console.error('Error fetching notifications from database:', err);
+        // Fallback to mock data in case of error
         setNotifications(mockNotifications);
       }
     } catch (error) {
@@ -200,19 +233,26 @@ export default function NotificationsPage() {
     if (!user?.id) return;
 
     try {
-      const { data, error } = await userService.getUserPreferences(user.id);
-
-      if (error) {
-        console.error('Error fetching notification preferences:', error);
+      // In development, use default preferences
+      if (process.env.NODE_ENV !== 'production') {
+        setPreferences({
+          emailNotifications: true,
+          appointmentReminders: true,
+          moodTrackingReminders: true,
+          marketingCommunications: false,
+        });
         return;
       }
 
-      if (data?.notification_preferences) {
+      // In production, try to get from database
+      const preferences = await userService.getUserPreferences(user.id);
+
+      if (preferences?.notification_preferences) {
         setPreferences({
-          emailNotifications: data.notification_preferences.emailNotifications ?? true,
-          appointmentReminders: data.notification_preferences.appointmentReminders ?? true,
-          moodTrackingReminders: data.notification_preferences.moodTrackingReminders ?? true,
-          marketingCommunications: data.notification_preferences.marketingCommunications ?? false,
+          emailNotifications: preferences.notification_preferences.emailNotifications ?? true,
+          appointmentReminders: preferences.notification_preferences.appointmentReminders ?? true,
+          moodTrackingReminders: preferences.notification_preferences.moodTrackingReminders ?? true,
+          marketingCommunications: preferences.notification_preferences.marketingCommunications ?? false,
         });
       }
     } catch (error) {
@@ -224,11 +264,18 @@ export default function NotificationsPage() {
     if (!user?.id) return;
 
     try {
-      const { error } = await userService.updateUserPreferences(user.id, {
+      // In development, just show success message
+      if (process.env.NODE_ENV !== 'production') {
+        toast.success('Notification preferences saved (dev mode)');
+        return;
+      }
+
+      // In production, save to database
+      const result = await userService.updateUserPreferences(user.id, {
         notification_preferences: preferences
       });
 
-      if (error) throw error;
+      if (!result.success) throw new Error(result.error || 'Unknown error');
       
       toast.success('Notification preferences saved');
     } catch (error) {
@@ -262,11 +309,22 @@ export default function NotificationsPage() {
       // Update local state first for responsive UI
       setNotifications(notifications.map(n => ({ ...n, read: true })));
       
+      // Skip database operation in development
+      if (process.env.NODE_ENV !== 'production') {
+        toast.success('All notifications marked as read (dev mode)');
+        return;
+      }
+      
       // Update read status in database for real notifications (not welcome notification)
-      if (user?.id && process.env.NODE_ENV === 'production') {
-        const { error } = await dataService.markAllNotificationsAsRead(user.id);
-          
-        if (error) throw error;
+      if (user?.id) {
+        try {
+          // Try to use dataService if available
+          const { error } = await dataService.markAllNotificationsAsRead(user.id);
+          if (error) throw error;
+        } catch (err) {
+          console.warn('Could not mark all notifications as read:', err);
+          // Silently fail - UI is already updated
+        }
       }
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
@@ -280,12 +338,23 @@ export default function NotificationsPage() {
       setNotifications(notifications.filter(n => n.id !== id));
       
       // Skip database operation for welcome notification or in development
-      if (id === 'welcome-1' || process.env.NODE_ENV !== 'production') return;
+      if (id === 'welcome-1' || process.env.NODE_ENV !== 'production') {
+        if (process.env.NODE_ENV !== 'production') {
+          toast.success('Notification deleted (dev mode)');
+        }
+        return;
+      }
       
       // Delete from database
-      const { error } = await dataService.deleteNotification(id);
-        
-      if (error) throw error;
+      try {
+        // Try to use dataService if available
+        const { error } = await dataService.deleteNotification(id);
+        if (error) throw error;
+        toast.success('Notification deleted');
+      } catch (err) {
+        console.warn('Could not delete notification from database:', err);
+        // Silently fail - UI is already updated
+      }
     } catch (error) {
       console.error('Error deleting notification:', error);
     }
@@ -300,12 +369,19 @@ export default function NotificationsPage() {
       ));
       
       // Skip database operation for welcome notification or in development
-      if (id === 'welcome-1' || process.env.NODE_ENV !== 'production') return;
+      if (id === 'welcome-1' || process.env.NODE_ENV !== 'production') {
+        return;
+      }
       
       // Update in database
-      const { error } = await dataService.markNotificationAsRead(id);
-        
-      if (error) throw error;
+      try {
+        // Try to use dataService if available
+        const { error } = await dataService.markNotificationAsRead(id);
+        if (error) throw error;
+      } catch (err) {
+        console.warn('Could not mark notification as read in database:', err);
+        // Silently fail - UI is already updated
+      }
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }

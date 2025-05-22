@@ -1,4 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
+import { appointmentService } from '@/services'
+import { useAuth } from '@/contexts/authContext';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -77,11 +78,11 @@ export function BookingModal({
     }
   });
 
+  const { user } = useAuth();
+
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       setIsSubmitting(true);
-
-      const user = await authService.getCurrentUser();
 
       if (!user) {
         toast.error('You must be logged in to book a session');
@@ -95,7 +96,7 @@ export function BookingModal({
       const endTime = `${endHour.toString().padStart(2, '0')}:${minutes}`;
 
       // Use the appointment service to book the appointment
-      const appointment = await appointmentService.bookAppointment({
+      const response = await appointmentService.bookAppointment({
         patientId: user.id,
         moodMentorId: moodMentorId,
         title: `Session with ${moodMentorName}`,
@@ -106,10 +107,15 @@ export function BookingModal({
         meetingLink: `https://meet.emotionsapp.com/${user.id}/${moodMentorId}`
       });
 
+      if (response.error) {
+        toast.error(response.error);
+        return;
+      }
+
       toast.success('Session booked successfully');
       onClose();
       form.reset();
-    } catch (error) {
+    } catch (error: any) {
       toast.error('Failed to book session');
       console.error('Error booking session:', error);
     } finally {

@@ -1,6 +1,6 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import React, { useState, useEffect } from "react";
-import { DashboardLayout } from "../components/DashboardLayout";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import React, { useState, useEffect, useContext } from "react";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import {
   Table,
   TableBody,
@@ -19,7 +19,7 @@ import {
   MoreVertical,
   MapPin,
 } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { toast } from "sonner";
 import {
   Select,
@@ -70,7 +70,7 @@ interface SupportGroup {
 }
 
 export default function PatientsPage() {
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [supportGroups, setSupportGroups] = useState<SupportGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -222,14 +222,12 @@ export default function PatientsPage() {
   });
 
   return (
-    <DashboardLayout title="Patients" description="Manage your patients and group memberships">
-      <Card className="overflow-hidden">
-        <div className="flex flex-col md:flex-row items-center justify-between p-4 border-b">
-          <div className="flex items-center mb-4 md:mb-0">
-            <h2 className="text-xl font-semibold">Patients</h2>
-            <Badge variant="outline" className="ml-2 bg-blue-50 text-blue-600">
-              {patients.length}
-            </Badge>
+    <DashboardLayout>
+      <div className="p-6">
+        <div className="flex flex-col md:flex-row items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold">Patients</h1>
+            <p className="text-muted-foreground">Manage your patients and group memberships</p>
           </div>
           
           <div className="flex flex-col sm:flex-row w-full md:w-auto space-y-2 sm:space-y-0 sm:space-x-2">
@@ -352,7 +350,7 @@ export default function PatientsPage() {
             </Table>
           )}
         </div>
-      </Card>
+      </div>
       
       {/* Patient Profile Dialog */}
       <Dialog open={isProfileOpen} onOpenChange={setIsProfileOpen}>

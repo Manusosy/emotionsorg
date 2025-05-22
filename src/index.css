@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global styles */
+:root {
+  --brand-primary: #0078FF;
+  --brand-secondary: #FDA802;
+}
+
+body.signing-out {
+  cursor: wait;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* ... existing code ... */ 

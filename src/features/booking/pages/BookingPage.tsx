@@ -283,7 +283,7 @@ const BookingPage = () => {
       formData
     }));
     
-    navigate("/signin");
+    navigate("/patient-signin");
   };
   
   const redirectToSignup = () => {
@@ -299,7 +299,7 @@ const BookingPage = () => {
       formData
     }));
     
-    navigate("/signup");
+    navigate("/patient-signup");
   };
   
   // Render current step content

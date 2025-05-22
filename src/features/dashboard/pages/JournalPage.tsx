@@ -1,166 +1,88 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
-import {
-  BookMarked,
+  BookOpen,
   Calendar,
-  Edit,
-  Pencil,
   Plus,
   Search,
   Star,
-  Trash2,
-  Clock,
-  BookOpen,
-  ArrowRight,
   Goal,
-  History,
   PenTool
 } from "lucide-react";
-// Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth } from "@/contexts/authContext";
+import { dataService, userService } from "@/services";
 
 interface JournalEntry {
   id: string;
   title: string;
   content: string;
   mood?: string | number;
-  mood_score?: number;
   tags?: string[];
   created_at?: string;
   updated_at?: string;
-  createdAt?: string; // For test mode
-  updatedAt?: string; // For test mode
   user_id?: string;
-  userId?: string; // For test mode
-  is_favorite?: boolean;
-  isPrivate?: boolean; // For test mode
-  tomorrows_intention?: string;
+  is_shared?: boolean;
+  share_code?: string;
 }
 
 export default function JournalPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  
+  // All state declarations at the top
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [filteredEntries, setFilteredEntries] = useState<JournalEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
-  const [tomorrowsPlan, setTomorrowsPlan] = useState('');
-  const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [activeTab, setActiveTab] = useState('entries');
   const [isMentor, setIsMentor] = useState(false);
-  const [isRoleChecking, setIsRoleChecking] = useState(true);
-  
-  // Check if the user is a mood mentor
-  useEffect(() => {
-    const checkUserRole = async () => {
-      if (!user) return;
-      
-      try {
-        setIsRoleChecking(true);
-        // Check if the user has a mentor profile
-        const profileResponse = await userService.getUserProfile(user.id);
-        const isMoodMentor = profileResponse?.role === 'mood_mentor';
-        
-        // If they're a mentor, redirect to mentor dashboard
-        if (isMoodMentor) {
-          navigate('/mood-mentor-dashboard');
-        }
-        
-        setIsMentor(isMoodMentor);
-      } catch (error) {
-        console.error("Error checking user role:", error);
-      } finally {
-        setIsRoleChecking(false);
-      }
-    };
-    
-    checkUserRole();
-  }, [user, navigate]);
-  
-  // If still checking role, show loading state
-  if (isRoleChecking) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-96">
-          <div className="flex flex-col items-center gap-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            <p className="text-slate-500">Checking access...</p>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
 
-  // Fetch journal entries
+  // Check user role and fetch entries
   useEffect(() => {
-    const fetchEntries = async () => {
-      if (!user) return;
+    const checkUserAndFetchEntries = async () => {
+      if (!user?.id) return;
       
       try {
         setIsLoading(true);
-        const { data, error } = await dataService.getJournalEntries(user.id);
-          
-        if (error) throw error;
         
-        // Normalize data fields to handle both production and test mode formats
-        const normalizedEntries = (data || []).map(entry => ({
-          id: entry.id,
-          title: entry.title,
-          content: entry.content,
-          mood: entry.mood,
-          mood_score: entry.mood_score,
-          tags: entry.tags,
-          created_at: entry.created_at || entry.createdAt,
-          updated_at: entry.updated_at || entry.updatedAt,
-          user_id: entry.user_id || entry.userId,
-          is_favorite: entry.is_favorite,
-          tomorrows_intention: entry.tomorrows_intention
-        }));
+        // Check if user is a mood mentor
+        const profileResponse = await userService.getProfile(user.id);
+        
+        if (profileResponse.error) throw profileResponse.error;
+        
+        if (profileResponse.data?.role === 'mood_mentor') {
+          setIsMentor(true);
+          toast.error("Mood mentors do not have access to the journaling feature");
+          navigate('/mood-mentor-dashboard');
+          return;
+        }
 
-        setJournalEntries(normalizedEntries);
-        setFilteredEntries(normalizedEntries);
+        // If not a mentor, fetch entries
+        const response = await dataService.getJournalEntries(user.id);
+        
+        if (response.error) throw response.error;
+        
+        setJournalEntries(response.data || []);
+        setFilteredEntries(response.data || []);
       } catch (error) {
-        console.error('Error fetching journal entries:', error);
+        console.error('Error:', error);
         toast.error("Failed to load journal entries");
       } finally {
         setIsLoading(false);
       }
     };
-    
-    fetchEntries();
-    
-    // Set up data refresher - polling instead of real-time subscription
-    const intervalId = setInterval(() => {
-      fetchEntries();
-    }, 60000); // Refresh every minute
-      
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [user]);
+
+    checkUserAndFetchEntries();
+  }, [user, navigate]);
   
   // Filter entries when search term changes
   useEffect(() => {
@@ -179,24 +101,14 @@ export default function JournalPage() {
     setFilteredEntries(filtered);
   }, [searchTerm, journalEntries]);
   
-  // Extract most recent entry's tomorrow plan
-  useEffect(() => {
-    if (journalEntries.length > 0) {
-      const mostRecentEntry = journalEntries[0];
-      setTomorrowsPlan(mostRecentEntry.tomorrows_intention || '');
-    }
-  }, [journalEntries]);
-  
-  // Format content preview by removing HTML tags
+  // Helper functions
   const formatPreview = (content: string) => {
     const textOnly = content.replace(/<[^>]*>/g, "");
     return textOnly.length > 100 ? textOnly.substring(0, 100) + "..." : textOnly;
   };
   
-  // Format date
   const formatDate = (dateStr: string | undefined) => {
     if (!dateStr) return "Invalid date";
-    
     try {
       return format(new Date(dateStr), "MMM d, yyyy");
     } catch (e) {
@@ -204,7 +116,6 @@ export default function JournalPage() {
     }
   };
   
-  // Get mood color based on mood name
   const getMoodColor = (mood: string | undefined) => {
     if (!mood) return "";
     
@@ -233,80 +144,19 @@ export default function JournalPage() {
         return 'bg-slate-500 text-white';
     }
   };
-  
-  // Toggle favorite status
-  const toggleFavorite = async (entryId: string, currentStatus: boolean) => {
-    try {
-      const { error } = await dataService.updateJournalEntry(entryId, {
-        is_favorite: !currentStatus
-      });
-        
-      if (error) throw error;
-      
-      // Update local state
-      setJournalEntries(entries => 
-        entries.map(entry => 
-          entry.id === entryId 
-            ? {...entry, is_favorite: !currentStatus}
-            : entry
-        )
-      );
-      
-      toast.success(currentStatus ? "Removed from favorites" : "Added to favorites");
-    } catch (error) {
-      console.error('Error updating journal entry:', error);
-      toast.error("Failed to update journal entry");
-    }
-  };
-  
-  // Delete journal entry
-  const deleteEntry = async (entryId: string) => {
-    try {
-      const { error } = await dataService.deleteJournalEntry(entryId);
-        
-      if (error) throw error;
-      
-      // Update local state
-      setJournalEntries(entries => entries.filter(entry => entry.id !== entryId));
-      setSelectedEntryId(null);
-      
-      toast.success("Journal entry deleted");
-    } catch (error) {
-      console.error('Error deleting journal entry:', error);
-      toast.error("Failed to delete journal entry");
-    }
-  };
-  
-  // Save tomorrow's plan
-  const saveTomorrowsPlan = async () => {
-    if (!user || !journalEntries.length) return;
-    
-    try {
-      setIsSavingPlan(true);
-      const mostRecentEntryId = journalEntries[0].id;
-      
-      const { error } = await dataService.updateJournalEntry(mostRecentEntryId, {
-        tomorrows_intention: tomorrowsPlan
-      });
-        
-      if (error) throw error;
-      
-      toast.success("Plan saved successfully");
-    } catch (error) {
-      console.error('Error saving plan:', error);
-      toast.error("Failed to save your plan");
-    } finally {
-      setIsSavingPlan(false);
-    }
-  };
 
   const handleNewEntryClick = () => {
-    navigate('/patient-dashboard/journal/new');
+    navigate('/journal');
   };
 
   const handleViewEntryClick = (entryId: string) => {
-    navigate(`/patient-dashboard/journal/${entryId}`);
+    navigate(`/journal/${entryId}`);
   };
+
+  // If user is a mentor, don't render the journal interface
+  if (isMentor) {
+    return null;
+  }
 
   return (
     <DashboardLayout>
@@ -323,6 +173,18 @@ export default function JournalPage() {
           </Button>
         </div>
 
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-500" />
+          <Input
+            type="text"
+            placeholder="Search journal entries..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+
         {/* Journal Dashboard Tabs */}
         <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
@@ -332,36 +194,15 @@ export default function JournalPage() {
           </TabsList>
           
           {/* All Entries Tab */}
-          <TabsContent value="entries" className="space-y-6">
-            {/* Search Bar */}
-            <div className="relative w-full max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-              <Input
-                type="search"
-                placeholder="Search journal entries..."
-                className="pl-10 pr-4"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            
-            {/* Recent Journal Entries */}
+          <TabsContent value="entries" className="space-y-4">
             {isLoading ? (
+              // Loading skeleton
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <Card key={i} className="h-[300px]">
-                    <CardHeader>
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-3 w-1/2 mt-2" />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-4/5" />
-                      </div>
-                    </CardContent>
+                {[1, 2, 3].map((n) => (
+                  <Card key={n} className="p-4">
+                    <Skeleton className="h-6 w-3/4 mb-4" />
+                    <Skeleton className="h-4 w-full mb-2" />
+                    <Skeleton className="h-4 w-2/3" />
                   </Card>
                 ))}
               </div>
@@ -383,72 +224,34 @@ export default function JournalPage() {
                     className="hover:shadow-md transition cursor-pointer"
                     onClick={() => handleViewEntryClick(entry.id)}
                   >
-                    <CardHeader className="pb-2">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <CardTitle className="text-base font-medium line-clamp-1">
-                            {entry.title}
-                          </CardTitle>
-                          <CardDescription className="text-xs">
-                            {formatDate(entry.created_at)}
-                          </CardDescription>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            className={`h-8 w-8 ${entry.is_favorite ? 'text-amber-500' : ''}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleFavorite(entry.id, !!entry.is_favorite);
-                            }}
-                          >
-                            {entry.is_favorite ? 
-                              <Star className="h-4 w-4 fill-amber-500" /> : 
-                              <Star className="h-4 w-4" />
-                            }
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button 
-                                variant="ghost" 
-                                size="icon"
-                                className="h-8 w-8 text-red-500"
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Delete Journal Entry</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Are you sure you want to delete this journal entry? This action cannot be undone.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => deleteEntry(entry.id)}
-                                  className="bg-red-500 hover:bg-red-600"
-                                >
-                                  Delete
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
+                    <CardHeader>
+                      <div className="flex justify-between items-start mb-2">
+                        <CardTitle className="text-lg">{entry.title}</CardTitle>
+                        {entry.is_shared && (
+                          <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                        )}
                       </div>
-                      {entry.mood && (
-                        <Badge className={`mt-2 text-xs ${getMoodColor(entry.mood)}`}>
-                          {entry.mood} {entry.mood_score ? `(${entry.mood_score}/10)` : ''}
-                        </Badge>
-                      )}
+                      <CardDescription className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4" />
+                        {formatDate(entry.created_at)}
+                      </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <p className="text-sm text-slate-600 line-clamp-4">
+                      <p className="text-sm text-slate-600 mb-3">
                         {formatPreview(entry.content)}
                       </p>
+                      <div className="flex flex-wrap gap-2">
+                        {entry.mood && (
+                          <Badge variant="secondary" className={getMoodColor(entry.mood.toString())}>
+                            {entry.mood}
+                          </Badge>
+                        )}
+                        {entry.tags?.map(tag => (
+                          <Badge key={tag} variant="outline">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
                     </CardContent>
                   </Card>
                 ))}
@@ -457,198 +260,29 @@ export default function JournalPage() {
           </TabsContent>
           
           {/* Favorites Tab */}
-          <TabsContent value="favorites" className="space-y-6">
-            {isLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Card key={i} className="h-[300px]">
-                    <CardHeader>
-                      <Skeleton className="h-4 w-3/4" />
-                      <Skeleton className="h-3 w-1/2 mt-2" />
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-full" />
-                        <Skeleton className="h-3 w-4/5" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <>
-                {journalEntries.filter(e => e.is_favorite).length === 0 ? (
-                  <Card className="p-6 text-center">
-                    <Star className="h-12 w-12 text-slate-300 mx-auto mb-3" />
-                    <h3 className="text-lg font-medium mb-1">No favorite entries yet</h3>
-                    <p className="text-slate-500 mb-4">
-                      Mark entries as favorites to easily find your most meaningful reflections
-                    </p>
-                  </Card>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {journalEntries
-                      .filter(entry => entry.is_favorite)
-                      .map(entry => (
-                        <Card 
-                          key={entry.id} 
-                          className="hover:shadow-md transition cursor-pointer"
-                          onClick={() => handleViewEntryClick(entry.id)}
-                        >
-                          <CardHeader className="pb-2">
-                            <div className="flex justify-between items-start">
-                              <div>
-                                <CardTitle className="text-base font-medium line-clamp-1">
-                                  {entry.title}
-                                </CardTitle>
-                                <CardDescription className="text-xs">
-                                  {formatDate(entry.created_at)}
-                                </CardDescription>
-                              </div>
-                              <div className="flex gap-1">
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon"
-                                  className="h-8 w-8 text-amber-500"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleFavorite(entry.id, true);
-                                  }}
-                                >
-                                  <Star className="h-4 w-4 fill-amber-500" />
-                                </Button>
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button 
-                                      variant="ghost" 
-                                      size="icon"
-                                      className="h-8 w-8 text-red-500"
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Delete Journal Entry</AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        Are you sure you want to delete this journal entry? This action cannot be undone.
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction
-                                        onClick={() => deleteEntry(entry.id)}
-                                        className="bg-red-500 hover:bg-red-600"
-                                      >
-                                        Delete
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </div>
-                            </div>
-                            {entry.mood && (
-                              <Badge className={`mt-2 text-xs ${getMoodColor(entry.mood)}`}>
-                                {entry.mood} {entry.mood_score ? `(${entry.mood_score}/10)` : ''}
-                              </Badge>
-                            )}
-                          </CardHeader>
-                          <CardContent>
-                            <p className="text-sm text-slate-600 line-clamp-4">
-                              {formatPreview(entry.content)}
-                            </p>
-                          </CardContent>
-                        </Card>
-                      ))}
-                  </div>
-                )}
-              </>
-            )}
+          <TabsContent value="favorites">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex flex-col items-center justify-center text-center">
+                  <Star className="h-12 w-12 text-slate-300 mb-3" />
+                  <h3 className="text-lg font-medium mb-1">Favorite Entries</h3>
+                  <p className="text-slate-500">Coming soon! You'll be able to mark and filter your favorite entries.</p>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
           
           {/* Insights Tab */}
-          <TabsContent value="insights" className="space-y-6">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Tomorrow's Plan Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Tomorrow's Plan</CardTitle>
-                  <CardDescription>
-                    Set your intentions for tomorrow
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Textarea
-                    placeholder="What do you plan to accomplish tomorrow?"
-                    className="min-h-[120px]"
-                    value={tomorrowsPlan}
-                    onChange={(e) => setTomorrowsPlan(e.target.value)}
-                  />
-                </CardContent>
-                <CardFooter className="flex justify-end">
-                  <Button 
-                    onClick={saveTomorrowsPlan} 
-                    disabled={isSavingPlan}
-                  >
-                    {isSavingPlan ? 'Saving...' : 'Save Plan'}
-                  </Button>
-                </CardFooter>
-              </Card>
-              
-              {/* Journal Stats Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Journal Stats</CardTitle>
-                  <CardDescription>
-                    Your journaling activity at a glance
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <BookMarked className="h-5 w-5 text-blue-500 mr-2" />
-                      <span>Total Entries</span>
-                    </div>
-                    <span className="font-semibold">{journalEntries.length}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <Star className="h-5 w-5 text-amber-500 mr-2" />
-                      <span>Favorite Entries</span>
-                    </div>
-                    <span className="font-semibold">{journalEntries.filter(e => e.is_favorite).length}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <Calendar className="h-5 w-5 text-emerald-500 mr-2" />
-                      <span>This Month</span>
-                    </div>
-                    <span className="font-semibold">
-                      {journalEntries.filter(e => {
-                        const entryDate = new Date(e.created_at || '');
-                        const now = new Date();
-                        return entryDate.getMonth() === now.getMonth() && 
-                               entryDate.getFullYear() === now.getFullYear();
-                      }).length}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <Clock className="h-5 w-5 text-purple-500 mr-2" />
-                      <span>Last Entry</span>
-                    </div>
-                    <span className="font-semibold">
-                      {journalEntries.length > 0 
-                        ? formatDate(journalEntries[0].created_at) 
-                        : 'No entries yet'}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+          <TabsContent value="insights">
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex flex-col items-center justify-center text-center">
+                  <Goal className="h-12 w-12 text-slate-300 mb-3" />
+                  <h3 className="text-lg font-medium mb-1">Journal Insights</h3>
+                  <p className="text-slate-500">Coming soon! Get insights about your journaling patterns and emotional trends.</p>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>

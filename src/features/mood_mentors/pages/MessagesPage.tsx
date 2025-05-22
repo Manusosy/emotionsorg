@@ -1,6 +1,7 @@
 import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect, useRef } from "react";
-import { DashboardLayout } from "../components/DashboardLayout";
+import { useState, useEffect, useRef, useContext } from "react";
+import { useNavigate } from "react-router-dom";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,15 +9,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/messaging/MessageBubble";
 import { ConversationList, ConversationItem } from "@/components/messaging/ConversationList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAuth } from "@/hooks/use-auth";
-// Supabase import removed
-// Supabase import removed
+import { AuthContext } from "@/contexts/authContext";
 import { Loader2, Search, Send, MessageSquare, PlusCircle } from "lucide-react";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export default function MessagesPage() {
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user } = useContext(AuthContext);
   const [isLoading, setIsLoading] = useState(true);
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);

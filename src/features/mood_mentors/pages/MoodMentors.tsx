@@ -10,6 +10,7 @@ import BookingButton from "@/features/booking/components/BookingButton"
 import { moodMentorService } from "@/services"
 import "../styles/MoodMentors.css"
 import { motion, useScroll, useTransform, AnimatePresence } from "framer-motion"
+import { slugify } from '@/utils/formatters'
 
 type MoodMentor = {
   id: string
@@ -28,6 +29,7 @@ type MoodMentor = {
   satisfaction: number
   gender: string
   nameSlug: string
+  education?: string
 }
 
 const MoodMentors = () => {
@@ -38,11 +40,11 @@ const MoodMentors = () => {
   const backgroundOpacity = useTransform(scrollY, [0, 300], [0.8, 0.6]);
   const backgroundOpacity2 = useTransform(scrollY, [0, 300], [0.9, 0.7]);
 
-  const [searchQuery, setSearchQuery] = useState("")
-  const [selectedDate, setSelectedDate] = useState("")
   const [selectedGender, setSelectedGender] = useState<string[]>([])
   const [selectedSpecialties, setSelectedSpecialties] = useState<string[]>([])
   const [selectedCountry, setSelectedCountry] = useState<string>("")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [selectedDate, setSelectedDate] = useState("")
   const [availableSpecialties, setAvailableSpecialties] = useState<string[]>([
     "Depression & Anxiety",
     "Trauma & PTSD",
@@ -59,71 +61,78 @@ const MoodMentors = () => {
   const [loading, setLoading] = useState(true)
   const [realMoodMentors, setRealMoodMentors] = useState<MoodMentor[]>([])
   const [showFilters, setShowFilters] = useState(false)
-  // Add debug toggle button
-  const [showDebugInfo, setShowDebugInfo] = useState(process.env.NODE_ENV === 'development')
   
   // Fetch real mood mentors from service
   useEffect(() => {
     const fetchRealMoodMentors = async () => {
-      if (!moodMentorService) {
-        console.log("Mood mentor service not available")
-        setLoading(false)
-        return
-      }
-
+      // Always try to fetch mood mentors - removed mentorsLoaded check
       try {
         console.log("Fetching mood mentors with mood mentor service...")
-        const mentorsData = await moodMentorService.getMoodMentors({ limit: 50 }) // Increase limit to show more mentors
+        const mentorsData = await moodMentorService.getMoodMentors({ limit: 50 })
         console.log("Mood mentor service response:", mentorsData)
         
         if (mentorsData && mentorsData.length > 0) {
           // Map to expected MoodMentor format
-          const mappedMoodMentors = mentorsData.map((moodMentor) => {
-            console.log("Processing mood mentor:", moodMentor.name || moodMentor.full_name || moodMentor.id)
-            const [city, country] = (moodMentor.location || "Kigali, Rwanda").split(", ");
+          const mappedMoodMentors = mentorsData.map((mentor) => {
+            console.log("Processing mood mentor:", mentor.fullName || mentor.id)
+            
+            // Get location data
+            let city = "City";
+            let country = "Country";
+            if (mentor.location) {
+              const locationParts = mentor.location.split(", ");
+              if (locationParts.length >= 2) {
+                [city, country] = locationParts;
+              } else {
+                city = mentor.location;
+              }
+            }
             
             // Get therapy types from multiple possible sources
             let therapyTypes = [];
-            if (Array.isArray(moodMentor.specialties) && moodMentor.specialties.length > 0) {
-              therapyTypes = moodMentor.specialties;
-            } else if (Array.isArray(moodMentor.therapyTypes) && moodMentor.therapyTypes.length > 0) {
-              therapyTypes = moodMentor.therapyTypes;
-            } else if (moodMentor.specialties) {
-              therapyTypes = [moodMentor.specialties];
+            if (Array.isArray(mentor.therapyTypes) && mentor.therapyTypes.length > 0) {
+              therapyTypes = mentor.therapyTypes;
+            } else if (mentor.specialty) {
+              therapyTypes = [mentor.specialty];
             } else {
               therapyTypes = ["Mental Health Support"];
             }
             
-            // Handle image from multiple possible sources
-            const image = moodMentor.avatarUrl || moodMentor.avatar_url || 
+            // Handle image
+            const image = mentor.avatarUrl || 
               "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80";
             
-            // Get name from various possible fields
-            const name = moodMentor.name || moodMentor.full_name || "Mood Mentor";
+            // Get name from fullName
+            const name = mentor.fullName || "Mood Mentor";
             
             // Generate slug if not present
-            const nameSlug = moodMentor.nameSlug || moodMentor.name_slug || 
-              name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-              
-            console.log("Mood mentor name:", name, "nameSlug:", nameSlug, "image:", image);
+            const nameSlug = mentor.nameSlug || slugify(name);
             
+            // Extract education information
+            let education = "";
+            if (mentor.education && Array.isArray(mentor.education) && mentor.education.length > 0) {
+              education = mentor.education[0].degree || "";
+            }
+              
+            // Format data into our frontend model  
             return {
-              id: moodMentor.id || Math.random().toString(),
+              id: mentor.id || Math.random().toString(),
               name: name,
-              credentials: moodMentor.title || moodMentor.credentials || "Mental Health Specialist",
-              specialty: moodMentor.specialty || (Array.isArray(moodMentor.specialties) ? moodMentor.specialties[0] : "Mental Health Support"),
-              rating: moodMentor.rating || 4.5,
-              totalRatings: moodMentor.reviewCount || 10,
-              feedback: moodMentor.reviewCount || 10,
-              location: moodMentor.location || "Kigali, Rwanda",
-              city: city || "Kigali",
-              country: country || "Rwanda",
-              isFree: true,
+              credentials: mentor.specialty || "Mental Health Specialist",
+              specialty: mentor.specialty || "Mental Health Support",
+              rating: mentor.rating || 4.5,
+              totalRatings: 10,
+              feedback: 10,
+              location: mentor.location || "Kigali, Rwanda",
+              city: city,
+              country: country,
+              isFree: mentor.isFree ?? true,
               therapyTypes: therapyTypes,
               image: image,
-              satisfaction: moodMentor.satisfaction || 95,
-              gender: moodMentor.gender || "Male",
-              nameSlug: nameSlug
+              satisfaction: 95,
+              gender: mentor.gender || "Male",
+              nameSlug: nameSlug,
+              education: education
             }
           })
           
@@ -132,18 +141,17 @@ const MoodMentors = () => {
           setFilteredMoodMentors(mappedMoodMentors)
           
           // Extract unique specialties from the mentors
-          const uniqueSpecialties = Array.from(
-            new Set(
-              mappedMoodMentors.flatMap(mentor => {
-                const specialtyArray = mentor.specialty ? [mentor.specialty] : [];
-                return [...mentor.therapyTypes, ...specialtyArray];
-              })
-            )
-          )
-          setAvailableSpecialties(uniqueSpecialties)
+          const allTherapyTypes = mappedMoodMentors.flatMap(mentor => mentor.therapyTypes);
+          const uniqueSpecialties = Array.from(new Set(allTherapyTypes)).filter(Boolean);
+          setAvailableSpecialties(uniqueSpecialties.length > 0 ? uniqueSpecialties : availableSpecialties);
+          
+          // Extract unique countries
+          const countries = Array.from(new Set(
+            mappedMoodMentors.map(mentor => mentor.country)
+          )).filter(Boolean);
+          setAvailableCountries(countries.length > 0 ? countries : []);
           
           console.log("Successfully fetched real mood mentors:", mappedMoodMentors.length)
-          console.log("Mood mentor details:", mappedMoodMentors)
         } else {
           console.log("No mood mentors returned from service")
           setRealMoodMentors([])
@@ -241,19 +249,6 @@ const MoodMentors = () => {
         : [...prev, value]
     )
   }
-
-  // Toggle debug info
-  const toggleDebugInfo = () => {
-    setShowDebugInfo(!showDebugInfo)
-  }
-
-  // Only show debug info in development mode
-  useEffect(() => {
-    // Hide debug info in production
-    if (process.env.NODE_ENV === 'production') {
-      setShowDebugInfo(false)
-    }
-  }, [])
 
   return (
     <div className="min-h-screen bg-white relative overflow-hidden" ref={containerRef}>
@@ -534,7 +529,7 @@ const MoodMentors = () => {
                                 viewport={{ once: false }}
                                 transition={{ duration: 0.5, delay: 0.5 }}
                               >
-                                {moodMentor.credentials}
+                                {moodMentor.education || ""}
                               </motion.p>
                               <motion.p 
                                 className="text-[#00A3FF] text-sm font-medium mt-2 overflow-hidden"
@@ -543,7 +538,9 @@ const MoodMentors = () => {
                                 viewport={{ once: false }}
                                 transition={{ duration: 0.5, delay: 0.6 }}
                               >
-                                {moodMentor.specialty}
+                                <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200" variant="outline">
+                                  {moodMentor.specialty}
+                                </Badge>
                               </motion.p>
                             </div>
                             
@@ -726,66 +723,6 @@ const MoodMentors = () => {
         
         {/* Added spacer div */}
         <div className="h-20"></div>
-        
-        {/* Debug button for development only */}
-        {showDebugInfo && (
-          <motion.div 
-            className="fixed bottom-4 right-4 bg-white p-4 rounded shadow-lg border border-gray-300 max-w-md max-h-80 overflow-auto z-50 text-xs"
-            initial={{ opacity: 0, y: 50 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
-            <h3 className="font-bold mb-2">Debug Info</h3>
-            <p className="mb-1">Real Mood Mentors: {realMoodMentors.length}</p>
-            <p className="mb-1">Filtered Mood Mentors: {filteredMoodMentors.length}</p>
-            <p className="mb-1">Selected Specialties: {selectedSpecialties.join(', ') || 'None'}</p>
-            <p className="mb-1">Available Specialties: {availableSpecialties.join(', ') || 'None'}</p>
-            <p className="mb-1">Selected Date: {selectedDate || 'None'}</p>
-            
-            <div className="flex flex-col space-y-2 mt-2">
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Button 
-                  variant="default" 
-                  className="w-full text-xs py-1" 
-                  onClick={async () => {
-                    await moodMentorService.registerTestMentorProfile();
-                    window.location.reload();
-                  }}
-                >
-                  Register Test Mentor
-                </Button>
-              </motion.div>
-            
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Button 
-                  variant="destructive" 
-                  className="w-full text-xs py-1" 
-                  onClick={async () => {
-                    await moodMentorService.resetMentorProfiles();
-                    window.location.reload();
-                  }}
-                >
-                  Reset Profiles
-                </Button>
-              </motion.div>
-              
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-              >
-                <Button variant="outline" className="w-full text-xs py-1" onClick={() => setShowDebugInfo(false)}>
-                  Close
-                </Button>
-              </motion.div>
-            </div>
-          </motion.div>
-        )}
       </div>
     </div>
   )

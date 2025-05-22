@@ -2,7 +2,7 @@
  * User type definitions for the application
  */
 
-export type UserRole = 'patient' | 'mood_mentor' | 'admin';
+export type UserRole = 'user' | 'patient' | 'mood_mentor';
 
 export interface User {
   id: string;
@@ -42,23 +42,96 @@ export interface UserProfile {
   created_at: string;
 }
 
+export interface MoodMentor {
+  id: string;
+  userId: string;
+  name: string;
+  title: string;
+  specialties: string[];
+  bio: string;
+  experience: number;
+  rating: number;
+  reviewCount: number;
+  hourlyRate: number;
+  avatarUrl?: string;
+  profileCompleted: boolean;
+  gender: string;
+  location: string;
+  nameSlug: string;
+  availability: MentorAvailability[];
+}
+
+export interface MentorReview {
+  id: string;
+  mentorId: string;
+  userId: string;
+  rating: number;
+  comment: string;
+  userName: string;
+  userAvatar?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MentorSettings {
+  id: string;
+  mentorId: string;
+  notifications: {
+    email: boolean;
+    app: boolean;
+    sms: boolean;
+  };
+  availability: {
+    autoConfirm: boolean;
+    bufferTime: number;
+  };
+  payment: {
+    hourlyRate: number;
+    acceptsInsurance: boolean;
+    insuranceProviders: string[];
+  };
+  preferences: {
+    sessionReminders: boolean;
+    videoQuality: string;
+    theme: string;
+  };
+}
+
+export interface MentorAvailability {
+  day: string;
+  slots: TimeSlot[];
+}
+
+export interface TimeSlot {
+  start: string;
+  end: string;
+}
+
 export interface MoodMentorProfile {
   id: string;
-  user_id: string;
-  full_name: string;
+  userId?: string;
+  fullName: string;
   email: string;
-  phone_number: string;
+  phoneNumber?: string;
   bio: string;
   specialty: string;
-  hourly_rate: number;
-  availability_status: string;
-  avatar_url: string;
-  created_at: string;
-  updated_at: string;
-  isFree?: boolean;
-  languages?: string[];
-  education?: string;
-  experience?: string;
-  session_duration?: string;
+  hourlyRate: number;
+  availabilityStatus: 'available' | 'unavailable' | 'busy';
+  avatarUrl: string;
+  createdAt?: string;
+  updatedAt?: string;
+  isFree: boolean;
+  languages: string[];
+  education: Array<{degree: string, institution: string, year: string}>;
+  experience: Array<{title: string, place: string, duration: string}>;
+  sessionDuration: '30 Min' | '45 Min' | '60 Min' | '90 Min';
   rating?: number;
+  gender: 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say';
+  location: string;
+  nameSlug: string;
+  isProfileComplete?: boolean;
+  isActive?: boolean;
+  specialties?: string[];
+  therapyTypes?: string[];
+  consultationFee?: number;
 } 

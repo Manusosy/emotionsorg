@@ -1,9 +1,9 @@
-import { authService, userService, dataService, apiService, moodMentorService } from '../../../services';
+import { useAuth } from '@/contexts/authContext';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Star } from 'lucide-react';
-// Supabase import removed
+import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import * as z from 'zod';
 
@@ -59,25 +59,30 @@ export function ReviewModal({
     },
   });
 
+  const { user } = useAuth();
+
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       setIsSubmitting(true);
-
-      const user = await authService.getCurrentUser();
 
       if (!user) {
         toast.error('You must be logged in to submit a review');
         return;
       }
 
-      // Use moodMentorService to add a review
-      const result = await moodMentorService.addMoodMentorReview({
-        mentorId: moodMentorId,
-        userId: user.id,
-        userName: user.name,
-        rating: values.rating,
-        comment: values.comment
-      });
+      // Add review directly using Supabase
+      const { error } = await supabase
+        .from('mentor_reviews')
+        .insert({
+          mentor_id: moodMentorId,
+          user_id: user.id,
+          user_name: user.user_metadata?.name || user.email,
+          rating: values.rating,
+          comment: values.comment,
+          booking_id: bookingId
+        });
+
+      if (error) throw error;
 
       toast.success('Review submitted successfully');
       onClose();

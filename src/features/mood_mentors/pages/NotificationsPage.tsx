@@ -1,13 +1,12 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Bell, Check, Clock, MessageCircle, Settings, Trash2, Users, FileText } from "lucide-react";
-import { DashboardLayout } from "../components/DashboardLayout";
-import { useState, useEffect } from "react";
-// Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { useState, useEffect, useContext } from "react";
+import { AuthContext } from "@/contexts/authContext";
 import { formatDistanceToNow } from "date-fns";
 import {
   Dialog,
@@ -166,7 +165,7 @@ interface NotificationPreferences {
 }
 
 export default function NotificationsPage() {
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [activeTab, setActiveTab] = useState("all");
   const [loading, setLoading] = useState(true);

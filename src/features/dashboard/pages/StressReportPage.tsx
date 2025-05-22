@@ -1,11 +1,11 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { useState, useEffect, useContext } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-// Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
+import { dataService } from "@/services";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { useNavigate } from "react-router-dom";
 import { 
   ChevronLeft, 
   BarChart3, 
@@ -50,7 +50,7 @@ type Tables = {
 
 export default function StressReportPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [isLoading, setIsLoading] = useState(true);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);

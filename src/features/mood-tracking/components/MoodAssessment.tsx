@@ -1,13 +1,10 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, RefObject, useEffect } from "react";
+import { useState, RefObject } from "react";
 import EmotionButton from "./EmotionButton";
 import QuestionCard from "./QuestionCard";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Book, Heart, LifeBuoy, FileText, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/hooks/use-auth";
-import { toast } from "sonner";
 
 // Emotion data
 const emotions = [{
@@ -75,9 +72,7 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [score, setScore] = useState(0);
   const [showResults, setShowResults] = useState(false);
-  const [resultSaved, setResultSaved] = useState(false);
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
 
   // Function to map emotion and score to a mood_score on a scale of 1-10
   const getMoodScore = (emotion: string | null, score: number): number => {
@@ -144,35 +139,6 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
     }
   };
 
-  // Effect to save result when assessment is completed by logged-in user
-  useEffect(() => {
-    const saveMoodEntry = async () => {
-      if (isAuthenticated && user && showResults && !resultSaved) {
-        try {
-          const moodScore = getMoodScore(selectedEmotion, score);
-          const moodResult = getMoodResult(selectedEmotion);
-          
-          const result = await dataService.saveMoodEntry({
-            user_id: user.id,
-            mood_score: moodScore,
-            assessment_result: moodResult,
-            notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
-          });
-
-          if (result.error) throw result.error;
-          
-          setResultSaved(true);
-          // Don't show a toast notification to avoid disrupting the experience
-        } catch (error) {
-          console.error("Error saving mood entry:", error);
-          // Silent fail to not disrupt the user experience
-        }
-      }
-    };
-
-    saveMoodEntry();
-  }, [showResults, isAuthenticated, user, selectedEmotion, score, resultSaved]);
-
   const handleEmotionSelect = (emotion: string) => {
     if (selectedEmotion === emotion) {
       setShowQuestions(true);
@@ -200,7 +166,6 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
     setCurrentQuestion(0);
     setScore(0);
     setShowResults(false);
-    setResultSaved(false);
   };
 
   const navigateToJournal = () => {

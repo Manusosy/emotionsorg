@@ -48,4 +48,14 @@ export interface IUserService {
    * Update user metadata
    */
   updateUserMetadata(data: { avatar_url?: string, full_name?: string, [key: string]: any }): Promise<{ success: boolean, error: string | null }>;
+
+  /**
+   * Get user preferences
+   */
+  getUserPreferences(userId: string): Promise<Record<string, any>>;
+
+  /**
+   * Update user preferences
+   */
+  updateUserPreferences(userId: string, preferences: Record<string, any>): Promise<{ success: boolean, error: string | null }>;
 } 

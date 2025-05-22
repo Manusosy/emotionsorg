@@ -2,178 +2,118 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Menu, X, LogOut, LayoutDashboard } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth } from '@/contexts/authContext';
 import { toast } from 'sonner';
 
 export default function Navbar() {
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [localAuthState, setLocalAuthState] = useState({ isAuthenticated: false, userRole: null });
-  const { isAuthenticated, userRole, signOut, getDashboardUrlForRole } = useAuth();
   const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { user, isAuthenticated, signOut, userRole } = useAuth();
   const navigate = useNavigate();
-
-  // Check if user is admin
-  const isAdmin = userRole === 'admin';
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  
+  // User role checks
+  const isMentor = userRole === 'mood_mentor';
+  const isPatient = !isMentor;
 
   // Close mobile menu on location change
   useEffect(() => {
-    setIsMobileMenuOpen(false);
+    setMobileMenuOpen(false);
   }, [location]);
 
-  // Check localStorage for auth state on mount and when auth context changes
-  useEffect(() => {
-    const checkLocalStorage = () => {
-      const storedAuthState = localStorage.getItem('auth_state');
-      if (storedAuthState) {
-        try {
-          const { isAuthenticated, userRole } = JSON.parse(storedAuthState);
-          setLocalAuthState({ isAuthenticated, userRole });
-        } catch (e) {
-          console.error("Error parsing stored auth state:", e);
-          setLocalAuthState({ isAuthenticated: false, userRole: null });
-        }
-      } else {
-        setLocalAuthState({ isAuthenticated: false, userRole: null });
-      }
-    };
-    
-    checkLocalStorage();
-    
-    // Listen for storage events (if another tab changes localStorage)
-    window.addEventListener('storage', checkLocalStorage);
-    return () => window.removeEventListener('storage', checkLocalStorage);
-  }, [isAuthenticated, userRole]);
-
-  // Combine context and localStorage auth state for most reliable determination
-  const effectiveIsAuthenticated = isAuthenticated || localAuthState.isAuthenticated;
-  const effectiveUserRole = userRole || localAuthState.userRole;
-  
   // Debug output for auth state
   useEffect(() => {
     console.log('Navbar auth state:', { 
       isAuthenticated, 
-      userRole, 
-      localAuth: localAuthState,
-      effectiveIsAuthenticated,
-      effectiveUserRole
+      userRole
     });
-  }, [isAuthenticated, userRole, localAuthState, effectiveIsAuthenticated, effectiveUserRole]);
+  }, [isAuthenticated, userRole]);
 
-  const handleSignout = async () => {
+  // Cleanup function for a complete signout
+  const performCompleteSignout = async () => {
     try {
-      setIsMobileMenuOpen(false);
-      console.log("Starting signout from navbar...");
+      setIsSigningOut(true);
+      document.body.classList.add('signing-out');
       
-      // Prevent multiple signout attempts
-      const signoutButton = document.getElementById('signout-button');
-      if (signoutButton && signoutButton.hasAttribute('disabled')) {
-        console.log("Signout already in progress");
-        return;
+      try {
+        await signOut(); // Rely on AuthContext signOut
+      } catch (error) {
+        console.error("Background signout error:", error);
       }
       
-      // Disable buttons to prevent multiple clicks - desktop button
-      if (signoutButton) {
-        signoutButton.setAttribute('disabled', 'true');
-        signoutButton.textContent = 'Signing out...';
-      }
+      console.log('Navbar: signOut complete. Redirecting to home.');
+      window.location.href = '/'; // Hard redirect after signOut
       
-      // Disable mobile button
-      const mobileSignoutButton = document.getElementById('signout-button-mobile');
-      if (mobileSignoutButton) {
-        mobileSignoutButton.setAttribute('disabled', 'true');
-        const textSpan = mobileSignoutButton.querySelector('span');
-        if (textSpan) {
-          textSpan.textContent = 'Signing out...';
-        }
-      }
-      
-      // Single toast for feedback
-      const toastId = toast.loading("Signing out...");
-      
-      await signOut();
-      
-      // Clear the loading toast
-      toast.dismiss(toastId);
-      
-      // Use navigate instead of window.location.href to avoid full page reload
-      navigate('/', { replace: true });
     } catch (error) {
-      console.error("Signout failed:", error);
-      toast.error("Failed to sign out. Please try again.");
+      console.error("Complete signout failed:", error);
       
-      // Re-enable desktop button on error
-      const signoutButton = document.getElementById('signout-button');
-      if (signoutButton) {
-        signoutButton.removeAttribute('disabled');
-        signoutButton.textContent = 'Signout';
-      }
+      // Emergency fallback if something goes wrong
+      toast.error("Something went wrong during sign out. Please refresh the page.");
       
-      // Re-enable mobile button on error
-      const mobileSignoutButton = document.getElementById('signout-button-mobile');
-      if (mobileSignoutButton) {
-        mobileSignoutButton.removeAttribute('disabled');
-        const textSpan = mobileSignoutButton.querySelector('span');
-        if (textSpan) {
-          textSpan.textContent = 'Signout';
-        }
-      }
+      // Force a page reload as last resort
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
     }
   };
 
-  // Get dashboard URL and log it
-  const dashboardUrl = effectiveUserRole ? getDashboardUrlForRole(effectiveUserRole) : '/';
-  console.log('Dashboard URL:', dashboardUrl, 'User role:', effectiveUserRole);
+  const handleSignout = (e: React.MouseEvent) => {
+    e.preventDefault();
+    
+    // Prevent double-clicks
+    if (isSigningOut) return;
+    
+    console.log("Starting signout from navbar...");
+    performCompleteSignout();
+  };
+
+  // Handle dashboard navigation with proper role checks
+  const handleDashboardClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    
+    let targetPath = '/patient-signin';
+    
+    if (isAuthenticated && userRole) {
+      if (userRole === 'mood_mentor') {
+        targetPath = '/mood-mentor-dashboard';
+      } else if (userRole === 'patient') {
+        targetPath = '/patient-dashboard';
+      } else {
+        console.log('Navbar: Unknown user role, redirecting to default signin');
+        targetPath = '/patient-signin'; // Default fallback
+      }
+      console.log(`Navbar: User is authenticated with role ${userRole}, navigating to ${targetPath}`);
+    } else {
+      console.log('Navbar: User not authenticated or no role, redirecting to signin');
+      targetPath = '/patient-signin';
+    }
+    
+    console.log(`Navbar: Navigating to ${targetPath}`);
+    // navigate(targetPath); // Prefer soft navigation if possible
+    window.location.href = targetPath; // Kept hard navigation as per original logic, but soft is usually better
+  };
 
   // Enhanced navigation handler that closes menu and handles navigation
   const handleNavigation = useCallback((path: string, e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault();
     }
-    setIsMobileMenuOpen(false);
+    setMobileMenuOpen(false);
     navigate(path);
   }, [navigate]);
 
   // Toggle menu state
   const toggleMobileMenu = () => {
-    setIsMobileMenuOpen(prev => !prev);
+    setMobileMenuOpen(prev => !prev);
   };
 
-  // Handle dashboard navigation specifically
-  const handleDashboardClick = (e: React.MouseEvent) => {
-    e.preventDefault();
-    
-    // Debug information
-    console.group("Dashboard Click Debug");
-    console.log("Event:", e);
-    console.log("Auth state from context:", { isAuthenticated, userRole });
-    console.log("Local auth state:", localAuthState);
-    console.log("Effective values:", { 
-      effectiveIsAuthenticated, 
-      effectiveUserRole,
-      dashboardUrl 
-    });
-    console.groupEnd();
-    
-    // Get the most reliable role information
-    const role = effectiveUserRole;
-    console.log("Dashboard click - Role:", role);
-    
-    if (!role) {
-      console.error("No user role found for dashboard navigation");
-      toast.error("Unable to determine your dashboard. Please sign in again.");
-      return;
+  // Determine profile target path based on user role
+  const getProfilePath = () => {
+    if (isMentor) {
+      return '/mood-mentor-dashboard/profile'; // Mentor dashboard profile
+    } else {
+      return '/patient-dashboard/profile'; // Patient dashboard profile
     }
-    
-    // Get the dashboard URL for the role
-    const dashboardPath = getDashboardUrlForRole(role);
-    console.log("Navigating to dashboard:", dashboardPath);
-    
-    // First close the menu if open
-    setIsMobileMenuOpen(false);
-    
-    // Use the most direct approach - directly set window.location.href
-    // This bypasses any React Router issues
-    window.location.href = dashboardPath.startsWith('/') ? dashboardPath : `/${dashboardPath}`;
   };
 
   return (
@@ -210,17 +150,12 @@ export default function Navbar() {
               <Link to="/help-groups" className="text-white/90 hover:text-white px-4 py-1.5 rounded-full transition-all hover:bg-[#fda802] text-sm font-medium">
                 Help Groups
               </Link>
-              {isAdmin && (
-                <Link to="/admin" className="text-white/90 hover:text-white px-4 py-1.5 rounded-full transition-all hover:bg-[#fda802] text-sm font-medium bg-red-600/30">
-                  Admin
-                </Link>
-              )}
             </div>
           </div>
 
           {/* Desktop Auth Buttons */}
           <div className="hidden md:flex items-center space-x-2">
-            {effectiveIsAuthenticated ? (
+            {isAuthenticated ? (
               <>
                 <Button 
                   variant="ghost" 
@@ -234,15 +169,16 @@ export default function Navbar() {
                   id="signout-button"
                   variant="ghost" 
                   onClick={handleSignout}
+                  disabled={isSigningOut}
                   className="text-white hover:bg-[#fda802] rounded-full px-6 font-medium transition-all"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  Signout
+                  {isSigningOut ? 'Signing out...' : 'Sign out'}
                 </Button>
               </>
             ) : (
               <>
-                <Link to="/signin">
+                <Link to="/patient-signin">
                   <Button 
                     variant="ghost" 
                     className="text-white hover:bg-[#fda802] rounded-full px-6 font-medium transition-all"
@@ -250,7 +186,7 @@ export default function Navbar() {
                     Sign In
                   </Button>
                 </Link>
-                <Link to="/signup">
+                <Link to="/patient-signup">
                   <Button 
                     className="bg-white text-[#0078FF] hover:bg-[#fda802] hover:text-white rounded-full px-6 font-medium shadow-sm shadow-blue-600/20 transition-all"
                   >
@@ -263,7 +199,7 @@ export default function Navbar() {
 
           {/* Mobile Auth Buttons */}
           <div className="flex md:hidden items-center space-x-4 mr-4">
-            {effectiveIsAuthenticated ? (
+            {isAuthenticated ? (
               <div className="flex items-center space-x-2">
                 <Button 
                   variant="ghost" 
@@ -279,24 +215,25 @@ export default function Navbar() {
                   variant="ghost" 
                   size="sm"
                   onClick={handleSignout}
+                  disabled={isSigningOut}
                   className="text-white hover:bg-[#fda802] rounded-full font-medium transition-all flex items-center"
                 >
                   <LogOut className="h-4 w-4 mr-1" />
-                  <span className="text-xs">Signout</span>
+                  <span className="text-xs">{isSigningOut ? 'Signing out...' : 'Sign out'}</span>
                 </Button>
               </div>
             ) : (
               <>
                 <a 
-                  href="/signin" 
-                  onClick={(e) => handleNavigation("/signin", e)}
+                  href="/patient-signin" 
                   className="text-white hover:text-blue-100 font-medium px-3 py-1.5 text-base transition-colors"
+                  onClick={(e) => handleNavigation("/patient-signin", e)}
                 >
                   Sign In
                 </a>
                 <a 
-                  href="/signup" 
-                  onClick={(e) => handleNavigation("/signup", e)}
+                  href="/patient-signup" 
+                  onClick={(e) => handleNavigation("/patient-signup", e)}
                 >
                   <Button 
                     size="sm"
@@ -313,10 +250,10 @@ export default function Navbar() {
           <button
             className="md:hidden p-2 rounded-lg hover:bg-blue-600/50 transition-colors"
             onClick={toggleMobileMenu}
-            aria-label={isMobileMenuOpen ? "Close menu" : "Open menu"}
-            aria-expanded={isMobileMenuOpen}
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileMenuOpen}
           >
-            {isMobileMenuOpen ? (
+            {mobileMenuOpen ? (
               <X className="w-6 h-6" />
             ) : (
               <Menu className="w-6 h-6" />
@@ -325,7 +262,7 @@ export default function Navbar() {
         </div>
 
         {/* Mobile Navigation */}
-        {isMobileMenuOpen && (
+        {mobileMenuOpen && (
           <div className="md:hidden py-4 space-y-2">
             <a href="/" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/", e)}>
               Home
@@ -342,15 +279,10 @@ export default function Navbar() {
             <a href="/help-groups" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/help-groups", e)}>
               Help Groups
             </a>
-            {isAdmin && (
-              <a href="/admin" className="block px-4 py-2 hover:bg-[#fda802] bg-red-600/30 rounded-lg transition-colors" onClick={(e) => handleNavigation("/admin", e)}>
-                Admin Panel
-              </a>
-            )}
             
             {/* Mobile Menu Auth Buttons */}
             <div className="py-2 border-t border-blue-600/20">
-              {effectiveIsAuthenticated ? (
+              {isAuthenticated ? (
                 <>
                   <button 
                     className="w-full text-left px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors"
@@ -363,20 +295,21 @@ export default function Navbar() {
                   </button>
                   <button 
                     onClick={handleSignout}
+                    disabled={isSigningOut}
                     className="w-full text-left px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors"
                   >
                     <span className="flex items-center">
                       <LogOut className="mr-2 h-4 w-4" />
-                      Signout
+                      {isSigningOut ? 'Signing out...' : 'Sign out'}
                     </span>
                   </button>
                 </>
               ) : (
                 <>
-                  <a href="/signin" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/signin", e)}>
+                  <a href="/patient-signin" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/patient-signin", e)}>
                     Sign In
                   </a>
-                  <a href="/signup" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/signup", e)}>
+                  <a href="/patient-signup" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/patient-signup", e)}>
                     Signup
                   </a>
                 </>

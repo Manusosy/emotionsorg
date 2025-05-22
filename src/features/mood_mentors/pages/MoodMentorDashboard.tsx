@@ -1,5 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useEffect, useState, useRef } from "react";
+import { authService, userService, moodMentorService, appointmentService } from '../../../services'
+import { useEffect, useState, useRef, useContext } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -22,15 +22,12 @@ import {
   ChevronLeft,
   BookOpen
 } from "lucide-react";
-import { DashboardLayout } from "../components/DashboardLayout";
-import { useAuth } from "@/hooks/use-auth";
-// Supabase import removed
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { AuthContext } from "@/contexts/authContext";
 import { format, parseISO, subDays, getDaysInMonth, startOfMonth, getDay, addMonths } from "date-fns";
 import { Progress } from "@/components/ui/progress";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-// Supabase import removed
-// Supabase import removed
 import {
   Dialog,
   DialogContent,
@@ -40,6 +37,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { motion } from "framer-motion";
+import { supabase } from "@/lib/supabase";
+import { MoodMentorProfile } from "@/types/user";
+
+// Add interface for dashboard Activities since we don't have a real activity service
+interface Activity {
+  id: string;
+  activity_type: 'message' | 'appointment' | 'group' | 'profile' | 'other';
+  title: string;
+  created_at: string;
+}
 
 // Define the structure for statistics cards
 interface StatCard {
@@ -59,15 +66,7 @@ interface Appointment {
   status: 'upcoming' | 'canceled' | 'completed';
 }
 
-interface MoodMentorProfile {
-  id: string;
-  full_name: string;
-  email: string;
-  bio: string;
-  avatar_url: string;
-  specialties: string[];
-  [key: string]: any;
-}
+// Note: We now use the imported MoodMentorProfile interface from @/types/user
 
 // Define interface for recent activities
 interface RecentActivity {
@@ -90,16 +89,30 @@ interface DbActivity {
   metadata?: any;
 }
 
+// Define a local profile interface to match the component's needs
+// This is separate from the database MoodMentorProfile
+interface DashboardProfile {
+  id: string;
+  fullName: string;
+  email: string;
+  bio: string;
+  avatarUrl: string;
+  specialties: string[];
+  isProfileComplete: boolean;
+  [key: string]: any;
+}
+
 export default function MoodMentorDashboard() {
-  const { user, getFullName } = useAuth();
+  const { user } = useContext(AuthContext);
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [profileCompletionPercentage, setProfileCompletionPercentage] = useState(0);
+  const [isProfileComplete, setIsProfileComplete] = useState(false);
   const [showWelcomeDialog, setShowWelcomeDialog] = useState(false);
-  const [profile, setProfile] = useState<MoodMentorProfile | null>(null);
+  const [profile, setProfile] = useState<DashboardProfile | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
   
+  // Initial stat cards with zero values - will be populated from database
   const [stats, setStats] = useState<StatCard[]>([
     {
       title: "Total Patients",
@@ -140,42 +153,60 @@ export default function MoodMentorDashboard() {
   const startDay = getDay(startOfMonth(currentDate));
   const calendarDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   
-  // Fetch calendar appointments
+  // Fetch calendar appointments using Supabase
   useEffect(() => {
     const fetchCalendarAppointments = async () => {
-      if (!user) return;
-      
+      if (!user) {
+        console.log("No authenticated user found, redirecting to login");
+        navigate('/mentor-signin');
+        return;
+      }
+
       setCalendarLoading(true);
       try {
-        // Get the start and end of the current month
-        const firstDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toISOString();
-        const lastDay = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString();
+        const firstDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+        const lastDay = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
         
-        // Fetch all appointments for the current month
-        const { data, error } = await supabase
-          .from('appointments')
-          .select('date')
-          .eq('mood_mentor_id', user.id)
-          .gte('date', firstDay)
-          .lte('date', lastDay);
+        // Use try-catch to handle potential 404 errors
+        try {
+          const { data: appointments, error } = await supabase
+            .from('appointments')
+            .select('*')
+            .eq('mentor_id', user.id)
+            .gte('start_time', firstDay.toISOString())
+            .lte('start_time', lastDay.toISOString())
+            .neq('status', 'cancelled');
+            
+          if (error) {
+            console.warn('Error fetching calendar appointments:', error);
+            setAppointmentDates([]);
+            return;
+          }
           
-        if (error) {
-          console.error('Error fetching calendar data:', error);
+          if (!appointments || appointments.length === 0) {
+            setAppointmentDates([]);
+          } else {
+            const daysWithAppointments = appointments.map(apt => {
+              const date = new Date(apt.start_time);
+              return date.getDate();
+            });
+            
+            setAppointmentDates(daysWithAppointments);
+          }
+        } catch (supabaseError) {
+          console.warn('Supabase error (possibly 404):', supabaseError);
+          // Gracefully handle missing tables
           setAppointmentDates([]);
-        } else if (data && data.length > 0) {
-          // Extract the days with appointments
-          const daysWithAppointments = data.map(apt => {
-            const date = new Date(apt.date);
-            return date.getDate(); // Get day of month (1-31)
-          });
           
-          setAppointmentDates(daysWithAppointments);
-        } else {
-          // No appointments this month
-          setAppointmentDates([]);
+          // Show a helpful message only once
+          if (!localStorage.getItem('showed_db_missing_warning')) {
+            toast.warning('Some database tables are not set up yet.');
+            localStorage.setItem('showed_db_missing_warning', 'true');
+          }
         }
       } catch (error) {
         console.error('Error in calendar fetch:', error);
+        toast.error('Failed to load calendar appointments');
         setAppointmentDates([]);
       } finally {
         setCalendarLoading(false);
@@ -183,7 +214,7 @@ export default function MoodMentorDashboard() {
     };
     
     fetchCalendarAppointments();
-  }, [user, currentDate]);
+  }, [user, navigate, currentDate]);
   
   // Navigate to previous/next month
   const changeMonth = (increment: number) => {
@@ -195,162 +226,118 @@ export default function MoodMentorDashboard() {
     return appointmentDates.includes(day);
   };
   
-  // Fetch real appointments from Supabase
+  // Fetch appointments using the appointment service
   useEffect(() => {
     const fetchAppointments = async () => {
-      if (!user) return;
+      if (!user) {
+        console.log("No authenticated user found, redirecting to login");
+        navigate('/mentor-signin');
+        return;
+      }
       
       setIsLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('appointments')
-          .select('*')
-          .eq('mood_mentor_id', user.id)
-          .gt('date', new Date().toISOString()) // Only future appointments
-          .order('date', { ascending: true })
-          .limit(5);
+        try {
+          // Use appointmentService with correct method name
+          const response = await appointmentService.getMoodMentorAppointments(
+            user.id,
+            { 
+              status: 'scheduled',
+              limit: 5
+            }
+          );
+            
+          if (!response || response.length === 0) {
+            // No appointments found, return empty array
+            setAppointments([]);
+          } else {
+            // Format the real data to match our appointment interface
+            const formattedAppointments = response.map(apt => ({
+              id: apt.id,
+              patient_name: apt.title || 'Appointment', // Using title as patient name
+              date: apt.date,
+              time: apt.startTime,
+              type: 'video' as 'video' | 'in-person' | 'chat', // Type assertion to match the interface
+              status: apt.status === 'scheduled' ? 'upcoming' as const : 'completed' as const
+            }));
+            
+            setAppointments(formattedAppointments);
+          }
+        } catch (serviceError) {
+          console.warn('Error calling appointment service:', serviceError);
+          setAppointments([]);
           
-        if (error) {
-          console.error('Error fetching appointments:', error);
-          toast.error('Failed to load your appointments');
-          
-          // Fallback to mock data if the query fails
-          setAppointments(getMockAppointments());
-        } else if (data && data.length > 0) {
-          // Format the real data to match our appointment interface
-          const formattedAppointments = data.map(apt => ({
-            id: apt.id,
-            patient_name: apt.patient_name || 'Unknown Patient',
-            date: apt.date,
-            time: format(new Date(apt.date), 'h:mm a'),
-            type: apt.type || 'video',
-            status: apt.status || 'upcoming'
-          }));
-          
-          setAppointments(formattedAppointments);
-        } else {
-          // No appointments found, use mock data for now
-          setAppointments(getMockAppointments());
+          // Show a helpful message only once for this specific error
+          if (!localStorage.getItem('showed_appointment_missing_warning')) {
+            toast.warning('Appointment data may be unavailable until the database is set up.');
+            localStorage.setItem('showed_appointment_missing_warning', 'true');
+          }
         }
       } catch (error) {
         console.error('Error in appointment fetch:', error);
-        setAppointments(getMockAppointments());
+        setAppointments([]);
       } finally {
         setIsLoading(false);
       }
     };
     
     fetchAppointments();
-  }, [user]);
-  
-  // Helper function for mock appointments (as fallback)
-  const getMockAppointments = (): Appointment[] => {
-    return [
-      {
-        id: '1',
-        patient_name: 'Emma Thompson',
-        date: '2023-06-15',
-        time: '10:00 AM',
-        type: 'video',
-        status: 'upcoming'
-      },
-      {
-        id: '2',
-        patient_name: 'Michael Davis',
-        date: '2023-06-16',
-        time: '2:30 PM',
-        type: 'in-person',
-        status: 'upcoming'
-      },
-      {
-        id: '3',
-        patient_name: 'Sophia Rodriguez',
-        date: '2023-06-18',
-        time: '11:15 AM',
-        type: 'chat',
-        status: 'upcoming'
-      }
-    ];
-  };
+  }, [user, navigate]);
   
   // Check if user is new and show welcome dialog if needed
   useEffect(() => {
     checkUserStatus();
   }, [user]);
   
-  // Function to check user's status and profile
+  // Function to check user's status and profile using the user service
   const checkUserStatus = async () => {
     if (!user) return;
     
     try {
-      // Check if the user exists in mood_mentor_profiles table
-      const { data: profileData, error: profileError } = await supabase
-        .from('mood_mentor_profiles')
-        .select('*')
-        .eq('user_id', user.id)
-        .single();
+      const response = await moodMentorService.getMoodMentorById(user.id);
       
-      if (profileError && profileError.code !== 'PGRST116') {
-        console.error('Error fetching mood mentor profile:', profileError);
-        return;
-      }
-      
-      // If no profile exists or it's new, set isNewUser flag
-      if (!profileData) {
-        setIsNewUser(true);
-        setShowWelcomeDialog(true);
-      } else {
-        setProfile(profileData);
+      if (response.success && response.data) {
+        // Data is already in camelCase thanks to our service updates
+        const profileData = response.data;
         
-        // Calculate profile completion percentage
-        const completionPercentage = calculateProfileCompletion(profileData);
-        setProfileCompletionPercentage(completionPercentage);
+        // Set profile data
+        setProfile({
+          id: profileData.id,
+          fullName: profileData.fullName || '',
+          email: profileData.email || '',
+          bio: profileData.bio || '',
+          avatarUrl: profileData.avatarUrl || '',
+          specialties: profileData.specialties || [],
+          isProfileComplete: profileData.isProfileComplete || false
+        });
         
-        // If profile is less than 50% complete, show welcome dialog
-        if (completionPercentage < 50) {
+        // Check if profile is complete
+        setIsProfileComplete(!!profileData.isProfileComplete);
+        
+        // If profile is not complete, show the welcome dialog
+        if (!profileData.isProfileComplete) {
+          setIsNewUser(true);
           setShowWelcomeDialog(true);
         }
+      } else {
+        // No profile found, create a basic one
+        setProfile({
+          id: user.id,
+          fullName: user.user_metadata?.name || '',
+          email: user.email || '',
+          bio: '',
+          avatarUrl: user.user_metadata?.avatar_url || '',
+          specialties: [],
+          isProfileComplete: false
+        });
+        
+        setIsNewUser(true);
+        setShowWelcomeDialog(true);
       }
-      
-      // Fetch dashboard stats and activities
-      await Promise.all([
-        fetchDashboardStats(),
-        fetchRecentActivities()
-      ]);
-      
     } catch (error) {
-      console.error('Error in checking user status:', error);
+      console.error('Error checking user status:', error);
+      toast.error('Error loading profile data');
     }
-  };
-  
-  // Calculate profile completion percentage
-  const calculateProfileCompletion = (profile: MoodMentorProfile) => {
-    const requiredFields = [
-      'full_name',
-      'email',
-      'bio',
-      'specialties',
-      'education',
-      'experience',
-      'phone_number',
-      'address',
-      'working_hours',
-      'avatar_url'
-    ];
-    
-    let completedFields = 0;
-    
-    requiredFields.forEach(field => {
-      if (profile[field] && 
-          // Check if array is not empty
-          ((!Array.isArray(profile[field]) || profile[field].length > 0) &&
-           // Check if string is not empty
-           (typeof profile[field] !== 'string' || profile[field].trim() !== ''))) {
-        completedFields++;
-      }
-    });
-    
-    return Math.round((completedFields / requiredFields.length) * 100);
   };
   
   // Helper function to get appointment type badge
@@ -383,115 +370,172 @@ export default function MoodMentorDashboard() {
     }
   };
   
-  // Fetch stats for the dashboard
+  // Fetch stats for the dashboard using the mood mentor service
   const fetchDashboardStats = async () => {
     if (!user) return;
     
     try {
-      // Use the mood mentor service to get all dashboard stats
-      const dashboardStats = await moodMentorService.getDashboardStats(user.id);
+      // Get total active patients
+      const { data: patients, error: patientsError } = await supabase
+        .from('appointments')
+        .select('patient_id', { count: 'exact', head: true })
+        .eq('mentor_id', user.id)
+        .gte('start_time', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()) // Last 90 days
+        .neq('status', 'cancelled');
       
-      if (dashboardStats) {
+      if (patientsError) throw patientsError;
+
+      // Get upcoming appointments count
+      const { data: upcomingApts, error: aptsError } = await supabase
+        .from('appointments')
+        .select('*', { count: 'exact', head: true })
+        .eq('mentor_id', user.id)
+        .gte('start_time', new Date().toISOString())
+        .neq('status', 'cancelled');
+        
+      if (aptsError) throw aptsError;
+
+      // Get active support groups count
+      const { data: groups, error: groupsError } = await supabase
+        .from('mentor_groups')
+        .select('*', { count: 'exact', head: true })
+        .eq('mentor_id', user.id)
+        .eq('status', 'active');
+        
+      if (groupsError) throw groupsError;
+
+      // Get average rating
+      const { data: ratings, error: ratingsError } = await supabase
+        .from('mentor_reviews')
+        .select('rating')
+        .eq('mentor_id', user.id);
+      
+      if (ratingsError) throw ratingsError;
+
+      const averageRating = ratings && ratings.length > 0
+        ? (ratings.reduce((acc, curr) => acc + curr.rating, 0) / ratings.length).toFixed(1)
+        : 0;
+
+      // Update stats
         setStats([
           {
             title: "Total Patients",
-            value: dashboardStats.totalPatients || 0,
-            trend: "+5% from last month",
+          value: patients?.count || 0,
             icon: <Users className="h-5 w-5 text-blue-500" />
           },
           {
             title: "Upcoming Appointments",
-            value: dashboardStats.upcomingAppointments || 0,
+          value: upcomingApts?.count || 0,
             icon: <Calendar className="h-5 w-5 text-purple-500" />
           },
           {
             title: "Support Groups",
-            value: dashboardStats.supportGroups || 0,
+          value: groups?.count || 0,
             icon: <Users className="h-5 w-5 text-amber-500" />
           },
           {
             title: "Patient Satisfaction",
-            value: `${dashboardStats.patientSatisfaction || 0}%`,
-            trend: "+2% from last month",
+          value: `${averageRating}/5`,
             icon: <BarChart3 className="h-5 w-5 text-green-500" />
           }
         ]);
-      }
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
-      // Keep the default stats
+      toast.error('Failed to load dashboard statistics');
     }
   };
   
-  // Fetch recent activities
+  // Fetch recent activities by mocking the function (no real activity service)
   const fetchRecentActivities = async () => {
     if (!user) return;
     
     setActivitiesLoading(true);
-    
     try {
-      const { data, error } = await supabase
-        .from('activities')
-        .select('*')
-        .eq('user_id', user.id)
+      // Get recent appointments
+      const { data: recentAppointments, error: apptsError } = await supabase
+        .from('appointments')
+        .select(`
+          id,
+          start_time,
+          status,
+          patient:patient_id (
+            name
+          )
+        `)
+        .eq('mentor_id', user.id)
+        .order('start_time', { ascending: false })
+        .limit(5);
+      
+      if (apptsError) throw apptsError;
+
+      // Get recent messages
+      const { data: recentMessages, error: msgsError } = await supabase
+        .from('messages')
+        .select(`
+          id,
+          created_at,
+          sender:sender_id (
+            name
+          )
+        `)
+        .eq('recipient_id', user.id)
         .order('created_at', { ascending: false })
         .limit(5);
         
-      if (error) {
-        console.error('Error fetching activities:', error);
-        // Use mock data as fallback
-        setRecentActivities(getMockActivities());
-      } else if (data && data.length > 0) {
-        // Transform the data to our RecentActivity format
-        const formattedActivities = data.map((item: DbActivity) => {
-          let iconComponent;
-          let iconBgClass = 'bg-gray-100';
-          let iconColorClass = 'text-gray-600';
+      if (msgsError) throw msgsError;
+
+      // Get recent group activities
+      const { data: recentGroupActivities, error: groupsError } = await supabase
+        .from('group_participants')
+        .select(`
+          group_id,
+          joined_at,
+          patient:patient_id (
+            name
+          ),
+          group:group_id (
+            name
+          )
+        `)
+        .eq('group:mentor_id', user.id)
+        .order('joined_at', { ascending: false })
+        .limit(5);
+      
+      if (groupsError) throw groupsError;
           
-          // Determine icon and colors based on activity type
-          switch (item.activity_type) {
-            case 'appointment':
-              iconComponent = <Calendar className="h-5 w-5" />;
-              iconBgClass = 'bg-blue-100';
-              iconColorClass = 'text-blue-600';
-              break;
-            case 'message':
-              iconComponent = <MessageSquare className="h-5 w-5" />;
-              iconBgClass = 'bg-green-100';
-              iconColorClass = 'text-green-600';
-              break;
-            case 'group':
-              iconComponent = <Users className="h-5 w-5" />;
-              iconBgClass = 'bg-amber-100';
-              iconColorClass = 'text-amber-600';
-              break;
-            case 'profile':
-              iconComponent = <User className="h-5 w-5" />;
-              iconBgClass = 'bg-purple-100';
-              iconColorClass = 'text-purple-600';
-              break;
-            default:
-              iconComponent = <Bell className="h-5 w-5" />;
-          }
-          
-          return {
-            id: item.id,
-            title: item.title,
-            time: formatActivityTime(item.created_at),
-            icon: iconComponent,
-            iconBgClass,
-            iconColorClass
-          };
-        });
-        
-        setRecentActivities(formattedActivities);
-      } else {
-        // No activities found, use mock data
-        setRecentActivities(getMockActivities());
-      }
+      // Combine and sort all activities
+      const allActivities = [
+        ...(recentAppointments?.map(apt => ({
+          id: apt.id,
+          title: `Appointment with ${apt.patient.name}`,
+          time: apt.start_time,
+          icon: <Calendar className="h-4 w-4" />,
+          iconBgClass: 'bg-blue-100',
+          iconColorClass: 'text-blue-600'
+        })) || []),
+        ...(recentMessages?.map(msg => ({
+          id: msg.id,
+          title: `New message from ${msg.sender.name}`,
+          time: msg.created_at,
+          icon: <MessageSquare className="h-4 w-4" />,
+          iconBgClass: 'bg-purple-100',
+          iconColorClass: 'text-purple-600'
+        })) || []),
+        ...(recentGroupActivities?.map(activity => ({
+          id: `${activity.group_id}-${activity.patient.id}`,
+          title: `${activity.patient.name} joined ${activity.group.name}`,
+          time: activity.joined_at,
+          icon: <Users className="h-4 w-4" />,
+          iconBgClass: 'bg-amber-100',
+          iconColorClass: 'text-amber-600'
+        })) || [])
+      ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+       .slice(0, 10);
+
+      setRecentActivities(allActivities);
     } catch (error) {
-      console.error('Error fetching activities:', error);
-      setRecentActivities(getMockActivities());
+      console.error('Error fetching recent activities:', error);
+      toast.error('Failed to load recent activities');
     } finally {
       setActivitiesLoading(false);
     }
@@ -514,58 +558,12 @@ export default function MoodMentorDashboard() {
     }
   };
   
-  // Generate mock activities for demo/fallback
-  const getMockActivities = (): RecentActivity[] => {
-    return [
-      {
-        id: '1',
-        title: 'New appointment scheduled with Emma Thompson',
-        time: '2 hours ago',
-        icon: <Calendar className="h-5 w-5" />,
-        iconBgClass: 'bg-blue-100',
-        iconColorClass: 'text-blue-600'
-      },
-      {
-        id: '2',
-        title: 'Message received from Michael Davis',
-        time: '4 hours ago',
-        icon: <MessageSquare className="h-5 w-5" />,
-        iconBgClass: 'bg-green-100',
-        iconColorClass: 'text-green-600'
-      },
-      {
-        id: '3',
-        title: 'New group therapy session added',
-        time: '1 day ago',
-        icon: <Users className="h-5 w-5" />,
-        iconBgClass: 'bg-amber-100',
-        iconColorClass: 'text-amber-600'
-      },
-      {
-        id: '4',
-        title: 'Profile information updated',
-        time: '2 days ago',
-        icon: <User className="h-5 w-5" />,
-        iconBgClass: 'bg-purple-100',
-        iconColorClass: 'text-purple-600'
-      },
-      {
-        id: '5',
-        title: 'New review from Sophia Rodriguez',
-        time: '3 days ago',
-        icon: <MessageSquare className="h-5 w-5" />,
-        iconBgClass: 'bg-pink-100',
-        iconColorClass: 'text-pink-600'
-      }
-    ];
-  };
-  
   // Handle welcome dialog close
   const handleCloseWelcomeDialog = () => {
     setShowWelcomeDialog(false);
     
     // If profile is incomplete, redirect to profile page
-    if (profileCompletionPercentage < 100) {
+    if (!isProfileComplete) {
       navigate('/mood-mentor-dashboard/profile');
     }
   };
@@ -614,8 +612,59 @@ export default function MoodMentorDashboard() {
     }
   };
 
+  // Replace calculateProfileCompletion with a simple profile status component
+  const ProfileStatusCard = () => {
+    return (
+      <Card className="overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-purple-100 to-blue-100 pb-2">
+          <CardTitle className="text-lg">Profile Status</CardTitle>
+        </CardHeader>
+        <CardContent className="p-4">
+          {isProfileComplete ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-green-600">
+                <Check className="h-5 w-5" />
+                <span className="font-medium">Your profile is complete</span>
+              </div>
+              <p className="text-sm text-gray-600">
+                You can now be found by patients looking for mentors like you.
+              </p>
+              <Button 
+                variant="outline" 
+                className="mt-2"
+                onClick={() => navigate('/mood-mentor-dashboard/profile')}
+              >
+                Edit Profile
+              </Button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-amber-600">
+                <AlertCircle className="h-5 w-5" />
+                <span className="font-medium">Your profile is incomplete</span>
+              </div>
+              <p className="text-sm text-gray-600">
+                Complete your profile to be visible to patients looking for mood mentors.
+              </p>
+              <Button 
+                className="mt-2"
+                onClick={() => navigate('/mood-mentor-dashboard/profile')}
+              >
+                Complete Profile
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
-    <DashboardLayout>
+    <DashboardLayout
+      title={getTimeBasedGreeting()}
+      subtitle={getMotivationalMessage()}
+      userType="mentor"
+    >
       {/* Welcome Dialog for new users */}
       <Dialog open={showWelcomeDialog} onOpenChange={setShowWelcomeDialog}>
         <DialogContent className="sm:max-w-md">
@@ -642,15 +691,15 @@ export default function MoodMentorDashboard() {
           ) : (
             <div className="space-y-4 py-2">
               <p className="text-sm text-gray-600">
-                Your profile is {profileCompletionPercentage}% complete. Completing your profile will help patients find and connect with you.
+                Your profile is {isProfileComplete ? 'complete' : 'incomplete'}. Completing your profile will help patients find and connect with you.
               </p>
               
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span>Profile completion</span>
-                  <span>{profileCompletionPercentage}%</span>
+                  <span>{isProfileComplete ? 'Complete' : 'Incomplete'}</span>
                 </div>
-                <Progress value={profileCompletionPercentage} className="h-2" />
+                <Progress value={isProfileComplete ? 100 : 0} className="h-2" />
               </div>
             </div>
           )}
@@ -671,7 +720,7 @@ export default function MoodMentorDashboard() {
         {/* Welcome Section */}
         <section className="space-y-2">
           <h1 className="text-2xl font-bold text-gray-900">
-            {getTimeBasedGreeting()}, {getFullName().split(' ')[0]}
+            {getTimeBasedGreeting()}, {user?.fullName?.split(' ')[0]}
           </h1>
           <p className="text-gray-600">{getMotivationalMessage()}</p>
         </section>
@@ -962,6 +1011,9 @@ export default function MoodMentorDashboard() {
             </Button>
           </div>
         </section>
+        
+        {/* Profile status card */}
+        <ProfileStatusCard />
       </div>
     </DashboardLayout>
   );

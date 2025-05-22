@@ -1,13 +1,10 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
 import { Editor } from "@tiptap/react";
+import { Toggle } from "@/components/ui/toggle";
+import { cn } from "@/lib/utils";
+import { Bold, Italic, List, ListOrdered, Strikethrough, Underline } from "lucide-react";
+import { MoodSelector } from "@/components/ui/mood-selector";
+import type { MoodType } from "@/types/mood";
 import { 
-  Bold, 
-  Italic, 
-  List, 
-  ListOrdered, 
-  Heading2,
-  Undo,
-  Redo,
   Highlighter,
   ChevronDown,
   SmilePlus
@@ -19,15 +16,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
-
-type MoodType = Database['public']['Enums']['mood_type'];
-
-interface JournalToolbarProps {
-  editor: Editor | null;
-  onMoodSelect: (mood: MoodType | null) => void;
-  selectedMood: MoodType | null;
-}
 
 // Color options for highlighting
 const highlightColors = [
@@ -72,6 +60,12 @@ const moodOptions: Array<{mood: MoodType, emoji: string, label: string, color: s
     color: '#d8b4fe' 
   }
 ];
+
+interface JournalToolbarProps {
+  editor: Editor | null;
+  onMoodSelect?: (mood: MoodType) => void;
+  selectedMood?: MoodType;
+}
 
 export default function JournalToolbar({ 
   editor,

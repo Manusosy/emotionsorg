@@ -1,5 +1,6 @@
-import { authService, userService } from '../services';
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useContext } from 'react';
+import { supabase } from '@/lib/supabase';
+import { AuthContext } from '@/contexts/authContext';
 
 export interface User {
   id: string;
@@ -10,60 +11,72 @@ export interface User {
 }
 
 export function useUser() {
-  const [user, setUser] = useState<User | null>(null);
+  const { user } = useContext(AuthContext);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [userData, setUserData] = useState<any>(null);
 
   useEffect(() => {
-    async function getUser() {
+    const fetchUserData = async () => {
+      if (!user) {
+        setUserData(null);
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
-        
-        // Get user from auth
-        const authUser = await authService.getCurrentUser();
-        
-        if (!authUser) {
-          setUser(null);
-          return;
+        setError(null);
+
+        // Get user profile based on role
+        const role = user.user_metadata?.role;
+        let profile;
+
+        if (role === 'patient') {
+          const { data, error } = await supabase
+            .from('patient_profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+            
+          if (error) throw error;
+          profile = data;
+        } else if (role === 'mood_mentor') {
+          const { data, error } = await supabase
+            .from('mood_mentor_profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+            
+          if (error) throw error;
+          profile = data;
         }
-        
-        // Get extended user info using userService
-        const { data: userData, error: userError } = await userService.getUserProfile(authUser.id);
-        
-        if (userError) {
-          console.error('Error fetching user data:', userError);
-        }
-        
-        // Combine auth user with database user data
-        setUser({
-          id: authUser.id,
-          email: authUser.email || '',
-          full_name: userData?.full_name || authUser?.full_name,
-          role: userData?.role || authUser?.role || 'patient',
-          avatar_url: userData?.avatar_url || authUser?.avatar_url
+
+        setUserData({
+          ...user,
+          profile
         });
-      } catch (err) {
-        console.error('Error in useUser hook:', err);
-        setError(err instanceof Error ? err : new Error(String(err)));
-        setUser(null);
+      } catch (error: any) {
+        console.error('Error fetching user data:', error);
+        setError(error.message);
       } finally {
         setLoading(false);
       }
-    }
-    
-    getUser();
-    
-    // Set up auth state subscription
-    const unsubscribe = authService.onAuthStateChange(() => {
-      getUser();
-    });
-    
-    return () => {
-      unsubscribe();
     };
-  }, []);
-  
-  return { user, loading, error };
+
+    fetchUserData();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+      fetchUserData();
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user]);
+
+  return { user: userData, loading, error };
 } 
 
 

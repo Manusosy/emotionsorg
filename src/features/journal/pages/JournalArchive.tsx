@@ -1,10 +1,9 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect } from "react";
+import { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Search, Calendar, Tag, Filter, SlidersHorizontal } from "lucide-react";
-// Supabase import removed
+import { supabase } from '@/lib/supabase';
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
@@ -17,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { AuthContext } from "@/contexts/authContext";
 
 interface JournalEntry {
   id: string;
@@ -32,6 +32,7 @@ interface JournalEntry {
 
 export default function JournalArchive() {
   const navigate = useNavigate();
+  const { user: userData } = useContext(AuthContext);
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [filteredEntries, setFilteredEntries] = useState<JournalEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -100,8 +101,7 @@ export default function JournalArchive() {
         setIsLoading(true);
         setError(null);
 
-        const { data: userData } = await authService.getCurrentUser();
-        if (!userData.user) {
+        if (!userData) {
           // If not authenticated, use mock data for demo
           setEntries(mockEntries);
           setFilteredEntries(mockEntries);
@@ -112,7 +112,7 @@ export default function JournalArchive() {
         const { data, error } = await supabase
           .from("journal_entries")
           .select("*")
-          .eq("user_id", userData.user.id)
+          .eq("user_id", userData.id)
           .order("created_at", { ascending: false });
 
         if (error) throw error;
@@ -138,7 +138,7 @@ export default function JournalArchive() {
     };
 
     fetchEntries();
-  }, []);
+  }, [userData]);
 
   // Apply filters whenever filter criteria change
   useEffect(() => {

@@ -1,42 +1,12 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import React, { useState, useEffect } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import React, { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Progress } from "@/components/ui/progress";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { 
-  Calendar, 
-  LineChart, 
-  BarChart3, 
-  Download, 
-  FileText, 
-  ChevronLeft, 
-  CalendarRange,
-  Activity,
-  Brain,
-  HeartPulse,
-  TrendingUp,
-  Sparkles,
-  AlertTriangle,
-  CheckCircle,
-  Users,
-  FileDown,
-  Share,
-  ChevronDown
-} from "lucide-react";
 import { format, subDays, isValid } from "date-fns";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 // Supabase import removed
 import StressProgressChart from "../components/StressProgressChart";
 import ConsistencyHeatmap from "../components/ConsistencyHeatmap";
@@ -49,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 
 // Custom error boundary component
 interface ErrorBoundaryProps {
@@ -101,7 +72,7 @@ interface MoodEntry {
 
 export default function ReportsPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [dateRange, setDateRange] = useState("30");
   const [activeTab, setActiveTab] = useState("summary");
   const [isLoading, setIsLoading] = useState(true);

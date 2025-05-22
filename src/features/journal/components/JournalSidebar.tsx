@@ -1,11 +1,10 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-// Supabase import removed
-// Supabase import removed
+import { supabase } from '@/lib/supabase';
 import { cn } from "@/lib/utils";
 import { Sparkles, Calendar } from "lucide-react";
+import { useAuth } from '@/contexts/authContext';
 
 type JournalEntry = {
   id: string;
@@ -41,29 +40,37 @@ const JournalSidebar = ({ onPromptSelect }: JournalSidebarProps = {}) => {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     const fetchEntries = async () => {
+      if (!user) return;
+      
       try {
-        const { data, error } = await dataService.getJournalEntries();
+        setIsLoading(true);
+        const { data, error } = await supabase
+          .from('journal_entries')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
         
         if (error) throw error;
         if (data) setEntries(data);
       } catch (error) {
         console.error("Error fetching entries:", error);
+        setEntries([]);
       } finally {
         setIsLoading(false);
       }
     };
 
-    // Set up polling to refresh entries every minute
     fetchEntries();
     const intervalId = setInterval(fetchEntries, 60000);
 
     return () => {
       clearInterval(intervalId);
     };
-  }, []);
+  }, [user]);
 
   const handlePromptClick = (prompt: string) => {
     if (onPromptSelect) {

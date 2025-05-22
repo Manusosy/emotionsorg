@@ -1,5 +1,4 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useEffect, useState } from "react";
+import { useEffect, useState, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -31,12 +30,13 @@ import {
   UserRound,
   CalendarRange
 } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { format, addDays, parse, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subMonths } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Database } from '../../../types/database.types';
+import { supabase } from "@/lib/supabase";
 import {
   Popover,
   PopoverContent,
@@ -62,20 +62,51 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
 
-// Replace hardcoded mood mentor profiles with a type
+// Define the Appointment type
+interface Appointment {
+  id: string;
+  date: string;
+  time: string;
+  type: 'video' | 'audio' | 'chat';
+  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  concerns?: string;
+  notes?: string;
+  duration?: string;
+}
+
+// Define the MoodMentorProfile type
 interface MoodMentorProfile {
   id: string;
   name: string;
   specialty: string;
   avatar: string;
-  rating: number;
-  reviews: number;
-  available: boolean;
+  rating?: number;
+  reviews?: number;
+  available?: boolean;
   nextAvailable?: string;
   email?: string;
   phone?: string;
   bio?: string;
   education?: string;
+}
+
+// Define the AppointmentWithMentor type
+interface AppointmentWithMentor extends Appointment {
+  mentor?: {
+    id: string;
+    name: string;
+    specialty: string;
+    avatar: string;
+    email: string;
+    phone: string;
+  }
+}
+
+// Define the DateFilter type
+interface DateFilter {
+  label: string;
+  startDate: Date;
+  endDate: Date;
 }
 
 // Mock data for mentors since the original data doesn't include complete info
@@ -106,27 +137,11 @@ const mentorProfiles = [
   }
 ];
 
-type AppointmentWithMentor = Appointment & {
-  mentor?: {
-    id?: string;
-    name: string;
-    specialty: string;
-    avatar: string;
-    email: string;
-    phone: string;
-  }
-}
-
-type DateFilter = {
-  label: string;
-  startDate: Date;
-  endDate: Date;
-}
-
 export default function AppointmentsPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [appointments, setAppointments] = useState<AppointmentWithMentor[]>([]);
+  const [moodMentors, setMoodMentors] = useState<MoodMentorProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("upcoming");
   
@@ -198,7 +213,6 @@ export default function AppointmentsPage() {
   const [cancelAppointmentId, setCancelAppointmentId] = useState<string | null>(null);
   const [cancellationReason, setCancellationReason] = useState<string>('');
 
-  const [moodMentors, setMoodMentors] = useState<MoodMentorProfile[]>([]);
   const [loadingMoodMentors, setLoadingMoodMentors] = useState(false);
 
   useEffect(() => {
@@ -208,124 +222,81 @@ export default function AppointmentsPage() {
 
   const fetchAppointments = async () => {
     try {
-      setLoading(true);
-      
-      if (!user?.id) {
+      if (!user) {
+        console.log("No authenticated user found");
+        navigate('/signin');
         return;
       }
+
+      setLoading(true);
       
-      const { data, error } = await appointmentService.getPatientAppointments(user.id);
+      // Get the patient profile first
+      const { data: patientProfile, error: profileError } = await supabase
+        .from('patient_profiles')
+        .select('id')
+        .eq('id', user.id)
+        .single();
 
-      if (error) throw error;
-
-      // Convert database appointments to our Appointment interface and add mock mentor data
-      const mappedAppointments: AppointmentWithMentor[] = data.map(appt => {
-        // Find a mentor profile based on mood_mentor_id
-        const mentorProfile = mentorProfiles.find(d => d.id === appt.mood_mentor_id) || 
-          mentorProfiles[Math.floor(Math.random() * mentorProfiles.length)];
-        
-        return {
-          id: appt.id,
-          date: appt.date,
-          time: appt.time,
-          type: appt.type || (Math.random() > 0.5 ? "video" : "audio"),
-          status: appt.status || (Math.random() > 0.7 ? "completed" : Math.random() > 0.5 ? "cancelled" : "upcoming"),
-          patient_id: appt.patient_id,
-          mood_mentor_id: appt.mood_mentor_id,
-          notes: appt.notes,
-          duration: appt.duration || "30 minutes",
-          mentor: {
-            id: appt.mood_mentor_id || mentorProfile.id,
-            name: mentorProfile.name,
-            specialty: mentorProfile.specialty,
-            avatar: mentorProfile.avatar,
-            email: mentorProfile.email,
-            phone: mentorProfile.phone
-          }
-        };
-      });
-
-      // Only add mock data if enabled (for development only)
-      const shouldAddMockData = false;
-      if (shouldAddMockData && mappedAppointments.length < 3) {
-        const mockAppointments: AppointmentWithMentor[] = [
-          {
-            id: "apt0001",
-            date: "2024-11-11",
-            time: "10:45 AM",
-            type: "video",
-            status: "upcoming",
-            patient_id: user.id,
-            mood_mentor_id: "ment-123",
-            notes: null,
-            duration: "30 minutes",
-            mentor: {
-              id: "ment-123",
-              name: mentorProfiles[0].name,
-              specialty: mentorProfiles[0].specialty,
-              avatar: mentorProfiles[0].avatar,
-              email: mentorProfiles[0].email,
-              phone: mentorProfiles[0].phone
-            }
-          },
-          {
-            id: "apt0002",
-            date: "2024-11-05",
-            time: "11:50 AM",
-            type: "audio",
-            status: "upcoming",
-            patient_id: user.id,
-            mood_mentor_id: "ment-456",
-            notes: null,
-            duration: "45 minutes",
-            mentor: {
-              id: "ment-456",
-              name: mentorProfiles[1].name,
-              specialty: mentorProfiles[1].specialty,
-              avatar: mentorProfiles[1].avatar,
-              email: mentorProfiles[1].email,
-              phone: mentorProfiles[1].phone
-            }
-          },
-          {
-            id: "apt0003",
-            date: "2024-10-27",
-            time: "09:30 AM",
-            type: "video",
-            status: "upcoming",
-            patient_id: user.id,
-            mood_mentor_id: "ment-789",
-            notes: null,
-            duration: "30 minutes",
-            mentor: {
-              id: "ment-789",
-              name: mentorProfiles[2].name,
-              specialty: mentorProfiles[2].specialty,
-              avatar: mentorProfiles[2].avatar,
-              email: mentorProfiles[2].email,
-              phone: mentorProfiles[2].phone
-            }
-          }
-        ];
-        
-        mappedAppointments.push(...mockAppointments);
+      if (profileError) {
+        console.error('Error fetching patient profile:', profileError);
+        toast.error('Error loading appointments');
+        return;
       }
 
-      const filteredData = mappedAppointments.filter((appointment) => {
-        return appointment.status === activeTab;
-      });
+      // Fetch appointments with mentor details
+      const { data, error } = await supabase
+        .from('appointments')
+        .select(`
+          *,
+          mentor:mentor_id (
+            id,
+            full_name,
+            email,
+            title,
+            specialty,
+            profile_image_url
+          )
+        `)
+        .eq('patient_id', patientProfile.id)
+        .order('appointment_date', { ascending: true });
 
-      setAppointments(filteredData);
-      
-      // Update counts with actual numbers
-      setCounts({
-        upcoming: mappedAppointments.filter(a => a.status === "upcoming").length,
-        cancelled: mappedAppointments.filter(a => a.status === "cancelled").length,
-        completed: mappedAppointments.filter(a => a.status === "completed").length
-      });
+      if (error) {
+        console.error('Error fetching appointments:', error);
+        toast.error('Error loading appointments');
+        return;
+      }
+
+      // Transform the data to match the expected format
+      const transformedAppointments = data.map(apt => ({
+        id: apt.id,
+        date: apt.appointment_date,
+        time: apt.appointment_time,
+        type: apt.appointment_type,
+        status: apt.status,
+        mentor: apt.mentor ? {
+          id: apt.mentor.id,
+          name: apt.mentor.full_name,
+          specialty: apt.mentor.specialty || 'General Mental Health',
+          avatar: apt.mentor.profile_image_url || '/assets/default-avatar.png',
+          email: apt.mentor.email,
+          phone: apt.mentor.phone || ''
+        } : undefined,
+        concerns: apt.concerns,
+        notes: apt.notes
+      }));
+
+      // Update appointment counts
+      const counts = {
+        upcoming: data.filter(a => a.status === 'pending' || a.status === 'confirmed').length,
+        cancelled: data.filter(a => a.status === 'cancelled').length,
+        completed: data.filter(a => a.status === 'completed').length
+      };
+
+      setAppointments(transformedAppointments);
+      setCounts(counts);
     } catch (error) {
-      toast.error("Failed to fetch appointments");
-      console.error("Error:", error);
+      console.error('Error in fetchAppointments:', error);
+      toast.error('Failed to load appointments');
     } finally {
       setLoading(false);
     }
@@ -336,9 +307,9 @@ export default function AppointmentsPage() {
       setLoadingMoodMentors(true);
       
       // Use mood mentor service to get available mentors
-      const result = await moodMentorService.getAvailableMoodMentors(5);
+      const result = await supabase.from('mood_mentors').select().eq('availability_status', 'Available').limit(5);
       
-      if (result.success && result.data && result.data.length > 0) {
+      if (result.data && result.data.length > 0) {
         const mappedMentors: MoodMentorProfile[] = result.data.map(mentor => ({
           id: mentor.id,
           name: mentor.name || mentor.full_name || 'Mood Mentor',
@@ -346,7 +317,7 @@ export default function AppointmentsPage() {
           avatar: mentor.avatar_url || mentor.avatar || mentor.image || '/default-avatar.png',
           rating: mentor.rating || 4.7,
           reviews: mentor.reviews || mentor.totalRatings || 10,
-          available: mentor.availability_status === 'Available',
+          available: true,
           email: mentor.email || 'contact@emotionsapp.com',
           phone: mentor.phone_number || mentor.phone || '+250 788 123 456',
           bio: mentor.bio || mentor.about || 'Experienced mental health professional',
@@ -443,18 +414,21 @@ export default function AppointmentsPage() {
 
   const handleCancelAppointment = async (appointmentId: string) => {
     try {
-      const result = await appointmentService.updateAppointmentStatus(
-        appointmentId, 
-        'cancelled',
-        cancellationReason || 'Cancelled by patient'
-      );
+      const { data, error } = await supabase
+        .from('appointments')
+        .update({ 
+          status: 'cancelled', 
+          cancellation_reason: cancellationReason || 'Cancelled by patient' 
+        })
+        .eq('id', appointmentId)
+        .select();
       
-      if (result.success) {
-        toast.success("Appointment cancelled successfully");
-        fetchAppointments(); // Refresh appointments after cancellation
-      } else {
-        toast.error("Failed to cancel appointment");
+      if (error) {
+        throw error;
       }
+
+      toast.success("Appointment cancelled successfully");
+      fetchAppointments(); // Refresh appointments after cancellation
     } catch (error) {
       toast.error("An error occurred while cancelling the appointment");
       console.error("Error:", error);
@@ -776,132 +750,6 @@ export default function AppointmentsPage() {
     );
   };
 
-  // Debug component only shown to admin users for troubleshooting
-  const DebugSection = () => {
-    const isAdmin = user?.email?.includes('admin') || localStorage.getItem('debug_mode') === 'true';
-    const [showSection, setShowSection] = useState(false);
-    const [userIdToSet, setUserIdToSet] = useState(user?.id || '');
-    const [debugStatus, setDebugStatus] = useState('');
-
-    if (!isAdmin) return null;
-
-    const runDiagnostics = async () => {
-      setDebugStatus('Running diagnostics...');
-      try {
-        // Check profiles using userService
-        const { data: profiles, error: profilesError } = await userService.getProfiles(5);
-          
-        if (profilesError) {
-          setDebugStatus(`Error querying profiles: ${profilesError.message}`);
-          return;
-        }
-        
-        // Check if current user has a profile
-        const myProfile = profiles?.find(p => p.user_id === user?.id);
-        const profileInfo = myProfile 
-          ? `Found your profile with role: ${myProfile.role || 'undefined'}`
-          : 'You don\'t have a profile yet';
-          
-        // Check for mentors
-        const mentors = profiles?.filter(p => 
-          p.role === 'mood_mentor' || 
-          p.user_role === 'mood_mentor' || 
-          (Array.isArray(p.role) && p.role.includes('mood_mentor'))
-        );
-        
-        const mentorInfo = mentors?.length 
-          ? `Found ${mentors.length} mood mentor(s) in profiles table`
-          : 'No mood mentors found in profiles table';
-          
-        setDebugStatus(`Diagnostics complete. ${profileInfo}. ${mentorInfo}.`);
-      } catch (error) {
-        setDebugStatus(`Error running diagnostics: ${error.message}`);
-      }
-    };
-
-    const setMentorRole = async () => {
-      if (!userIdToSet) {
-        setDebugStatus('Please enter a user ID');
-        return;
-      }
-      
-      setDebugStatus(`Setting user ${userIdToSet} as mentor...`);
-      try {
-        const result = await moodMentorService.setUserAsMentor(userIdToSet);
-        
-        if (result.success) {
-          setDebugStatus(`Successfully set user ${userIdToSet} as mentor`);
-          // Refresh mentor list
-          fetchMoodMentors();
-        } else {
-          setDebugStatus(`Error: ${result.error.message}`);
-        }
-      } catch (error) {
-        setDebugStatus(`Error: ${error.message}`);
-      }
-    };
-
-    return (
-      <div className="mt-10 pt-6 border-t border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-700">Admin Diagnostics</h3>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => setShowSection(!showSection)}
-          >
-            {showSection ? 'Hide' : 'Show'} Tools
-          </Button>
-        </div>
-        
-        {showSection && (
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <div className="mb-4">
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={runDiagnostics}
-                className="mr-2"
-              >
-                Run Diagnostics
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={fetchMoodMentors}
-              >
-                Refresh Mentor List
-              </Button>
-            </div>
-            
-            <div className="flex items-center mt-4 mb-2 gap-2">
-              <input
-                type="text"
-                value={userIdToSet}
-                onChange={(e) => setUserIdToSet(e.target.value)}
-                placeholder="Enter user ID"
-                className="px-3 py-2 border border-gray-300 rounded-md flex-1"
-              />
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={setMentorRole}
-              >
-                Set As Mentor
-              </Button>
-            </div>
-            
-            {debugStatus && (
-              <div className="mt-4 p-3 bg-gray-100 rounded text-sm font-mono whitespace-pre-wrap">
-                {debugStatus}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   return (
     <DashboardLayout>
       <AlertDialog open={!!cancelAppointmentId} onOpenChange={(open) => {
@@ -1072,7 +920,6 @@ export default function AppointmentsPage() {
           </div>
         </div>
       </div>
-      <DebugSection />
     </DashboardLayout>
   );
 }

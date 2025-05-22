@@ -1,0 +1,11 @@
+# Supabase Configuration
+
+# Supabase Project URL and Anon Key
+VITE_SUPABASE_URL=https://hibeorkevqignkinaafy.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpYmVvcmtldnFpZ25raW5hYWZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc4MTMwNjgsImV4cCI6MjA2MzM4OTA2OH0.T-Dda-Rox11B6YFgrOt2PpK_vzhNB7GRuf5RxnYhNOE
+
+# JWT Secret for additional security (if needed)
+# VITE_SUPABASE_JWT_SECRET=update_with_your_new_jwt_secret
+
+# Optional: Service role key for admin operations (if needed)
+# VITE_SUPABASE_SERVICE_KEY=your_new_supabase_service_key 

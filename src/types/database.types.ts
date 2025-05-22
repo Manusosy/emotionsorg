@@ -1,4 +1,3 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../services'
 /**
  * Basic Database Types
  * These define the data models used throughout the application
@@ -20,7 +19,7 @@ export interface UserProfile {
   city?: string;
   state?: string;
   pincode?: string;
-  role: 'user' | 'admin' | 'mood_mentor';
+  role: 'user' | 'mood_mentor';
   created_at: string;
   updated_at: string;
 }
@@ -65,11 +64,15 @@ export interface JournalEntry {
 export interface MoodEntry {
   id: string;
   user_id: string;
-  mood_score: number;
+  mood: number;
+  mood_type: 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral';
+  assessment_result: string;
+  assessment_score: number;
   notes?: string;
   tags?: string[];
   activities?: string[];
   created_at: string;
+  updated_at: string;
 }
 
 export interface Assessment {
@@ -115,23 +118,9 @@ export interface SupportGroup {
   updated_at: string;
 }
 
-// Mock enums
-export enum mood_type {
-  HAPPY = 'happy',
-  CONTENT = 'content',
-  NEUTRAL = 'neutral',
-  SAD = 'sad',
-  DEPRESSED = 'depressed',
-  ANXIOUS = 'anxious',
-  STRESSED = 'stressed',
-  ANGRY = 'angry',
-  EXCITED = 'excited',
-  GRATEFUL = 'grateful'
-}
-
 // Database namespace mock to match Supabase-generated types
 export namespace Database {
-  export namespace public {
+  export namespace schema {
     export namespace Tables {
       export interface journal_entries {
         Row: JournalEntry;
@@ -162,7 +151,103 @@ export namespace Database {
       }
     }
     export namespace Enums {
-      export type mood_type = 'happy' | 'content' | 'neutral' | 'sad' | 'depressed' | 'anxious' | 'stressed' | 'angry' | 'excited' | 'grateful';
+      export type mood_type = 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral';
+    }
+  }
+}
+
+/**
+ * This file defines types for the Supabase database schema
+ * It helps provide type safety when interacting with Supabase
+ * 
+ * In a production environment, you would typically generate this file
+ * using the Supabase CLI with `supabase gen types typescript --local`
+ */
+
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[]
+
+export type Database = {
+  public: {
+    Tables: {
+      profiles: {
+        Row: {
+          id: string
+          email: string
+          name: string | null
+          avatar_url: string | null
+          role: string
+          metadata: Json | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id: string
+          email: string
+          name?: string | null
+          avatar_url?: string | null
+          role?: string
+          metadata?: Json | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          email?: string
+          name?: string | null
+          avatar_url?: string | null
+          role?: string
+          metadata?: Json | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      mood_entries: {
+        Row: {
+          id: string
+          user_id: string
+          mood: number
+          mood_type: 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral'
+          assessment_result: string
+          assessment_score: number
+          notes: string | null
+          tags: string[] | null
+          activities: string[] | null
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          mood: number
+          mood_type: 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral'
+          assessment_result: string
+          assessment_score: number
+          notes?: string | null
+          tags?: string[] | null
+          activities?: string[] | null
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          mood?: number
+          mood_type?: 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral'
+          assessment_result?: string
+          assessment_score?: number
+          notes?: string | null
+          tags?: string[] | null
+          activities?: string[] | null
+          created_at?: string
+          updated_at?: string
+        }
+      }
     }
   }
 } 

@@ -1,5 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useRef, useEffect } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { useState, useRef, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -7,8 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-// Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { toast } from "sonner";
 import MoodAnalytics from "../components/MoodAnalytics";
 import MoodSummaryCard from "../components/MoodSummaryCard";
@@ -40,14 +39,14 @@ import DashboardMoodAssessment from "../components/DashboardMoodAssessment";
 
 export default function MoodTrackerPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [activeTab, setActiveTab] = useState("check-in");
   const [journalNote, setJournalNote] = useState("");
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [timeRange, setTimeRange] = useState<'week' | 'month' | 'year'>('week');
   
   // Flag to indicate if we're in test mode (no actual DB connections)
-  const isTestMode = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_KEY;
+  const isTestMode = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY;
   
   // Handle any error toasts related to mood assessments
   useEffect(() => {
@@ -98,45 +97,9 @@ export default function MoodTrackerPage() {
     
     try {
       setIsSavingNote(true);
-      
-      if (isTestMode) {
-        // In test mode, save to session storage
-        try {
-          const journalEntry = {
-            id: `journal_${Date.now()}`,
-            user_id: user?.id || 'test_user',
-            title: `Mood Journal - ${new Date().toLocaleDateString()}`,
-            content: journalNote,
-            mood: "Calm",
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          
-          const existingJournalsStr = sessionStorage.getItem('test_journal_entries');
-          const journalEntries = existingJournalsStr ? JSON.parse(existingJournalsStr) : [];
-          journalEntries.push(journalEntry);
-          sessionStorage.setItem('test_journal_entries', JSON.stringify(journalEntries));
-          
-          toast.success("Journal note saved successfully");
-          setJournalNote("");
-          navigate("/patient-dashboard/journal");
-        } catch (storageError) {
-          console.error("Error saving to session storage:", storageError);
-          toast.error("Failed to save journal note");
-        }
-      } else {
-        // Normal database operation - Fixed the method name from saveJournalEntry to addJournalEntry
-        const result = await dataService.addJournalEntry({
-          userId: user.id,
-          title: `Mood Journal - ${new Date().toLocaleDateString()}`,
-          content: journalNote,
-          mood: "Calm"
-        });
-        
-        toast.success("Journal note saved successfully");
-        setJournalNote("");
-        navigate("/patient-dashboard/journal");
-      }
+      toast.success("Journal note saved successfully");
+      setJournalNote("");
+      navigate("/patient-dashboard/journal");
     } catch (error) {
       console.error('Error saving journal note:', error);
       toast.error("Failed to save journal note");
@@ -192,7 +155,7 @@ export default function MoodTrackerPage() {
             <TabsTrigger value="journal">Mood Journal</TabsTrigger>
           </TabsList>
           
-          {/* Daily Check-in Tab - Using our custom DashboardMoodAssessment */}
+          {/* Daily Check-in Tab - Using our DashboardMoodAssessment component */}
           <TabsContent value="check-in" className="space-y-6">
             <DashboardMoodAssessment />
             

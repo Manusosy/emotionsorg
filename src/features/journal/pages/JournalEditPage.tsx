@@ -1,5 +1,5 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect, useRef, useCallback } from "react";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { useState, useEffect, useRef, useCallback, useContext } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -12,8 +12,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Loader2, BookOpen } from "lucide-react";
 // Supabase import removed
-import { useIsMobile } from "@/hooks/use-is-mobile";
-import { useAuth } from "@/hooks/use-auth";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { AuthContext } from "@/contexts/authContext";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { debounce } from "lodash";
 import {
@@ -121,7 +121,7 @@ export default function JournalEditPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const isMobile = useIsMobile();
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   
   const [entry, setEntry] = useState<JournalEntry | null>(null);
   const [isLoading, setIsLoading] = useState(true);

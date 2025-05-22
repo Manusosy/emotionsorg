@@ -1,37 +1,40 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/contexts/authContext';
+import { dataService } from '@/services';
+import { Button } from '@/components/ui/button';
+import { toast } from 'sonner';
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { ArrowRight, Book, Heart, FileText, Users } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/hooks/use-auth";
-import { toast } from "sonner";
-
-// Import the EmotionButton and QuestionCard components
 import EmotionButton from "@/features/mood-tracking/components/EmotionButton";
 import QuestionCard from "@/features/mood-tracking/components/QuestionCard";
+import { ArrowRight, Book, Heart, LifeBuoy, FileText, Users } from 'lucide-react';
 
 // Emotion data
 const emotions = [{
   name: "Happy",
   icon: "😊",
-  color: "hover:shadow-yellow-500/20"
+  color: "hover:shadow-yellow-500/20",
+  type: "happy"
 }, {
   name: "Calm",
   icon: "😌",
-  color: "hover:shadow-green-500/20"
+  color: "hover:shadow-green-500/20",
+  type: "calm"
 }, {
   name: "Sad",
   icon: "😢",
-  color: "hover:shadow-blue-500/20"
+  color: "hover:shadow-blue-500/20",
+  type: "sad"
 }, {
   name: "Angry",
   icon: "😠",
-  color: "hover:shadow-red-500/20"
+  color: "hover:shadow-red-500/20",
+  type: "angry"
 }, {
   name: "Worried",
   icon: "😰",
-  color: "hover:shadow-purple-500/20"
+  color: "hover:shadow-purple-500/20",
+  type: "worried"
 }];
 
 // Assessment questions
@@ -73,12 +76,9 @@ const DashboardMoodAssessment = () => {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [score, setScore] = useState(0);
   const [showResults, setShowResults] = useState(false);
-  const [resultSaved, setResultSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
-  
-  // Flag to indicate if we're in test mode (no actual DB connections)
-  const isTestMode = !import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_KEY;
 
   // Function to map emotion and score to a mood_score on a scale of 1-10
   const getMoodScore = (emotion: string | null, score: number): number => {
@@ -125,128 +125,77 @@ const DashboardMoodAssessment = () => {
     return Math.max(1, Math.min(10, Math.round(adjustedScore)));
   };
 
-  // Function to get mood result based on score
-  const getMoodResult = (emotion: string | null): string => {
-    if (!emotion) return "Neutral";
-    
-    switch (emotion.toLowerCase()) {
-      case 'happy':
-        return "Happy";
-      case 'calm':
-        return "Calm";
-      case 'sad':
-        return "Sad";
-      case 'angry':
-        return "Angry";
-      case 'worried':
-        return "Worried";
-      default:
-        return "Neutral";
+  const saveMoodEntry = async () => {
+    if (!user?.id) {
+      toast.error('You must be logged in to save your assessment');
+      setIsSaving(false);
+      return;
+    }
+
+    if (!selectedEmotion) {
+      toast.error('Please select an emotion before saving');
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      
+      // Find the emotion data
+      const selectedEmotionData = emotions.find(e => e.name === selectedEmotion);
+      if (!selectedEmotionData) {
+        throw new Error("Selected emotion data not found");
+      }
+
+      // Calculate mood score
+      const moodScore = getMoodScore(selectedEmotion, score);
+      
+      // Prepare save data
+      const saveData = {
+        user_id: user.id,
+        mood: moodScore,
+        mood_type: selectedEmotionData.type as 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral',
+        assessment_result: selectedEmotion,
+        assessment_score: score,
+        notes: `Assessment score: ${score}`,
+        tags: [
+          selectedEmotionData.type,
+          score >= 4 ? 'high-concern' : 
+          score >= 2 ? 'moderate-concern' : 'low-concern'
+        ],
+        activities: ['emotion-check', 'quick-assessment']
+      };
+      
+      // Save to database with timeout
+      const savePromise = dataService.addMoodEntry(saveData);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Save operation timed out')), 10000)
+      );
+
+      await Promise.race([savePromise, timeoutPromise]);
+
+      toast.success("Mood assessment saved successfully!");
+      
+      // Store in sessionStorage for components that might load later
+      sessionStorage.setItem('last_mood_assessment', JSON.stringify({
+        moodScore,
+        moodType: selectedEmotionData.type,
+        timestamp: new Date().toISOString(),
+        saved: true,
+        saveTime: new Date().toISOString()
+      }));
+
+      // Reset the form after successful save
+      resetAll();
+
+    } catch (error) {
+      console.error('Error saving mood assessment:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to save assessment';
+      toast.error(`Error saving assessment: ${errorMessage}`);
+    } finally {
+      setIsSaving(false);
     }
   };
-
-  // Effect to save result when assessment is completed by logged-in user
-  useEffect(() => {
-    const saveMoodEntry = async () => {
-      if ((isAuthenticated && user && showResults && !resultSaved) || (isTestMode && showResults && !resultSaved)) {
-        try {
-          console.log("Attempting to save mood entry...", { 
-            userId: user?.id || 'test_user', 
-            emotion: selectedEmotion, 
-            score: score 
-          });
-          
-          const moodScore = getMoodScore(selectedEmotion, score);
-          const moodResult = getMoodResult(selectedEmotion);
-          
-          if (isTestMode) {
-            // Test mode implementation - use sessionStorage
-            try {
-              const now = new Date();
-              const entryId = `mood_${Date.now()}`;
-              
-              // Create the mood entry object
-              const moodEntry = {
-                id: entryId,
-                user_id: user?.id || 'test_user',
-                mood_score: moodScore,
-                assessment_result: moodResult,
-                notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`,
-                created_at: now.toISOString()
-              };
-              
-              // Get existing entries or create new array
-              const existingEntriesStr = sessionStorage.getItem('test_mood_entries');
-              const moodEntries = existingEntriesStr ? JSON.parse(existingEntriesStr) : [];
-              
-              // Add new entry
-              moodEntries.push(moodEntry);
-              
-              // Save back to session storage
-              sessionStorage.setItem('test_mood_entries', JSON.stringify(moodEntries));
-              
-              // Dispatch custom event so other components can respond
-              const eventData = {
-                moodScore: moodScore,
-                assessmentResult: moodResult,
-                timestamp: now.toISOString()
-              };
-              
-              const event = new CustomEvent('mood-assessment-completed', { 
-                detail: eventData 
-              });
-              window.dispatchEvent(event);
-              
-              console.log("Test mode: Mood entry saved to session storage");
-              setResultSaved(true);
-              toast.success("Mood assessment saved");
-            } catch (storageError) {
-              console.error("Error saving to session storage:", storageError);
-              // Don't show error to user in test mode
-              setResultSaved(true); // Mark as saved anyway to avoid repeated errors
-            }
-          } else {
-            // Real database implementation
-            // Add retry logic for better resilience
-            let retryCount = 0;
-            let saveSuccessful = false;
-            
-            while (retryCount < 3 && !saveSuccessful) {
-              try {
-                const result = await dataService.addMoodEntry({
-                  userId: user.id,
-                  mood: moodScore,
-                  notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
-                });
-                
-                saveSuccessful = true;
-              } catch (innerError) {
-                retryCount++;
-                if (retryCount >= 3) throw innerError;
-                // Wait before retry
-                await new Promise(resolve => setTimeout(resolve, 1000));
-              }
-            }
-            
-            setResultSaved(true);
-            toast.success("Mood assessment saved");
-          }
-        } catch (error) {
-          console.error("Error saving mood entry:", error);
-          // Only show error toast if not in test mode
-          if (!isTestMode) {
-            toast.error("Failed to save assessment. Please try again.");
-          } else {
-            // In test mode, we'll consider it as "saved" to avoid disrupting the user experience
-            setResultSaved(true);
-            toast.success("Mood assessment saved (Test Mode)");
-          }
-        }
-      }
-    };
-
-    saveMoodEntry();
-  }, [showResults, isAuthenticated, user, selectedEmotion, score, resultSaved, isTestMode]);
 
   const handleEmotionSelect = (emotion: string) => {
     if (selectedEmotion === emotion) {
@@ -275,16 +224,14 @@ const DashboardMoodAssessment = () => {
     setCurrentQuestion(0);
     setScore(0);
     setShowResults(false);
-    setResultSaved(false);
   };
 
-  // Dashboard-specific navigation functions
   const navigateToJournal = () => {
-    navigate("/patient-dashboard/journal");
+    navigate("/journal");
   };
 
   const navigateToResources = () => {
-    navigate("/patient-dashboard/resources");
+    navigate("/resources");
   };
 
   const navigateToMoodMentors = () => {
@@ -296,194 +243,129 @@ const DashboardMoodAssessment = () => {
   };
 
   return (
-    <div className="bg-white rounded-xl shadow-sm overflow-visible">
-      <div className="p-6 pt-4">
-        <div className="text-center space-y-4 mb-2">
-          <h2 className="text-2xl font-bold text-[#001A41] leading-tight">
-            How Are You Feeling <span className="text-[#007BFF]">Right Now?</span>
-          </h2>
-          <p className="text-sm text-gray-600">
-            Select your current mood by clicking one of the emojis below
-          </p>
-        </div>
-
-        <AnimatePresence mode="wait">
-          {!showQuestions && !showResults && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="py-4"
-            >
-              <div className="grid grid-cols-5 gap-3">
-                {emotions.map(emotion => (
-                  <EmotionButton
-                    key={emotion.name}
-                    emotion={emotion}
-                    selected={selectedEmotion === emotion.name}
-                    onClick={() => handleEmotionSelect(emotion.name)}
-                    onClickOutside={handleClickOutside}
-                  />
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {showQuestions && !showResults && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="py-4"
-            >
-              <QuestionCard
-                question={questions[currentQuestion].text}
-                options={questions[currentQuestion].options.map(option => option.text)}
-                onNext={(index) => handleAnswerSelect(questions[currentQuestion].options[index].points)}
-                questionNumber={currentQuestion + 1}
-                totalQuestions={questions.length}
+    <div className="bg-white rounded-lg shadow-sm p-6">
+      <h2 className="text-xl font-semibold mb-4">How are you feeling?</h2>
+      
+      <AnimatePresence mode="wait">
+        {!showQuestions && (
+          <div className="grid grid-cols-5 gap-3">
+            {emotions.map(emotion => (
+              <EmotionButton
+                key={emotion.name}
+                emotion={emotion}
+                selected={selectedEmotion === emotion.name}
+                onClick={() => handleEmotionSelect(emotion.name)}
+                onClickOutside={handleClickOutside}
               />
-            </motion.div>
-          )}
+            ))}
+          </div>
+        )}
 
-          {showResults && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="py-2"
-            >
+        {showQuestions && !showResults && (
+          <QuestionCard
+            question={questions[currentQuestion].text}
+            options={questions[currentQuestion].options.map(option => option.text)}
+            onNext={(index) => handleAnswerSelect(questions[currentQuestion].options[index].points)}
+            questionNumber={currentQuestion + 1}
+            totalQuestions={questions.length}
+          />
+        )}
+
+        {showResults && (
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="space-y-6"
+          >
+            <div className="p-4 rounded-xl bg-white shadow-sm border border-[#20C0F3]/20">
+              <div className="flex items-center mb-4">
+                <div className="w-10 h-10 bg-gradient-to-r from-[#0078FF] to-[#20C0F3] rounded-full flex items-center justify-center shadow-md shadow-blue-500/20 mr-4">
+                  <Heart className="h-5 w-5 text-white" />
+                </div>
+                <h3 className="text-lg font-semibold bg-gradient-to-r from-[#0078FF] via-[#20C0F3] to-[#00D2FF] bg-clip-text text-transparent">
+                  Assessment Results
+                </h3>
+              </div>
+
               {score <= 3 ? (
                 <div className="space-y-4">
-                  <div className="py-3 px-4 bg-green-50 rounded-lg border-l-4 border-green-400">
-                    <p className="text-green-800 font-medium text-sm">
+                  <div className="py-2 px-3 bg-green-50 rounded-lg border-l-4 border-green-400">
+                    <p className="text-green-800 text-sm font-medium">
                       You're doing great! Your assessment indicates minimal mental health concerns.
                     </p>
                   </div>
                   
-                  <p className="text-gray-700 text-sm">
-                    It appears you're managing your emotions well. Journaling can help maintain this positive state.
-                  </p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                      <div className="flex items-center mb-2">
-                        <div className="bg-[#20C0F3]/10 p-2 rounded-full mr-2">
-                          <FileText className="h-4 w-4 text-[#20C0F3]" />
-                        </div>
-                        <h3 className="font-medium text-gray-800">Journal Your Feelings</h3>
-                      </div>
-                      <p className="text-gray-600 text-xs mb-3">
-                        Document your thoughts and emotions to track patterns over time.
-                      </p>
-                      <Button 
-                        onClick={navigateToJournal} 
-                        className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white shadow-sm hover:shadow transition-all"
-                        size="sm"
-                      >
-                        Go to Journal
-                        <ArrowRight className="ml-1 h-3 w-3" />
-                      </Button>
-                    </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button 
+                      onClick={navigateToJournal} 
+                      className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white text-sm"
+                    >
+                      Journal Now
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
                     
-                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                      <div className="flex items-center mb-2">
-                        <div className="bg-[#20C0F3]/10 p-2 rounded-full mr-2">
-                          <Book className="h-4 w-4 text-[#20C0F3]" />
-                        </div>
-                        <h3 className="font-medium text-gray-800">Explore Resources</h3>
-                      </div>
-                      <p className="text-gray-600 text-xs mb-3">
-                        Read articles and explore tools to maintain your positive mental state.
-                      </p>
-                      <Button 
-                        onClick={navigateToResources} 
-                        variant="outline" 
-                        className="w-full border-[#20C0F3] text-[#20C0F3] hover:bg-[#20C0F3]/5 hover:text-[#0078FF]"
-                        size="sm"
-                      >
-                        View Resources
-                        <ArrowRight className="ml-1 h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-center pt-2">
-                    <Button variant="ghost" onClick={resetAll} size="sm">
-                      Start Over
+                    <Button 
+                      onClick={navigateToResources} 
+                      variant="outline" 
+                      className="w-full border-[#20C0F3] text-[#20C0F3] hover:bg-[#20C0F3]/5 hover:text-[#0078FF] text-sm"
+                    >
+                      View Resources
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="py-3 px-4 bg-amber-50 rounded-lg border-l-4 border-amber-400">
-                    <p className="text-amber-800 font-medium text-sm">
-                      Your assessment indicates some emotional concerns that deserve attention.
+                  <div className="py-2 px-3 bg-amber-50 rounded-lg border-l-4 border-amber-400">
+                    <p className="text-amber-800 text-sm font-medium">
+                      Your assessment indicates you may be experiencing some mental health challenges.
                     </p>
                   </div>
                   
-                  <p className="text-gray-700 text-sm">
-                    Consider some of these resources designed to help you process and understand your feelings.
-                  </p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                      <div className="flex items-center mb-2">
-                        <div className="bg-[#20C0F3]/10 p-2 rounded-full mr-2">
-                          <Users className="h-4 w-4 text-[#20C0F3]" />
-                        </div>
-                        <h3 className="font-medium text-gray-800">Join Support Groups</h3>
-                      </div>
-                      <p className="text-gray-600 text-xs mb-3">
-                        Connect with others who understand what you're going through.
-                      </p>
-                      <Button 
-                        onClick={navigateToHelpGroups} 
-                        className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white shadow-sm hover:shadow transition-all"
-                        size="sm"
-                      >
-                        Find Groups
-                        <ArrowRight className="ml-1 h-3 w-3" />
-                      </Button>
-                    </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Button 
+                      onClick={navigateToMoodMentors} 
+                      className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white text-sm"
+                    >
+                      Talk to Mentor
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
                     
-                    <div className="bg-gray-50 p-4 rounded-lg border border-gray-100">
-                      <div className="flex items-center mb-2">
-                        <div className="bg-[#20C0F3]/10 p-2 rounded-full mr-2">
-                          <Heart className="h-4 w-4 text-[#20C0F3]" />
-                        </div>
-                        <h3 className="font-medium text-gray-800">Mood Mentors</h3>
-                      </div>
-                      <p className="text-gray-600 text-xs mb-3">
-                        Our licensed professionals can provide guidance and support for your challenges.
-                      </p>
-                      <Button 
-                        onClick={navigateToMoodMentors} 
-                        variant="outline" 
-                        className="w-full border-[#20C0F3] text-[#20C0F3] hover:bg-[#20C0F3]/5 hover:text-[#0078FF]"
-                        size="sm"
-                      >
-                        Connect Now
-                        <ArrowRight className="ml-1 h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  <div className="flex justify-center pt-2">
-                    <Button variant="ghost" onClick={resetAll} size="sm">
-                      Start Over
+                    <Button 
+                      onClick={navigateToHelpGroups}
+                      className="w-full bg-[#0078FF]/10 hover:bg-[#0078FF]/20 text-[#0078FF] text-sm"
+                    >
+                      Join Groups
+                      <ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button
+                onClick={saveMoodEntry}
+                disabled={isSaving}
+                className="flex-1 bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white"
+              >
+                {isSaving ? 'Saving...' : 'Save Assessment'}
+              </Button>
+              
+              <Button
+                onClick={resetAll}
+                variant="outline"
+                className="border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                Start Over
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
 
 export default DashboardMoodAssessment; 
-
-

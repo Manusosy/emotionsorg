@@ -1,6 +1,6 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import React, { useState, useEffect } from "react";
-import { DashboardLayout } from "../components/DashboardLayout";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services';
+import React, { useState, useEffect, useContext } from "react";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Users, MoreVertical, Calendar, MessageSquare, Settings } from "lucide-react";
-import { useAuth } from "@/hooks/use-auth";
+import { AuthContext } from "@/contexts/authContext";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -83,7 +83,7 @@ const createGroupSchema = z.object({
 type CreateGroupFormValues = z.infer<typeof createGroupSchema>;
 
 export default function GroupsPage() {
-  const { user } = useAuth();
+  const { user } = useContext(AuthContext);
   const [groups, setGroups] = useState<SupportGroup[]>([
     {
       id: "1",

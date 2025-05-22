@@ -1,77 +1,140 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState, useEffect } from 'react';
-import { DashboardLayout } from '../components/DashboardLayout';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth } from '@/contexts/authContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-// Supabase import removed
 import { Separator } from '@/components/ui/separator';
-import { Loader2, Upload, UserCheck, Medal, Briefcase, GraduationCap, Languages, MapPin, ChevronDown, Check, Info } from 'lucide-react';
+import { Upload, UserCheck, Medal, Briefcase, GraduationCap, Languages, MapPin, ChevronDown, Check, Info, AlertCircle, RefreshCw, Settings, Loader2, X } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { mentorCountries } from '@/features/auth/utils/mentor-countries';
+import { supabase } from '@/lib/supabase';
+import { moodMentorService } from '@/services';
+import { slugify } from '@/utils/formatters';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { authService } from '@/services/auth/auth.service';
 
-// Types for profile data
-interface MoodMentorProfile {
+// User from authentication context
+interface AuthUser {
   id: string;
-  full_name: string;
   email: string;
-  bio?: string;
-  specialties?: string[];
+  user_metadata: {
+    name?: string;
+  full_name?: string;
+  first_name?: string;
+  last_name?: string;
   avatar_url?: string;
-  education?: Array<{degree: string, institution: string, year: string}>;
-  experience?: Array<{title: string, place: string, duration: string}>;
-  languages?: string[];
-  location?: string;
-  therapyTypes?: string[];
+  country?: string;
+  gender?: string;
+  role?: string;
+  phone_number?: string;
   specialty?: string;
-  consultation_fee?: number;
-  profile_completion?: number;
-  isFree?: boolean;
-  availability_status?: string;
-  gender: string;
-  name_slug?: string;
+  };
+}
+
+// The main profile interface using camelCase for the UI, matching the MoodMentorUI interface
+interface MentorProfile {
+  id: string;
+  userId: string;
+  fullName: string;
+  email: string;
+  bio: string;
+  specialty: string;
+  hourlyRate: number;
+  avatarUrl: string;
+  isFree: boolean;
+  availabilityStatus: 'available' | 'unavailable' | 'busy';
+  gender: 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say';
+  languages: string[];
+  education: Array<{degree: string, institution: string, year: string}>;
+  experience: Array<{title: string, place: string, duration: string}>;
+  therapyTypes: string[];
+  specialties: string[];
+  sessionDuration: '30 Min' | '45 Min' | '60 Min' | '90 Min';
+  location: string;
+  nameSlug: string;
+  phoneNumber: string;
+  isProfileComplete: boolean;
+  isActive: boolean;
 }
 
 export default function ProfilePage() {
-  const { user } = useAuth();
+  const { user } = useAuth() as { user: AuthUser | null };
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('personal');
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [attemptingTabChange, setAttemptingTabChange] = useState<string | null>(null);
   const [isLanguageDropdownOpen, setIsLanguageDropdownOpen] = useState(false);
+  const phoneInitialized = useRef(false);
   
-  const [profile, setProfile] = useState<MoodMentorProfile>({
+  // Country code mapping for phone prefixes
+  const countryPhonePrefixes: Record<string, string> = {
+    'Rwanda': '+250',
+    'Sierra Leone': '+232',
+    'Ghana': '+233',
+    'Kenya': '+254',
+    'Uganda': '+256'
+  };
+  
+  // Create a sorted list of countries based on their phone codes
+  const sortedCountries = mentorCountries
+    .map(country => ({
+      name: country.name,
+      code: countryPhonePrefixes[country.name]?.replace('+', '') || '0'
+    }))
+    .sort((a, b) => parseInt(a.code) - parseInt(b.code))
+    .map(country => country.name);
+
+  // Update the countryOptions to use the sorted list
+  const countryOptions = sortedCountries;
+
+  // Default empty profile
+  const defaultProfile: MentorProfile = {
     id: '',
-    full_name: user?.user_metadata?.full_name || '',
-    email: user?.email || '',
+    userId: '',
+    fullName: '',
+    email: '',
     bio: '',
+    specialty: '',
+    therapyTypes: [],
     specialties: [],
-    avatar_url: '',
+    avatarUrl: '',
     education: [{ degree: '', institution: '', year: '' }],
     experience: [{ title: '', place: '', duration: '' }],
     languages: [],
-    location: user?.user_metadata?.country || '',
-    therapyTypes: [],
-    specialty: '',
-    consultation_fee: 0,
-    profile_completion: 0,
+    location: '',
+    phoneNumber: '',
+    hourlyRate: 0,
+    isProfileComplete: false,
     isFree: true,
-    availability_status: 'Available',
-    gender: user?.user_metadata?.gender || '',
-    name_slug: ''
-  });
+    availabilityStatus: 'available',
+    gender: 'Prefer not to say',
+    nameSlug: '',
+    sessionDuration: '30 Min',
+    isActive: true
+  };
 
-  // State for edit mode
-  const [isEditMode, setIsEditMode] = useState(false);
+  // Initialize profile state with default values
+  const [profile, setProfile] = useState<MentorProfile>(defaultProfile);
 
   // Gender options
   const genderOptions = [
@@ -81,22 +144,31 @@ export default function ProfilePage() {
     'Prefer not to say'
   ];
 
-  // Languages options
+  // Languages options - prioritizing languages from allowed countries
   const languageOptions = [
-    'English', 'French', 'Arabic', 'Swahili', 'Amharic',
-    'Hausa', 'Yoruba', 'Igbo', 'Zulu', 'Xhosa',
-    'Afrikaans', 'Somali', 'Oromo', 'Kinyarwanda', 'Tigrinya',
-    'Berber', 'Wolof', 'Shona', 'Twi', 'Lingala',
-    // Nigerian languages
-    'Fulfulde', 'Edo', 'Ibibio', 'Efik', 'Kanuri', 'Tiv',
-    // Ghanaian languages
-    'Akan', 'Ewe', 'Ga', 'Dagaare', 'Dagbani',
-    // Sierra Leone languages
-    'Krio', 'Mende', 'Temne', 'Limba',
-    // Rwandan languages
-    'Kirundi', 'Swahili-Rwanda',
+    // Primary languages for the selected countries
+    'English', 'Swahili', 'Kinyarwanda', 'Luganda', 'Twi', 'Ga', 'Krio', 'Mende',
+
     // Kenyan languages
-    'Kikuyu', 'Luo', 'Luhya', 'Kalenjin', 'Kamba', 'Kisii', 'Meru'
+    'Kikuyu', 'Luo', 'Luhya', 'Kalenjin', 'Kamba', 'Kisii', 'Meru',
+    
+    // Rwandan languages
+    'Kirundi', 'French',
+    
+    // Ugandan languages
+    'Acholi', 'Ateso', 'Lugbara', 'Runyankole', 'Lusoga',
+    
+    // Sierra Leonean languages
+    'Temne', 'Limba', 'Kuranko', 'Susu',
+    
+    // Ghanaian languages
+    'Ewe', 'Dagaare', 'Dagbani', 'Akan', 'Fante',
+    
+    // Other languages
+    'Arabic', 'Amharic', 'Hausa', 'Yoruba', 'Igbo',
+    'Oromo', 'Somali', 'Tigrinya', 'Berber', 'Wolof', 'Shona', 'Lingala',
+    'Fulfulde', 'Edo', 'Ibibio', 'Efik', 'Kanuri', 'Tiv',
+    'Zulu', 'Xhosa', 'Afrikaans'
   ];
 
   // Therapy types options
@@ -126,121 +198,388 @@ export default function ProfilePage() {
     'LGBTQ+ Issues'
   ];
 
-  // Fetch profile data
-  useEffect(() => {
-    const fetchProfileData = async () => {
-      if (!user?.id) return;
-      
-      try {
-        setIsLoading(true);
-        
-        // Try to load from localStorage first for faster display
-        let localProfileData = null;
-        try {
-          const storedData = localStorage.getItem('mentor_profile_data');
-          if (storedData) {
-            localProfileData = JSON.parse(storedData);
-          }
-        } catch (storageError) {
-          console.error('Error loading from localStorage:', storageError);
-        }
-        
-        // Then get server data
-        const response = await moodMentorService.getMoodMentorById(user.id);
-        
-        if (response.success && response.data) {
-          // Preserve pre-filled fields
-          const currentEmail = profile.email;
-          const currentFullName = profile.full_name;
-          const currentLocation = profile.location;
-          const currentGender = profile.gender;
-          
-          // Merge local storage data (if available) with server data for best persistence
-          const mergedData = {
-            ...response.data,
-            ...(localProfileData || {}),
-          };
-          
-          setProfile({
-            ...profile,
-            ...mergedData,
-            id: user.id,
-            // Preserve pre-filled fields from user data
-            email: currentEmail,
-            full_name: currentFullName,
-            location: currentLocation || mergedData.location,
-            gender: currentGender || mergedData.gender,
-            // Ensure arrays are initialized even if not in the data
-            education: mergedData.education || [{ degree: '', institution: '', year: '' }],
-            // Handle case where experience might be a string instead of an array
-            experience: Array.isArray(mergedData.experience) 
-              ? mergedData.experience 
-              : (typeof mergedData.experience === 'string' && mergedData.experience)
-                ? [{ title: 'Previous Experience', place: '', duration: mergedData.experience }]
-                : [{ title: '', place: '', duration: '' }],
-            languages: mergedData.languages || [],
-            specialties: mergedData.specialties || [],
-            therapyTypes: mergedData.therapyTypes || [],
-            name_slug: mergedData.name_slug || ''
-          });
-          
-          if (mergedData.avatar_url) {
-            setAvatarPreview(mergedData.avatar_url);
-          }
-        }
-      } catch (error) {
-        console.error('Error fetching profile:', error);
-        toast.error('Failed to load profile data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    fetchProfileData();
-  }, [user?.id]);
+  // Simplified validation function
+  const validateProfile = (): { isValid: boolean; errors: string[] } => {
+    const errors: string[] = [];
 
-  // Handle input change
+    // Required fields validation
+    if (!profile.fullName?.trim()) {
+      errors.push('Full name is required');
+    }
+
+    if (!profile.specialty?.trim()) {
+      errors.push('Specialty is required');
+    }
+
+    if (!profile.bio?.trim()) {
+      errors.push('Bio is required');
+    }
+    
+    if (!profile.location?.trim()) {
+      errors.push('Location is required');
+    }
+    
+    if (!profile.gender) {
+      errors.push('Gender is required');
+    }
+    
+    if (!profile.phoneNumber?.trim()) {
+      errors.push('Phone number is required');
+    }
+
+    if (profile.therapyTypes?.length === 0) {
+      errors.push('At least one therapy type is required');
+    }
+
+    if (profile.languages?.length === 0) {
+      errors.push('At least one language is required');
+    }
+    
+    // Validate hourly rate if not a free mentor
+    if (!profile.isFree && (!profile.hourlyRate || profile.hourlyRate <= 0)) {
+      errors.push('Please set a valid hourly rate greater than 0');
+    }
+    
+    // Add a console log to help debug validation
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Validation errors:', errors);
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  };
+
+  // Update isFormValid to use the new validation
+  const isFormValid = (): boolean => {
+    const { isValid } = validateProfile();
+    return isValid;
+  };
+
+  // Define fetchProfileData outside useEffect so it can be called manually
+  const fetchProfileData = async () => {
+    if (!user?.id) return;
+    
+    try {
+      setIsLoading(true);
+      setHasUnsavedChanges(false); // Reset unsaved changes when fetching fresh data
+      
+      // Get server data
+      const response = await moodMentorService.getMoodMentorById(user.id);
+      
+      // Get the country from user metadata for phone prefix
+      const countryName = user.user_metadata?.country ? 
+        mentorCountries.find(c => c.code === user.user_metadata?.country)?.name || '' : '';
+      const phonePrefix = countryPhonePrefixes[countryName] || '';
+      
+      // Format gender value properly
+      const formatGender = (gender?: string): 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say' => {
+        if (!gender) return 'Prefer not to say';
+        
+        switch(gender.toLowerCase()) {
+          case 'male': return 'Male';
+          case 'female': return 'Female';
+          case 'non-binary': return 'Non-binary';
+          default: return 'Prefer not to say';
+        }
+      };
+      
+      // Get user metadata from auth context
+      const userMetadata = {
+        fullName: user.user_metadata?.name || user.user_metadata?.full_name || 
+                 `${user.user_metadata?.first_name || ''} ${user.user_metadata?.last_name || ''}`.trim(),
+        email: user.email || '',
+        location: countryName,
+        gender: formatGender(user.user_metadata?.gender),
+        avatarUrl: user.user_metadata?.avatar_url || '',
+        phoneNumber: user.user_metadata?.phone_number || phonePrefix,
+        specialty: user.user_metadata?.specialty || '',
+      };
+      
+      if (response.success && response.data) {
+        // The response is already in camelCase format from our service
+        const profileData = response.data;
+        
+        // Merge with any missing data from user metadata
+        const completeProfile = {
+          ...profileData,
+          fullName: profileData.fullName || userMetadata.fullName,
+          email: profileData.email || userMetadata.email,
+          gender: profileData.gender || userMetadata.gender as any,
+          location: profileData.location || userMetadata.location,
+          avatarUrl: profileData.avatarUrl || userMetadata.avatarUrl,
+          phoneNumber: profileData.phoneNumber || userMetadata.phoneNumber,
+          specialty: profileData.specialty || userMetadata.specialty,
+        };
+        
+        setProfile(completeProfile);
+        
+        // If there's an avatar, set the preview
+        if (completeProfile.avatarUrl) {
+          setAvatarPreview(completeProfile.avatarUrl);
+        }
+        
+      } else {
+        // Create new profile from user metadata
+        setProfile({
+          ...defaultProfile,
+          userId: user.id,
+          fullName: userMetadata.fullName,
+          email: userMetadata.email,
+          gender: userMetadata.gender,
+          location: userMetadata.location,
+          avatarUrl: userMetadata.avatarUrl,
+          phoneNumber: userMetadata.phoneNumber,
+          specialty: userMetadata.specialty,
+          nameSlug: userMetadata.fullName
+            .toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^a-z0-9-]/g, ''),
+        });
+        
+        if (userMetadata.avatarUrl) {
+          setAvatarPreview(userMetadata.avatarUrl);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching profile data:', error);
+      toast.error('Failed to load profile data');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle avatar upload and update avatar preview
+  const handleSaveProfile = async () => {
+    const { isValid, errors } = validateProfile();
+    
+    if (!isValid) {
+      // Show all validation errors
+      errors.forEach(error => {
+        toast.error(error);
+      });
+      return;
+    }
+
+    if (!user?.id) {
+      toast.error('User ID is missing. Please try logging in again.');
+      return;
+    }
+    
+    // Save current form state to restore in case of error
+    const currentProfileState = { ...profile };
+    const currentAvatarPreview = avatarPreview;
+    
+    setIsSaving(true);
+    
+    try {
+      // Create a copy of the profile to modify
+      const profileToUpdate = { ...profile };
+      
+      // Generate nameSlug if it doesn't exist
+      if (!profileToUpdate.nameSlug) {
+        profileToUpdate.nameSlug = slugify(profileToUpdate.fullName);
+      }
+      
+      // Set profile as complete
+      profileToUpdate.isProfileComplete = true;
+      
+      // Handle avatar upload if there's a new file
+      let avatarUrl = profileToUpdate.avatarUrl || '';
+      let uploadSuccessful = false;
+      
+      if (avatarFile) {
+        try {
+          const uploadResult = await moodMentorService.uploadProfileImage(user.id, avatarFile);
+          
+          if (uploadResult.success && uploadResult.url) {
+            uploadSuccessful = true;
+            avatarUrl = uploadResult.url;
+            console.log('Successfully uploaded avatar with URL:', avatarUrl);
+            
+            // Update user metadata with the new avatar URL
+            try {
+              await authService.updateUserMetadata({
+                avatar_url: avatarUrl,
+                full_name: profileToUpdate.fullName
+              });
+              console.log('Updated user metadata with avatar URL');
+            } catch (metadataError) {
+              console.warn('Failed to update user metadata, but continuing:', metadataError);
+            }
+          } else {
+            // If upload fails but we have an existing avatar URL, keep using it
+            uploadSuccessful = false;
+            if (!avatarUrl) {
+              // Only show warning if we don't have a fallback avatar
+              toast.warning('Profile picture upload failed, but your profile will still be saved.');
+            }
+            console.error('Avatar upload failed:', uploadResult.error);
+          }
+        } catch (uploadError) {
+          uploadSuccessful = false;
+          // If upload fails but we have an existing avatar URL, keep using it
+          if (!avatarUrl) {
+            // Only show warning if we don't have a fallback avatar
+            toast.warning('Profile picture upload failed, but your profile will still be saved.');
+          }
+          console.error('Exception during avatar upload:', uploadError);
+        }
+      } else if (!avatarUrl && user.user_metadata?.avatar_url) {
+        // If we don't have an avatar in the profile but one exists in user metadata, use that
+        avatarUrl = user.user_metadata.avatar_url;
+      }
+      
+      // Create a copy of the profile with the userId and avatar fields updated
+      const profileToSave = {
+        ...profileToUpdate,
+        userId: user.id,
+        avatarUrl: avatarUrl || profileToUpdate.avatarUrl // Use existing URL as fallback
+      };
+      
+      console.log('Saving profile with avatar URL:', profileToSave.avatarUrl);
+      
+      // Save the profile - the service handles converting to snake_case
+      const response = await moodMentorService.updateMoodMentorProfile(profileToSave);
+      
+      if (response.success && response.data) {
+        // If we successfully saved the profile but didn't already update the metadata above (in the avatar upload case),
+        // make sure the user metadata is updated to match the profile
+        if (!uploadSuccessful) {
+          try {
+            await authService.updateUserMetadata({
+              avatar_url: profileToSave.avatarUrl,
+              full_name: profileToSave.fullName
+            });
+            console.log('Updated user metadata to match profile');
+          } catch (metadataError) {
+            console.warn('Failed to update user metadata after profile save:', metadataError);
+          }
+        }
+        
+        toast.success('Profile saved successfully!');
+        
+        // Update the state with the saved profile
+        // Need to ensure all required fields are present
+        const updatedProfile: MentorProfile = {
+          ...profileToUpdate, // Keep existing data
+          ...(response.data as any), // Override with response data
+          // Ensure these required fields are present
+          phoneNumber: response.data.phoneNumber || profileToUpdate.phoneNumber,
+          isActive: response.data.isActive ?? profileToUpdate.isActive,
+          // Maintain arrays which might not be returned fully
+          languages: response.data.languages || profileToUpdate.languages || [],
+          therapyTypes: response.data.therapyTypes || profileToUpdate.therapyTypes || [],
+          specialties: response.data.specialties || profileToUpdate.specialties || [],
+          education: response.data.education || profileToUpdate.education || [],
+          experience: response.data.experience || profileToUpdate.experience || [],
+          // Ensure avatar URL is preserved properly
+          avatarUrl: response.data.avatarUrl || profileToSave.avatarUrl
+        };
+        
+        // First update the profile
+        setProfile(updatedProfile);
+        
+        // Update avatar preview if needed
+        if (uploadSuccessful && updatedProfile.avatarUrl) {
+          setAvatarPreview(updatedProfile.avatarUrl);
+        } else if (updatedProfile.avatarUrl && (!avatarPreview || avatarFile)) {
+          // If upload wasn't successful but we have an avatar URL, use it
+          setAvatarPreview(updatedProfile.avatarUrl);
+        }
+        
+        // Clear the avatar file
+        setAvatarFile(null);
+        
+        // Reset unsaved changes flag
+        setHasUnsavedChanges(false);
+        
+        // Exit edit mode if we're currently in it
+        if (isEditMode) {
+          setIsEditMode(false);
+        }
+      } else {
+        // Restore profile state to what it was before submitting
+        setProfile(currentProfileState);
+        setAvatarPreview(currentAvatarPreview);
+        
+        throw new Error(response.error || 'Failed to save profile');
+      }
+    } catch (error: any) {
+      console.error('Error saving profile:', error);
+      toast.error(error.message || 'Failed to save profile');
+      
+      // Ensure we keep the profile state as it was
+      setProfile(currentProfileState);
+      setAvatarPreview(currentAvatarPreview);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Modify the handleInputChange function to track changes
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     
-    // Debug logs to track changes to the bio field
-    if (name === 'bio') {
-      console.log('BIO FIELD CHANGED:', value);
-    }
+    setHasUnsavedChanges(true);
     
-    setProfile(prev => {
-      const updatedProfile = { ...prev, [name]: value };
+    // Create a copy of the profile with the new value
+    const updatedProfile = { ...profile, [name]: value };
       
       // Generate name_slug when full_name changes
-      if (name === 'full_name') {
-        updatedProfile.name_slug = value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-      }
-      
-      return updatedProfile;
-    });
+      if (name === 'fullName') {
+      updatedProfile.nameSlug = slugify(value);
+    }
+    
+    setProfile(updatedProfile);
   };
 
-  // Handle select change
-  const handleSelectChange = (name: string, value: string) => {
-    setProfile(prev => ({ ...prev, [name]: value }));
+  // Handle select value changes
+  const handleSelectChange = (name: string, value: string | boolean) => {
+    setHasUnsavedChanges(true);
+    if (typeof value === 'boolean') {
+      setProfile(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    } else {
+      setProfile(prev => ({
+        ...prev,
+        [name]: value
+      }));
+    }
   };
 
-  // Handle array select change (multi-select)
+  // Modify the handleArraySelectChange function to track changes
   const handleArraySelectChange = (name: string, value: string) => {
     setProfile(prev => {
-      const currentArray = prev[name as keyof MoodMentorProfile] as string[] || [];
-      if (currentArray.includes(value)) {
-        return { 
-          ...prev, 
-          [name]: currentArray.filter(item => item !== value) 
-        };
+      const currentArray = prev[name as keyof MentorProfile] as string[] || [];
+      
+      // Clone the array to ensure React state updates properly
+      let newArray = [...currentArray];
+      
+      // Toggle the value (add if not present, remove if present)
+      if (newArray.includes(value)) {
+        newArray = newArray.filter(item => item !== value);
       } else {
-        return { 
-          ...prev, 
-          [name]: [...currentArray, value] 
-        };
+        newArray.push(value);
       }
+      
+      // Debug log in development mode only
+      if (process.env.NODE_ENV === 'development' && name === 'therapyTypes') {
+        console.log(`Updated therapyTypes array: [${newArray.join(', ')}]`);
+      }
+      
+      // Create copy of state with the updated array
+      return { 
+          ...prev, 
+        [name]: newArray 
+        };
     });
+    
+    // Mark that we have unsaved changes
+    setHasUnsavedChanges(true);
   };
 
   // Handle avatar change
@@ -316,906 +655,869 @@ export default function ProfilePage() {
     });
   };
 
-  // Calculate profile completion percentage
-  const calculateProfileCompletion = () => {
-    const requiredFields = [
-      'full_name',
-      'email',
-      'bio',
-      'specialties',
-      'avatar_url',
-      'education',
-      'experience',
-      'languages',
-      'location',
-      'therapyTypes',
-      'specialty'
-    ];
+  // Create a handler for country change
+  const handleCountryChange = (country: string) => {
+    setProfile(prev => {
+      // Get prefix for the selected country
+      const prefix = countryPhonePrefixes[country] || '';
+
+      // Normalize existing phone number by removing all whitespace
+      const currentPhone = (prev.phoneNumber || '').replace(/\s+/g, '');
+      
+      // Determine if we should update the phone number
+      let phoneNumber = currentPhone;
+      
+      // If phone is empty or equals another country's prefix, replace it
+      const isPhoneEmpty = !currentPhone || currentPhone === '';
+      const isCurrentlyJustAPrefix = Object.values(countryPhonePrefixes).some(p => 
+        currentPhone === p || currentPhone === p.replace('+', '')
+      );
+      
+      if (isPhoneEmpty || isCurrentlyJustAPrefix) {
+        phoneNumber = prefix;
+        // Remove console.log for production
+        // console.log(`Applied country prefix ${prefix} for ${country}`);
+      }
+
+      return {
+        ...prev,
+        location: country,
+        phoneNumber
+      };
+    });
+  };
+  
+  // Add an explicit function to automatically prefill phone number with country code
+  const prefillPhoneWithCountryCode = () => {
+    if (!profile.location || profile.phoneNumber) return; // Don't override if already set
     
-    let completedFields = 0;
-    
-    requiredFields.forEach(field => {
-      const value = profile[field as keyof MoodMentorProfile];
-      if (value) {
-        if (Array.isArray(value)) {
-          if (value.length > 0) completedFields++;
-        } else if (typeof value === 'string') {
-          if (value.trim() !== '') completedFields++;
-        } else {
-          completedFields++;
+    const prefix = countryPhonePrefixes[profile.location] || '';
+    if (prefix) {
+      setProfile(prev => ({
+        ...prev,
+        phoneNumber: prefix
+      }));
+      
+      // Remove console.log for production
+      // console.log(`Automatically added country prefix ${prefix} for ${profile.location}`);
+    }
+  };
+  
+  // Fix the problematic useEffect that causes infinite loop
+  useEffect(() => {
+    // Only run this effect if we haven't initialized the phone yet
+    if (!phoneInitialized.current) {
+      // Mark as initialized immediately to prevent any possibility of re-runs
+      phoneInitialized.current = true;
+      
+      if (profile.location && !profile.phoneNumber) {
+        const prefix = countryPhonePrefixes[profile.location] || '';
+        if (prefix) {
+          setProfile(prev => {
+            // Only update if the phone number is still empty
+            if (prev.phoneNumber) return prev;
+              
+            return {
+              ...prev,
+              phoneNumber: prefix
+            };
+          });
         }
       }
-    });
-    
-    return Math.round((completedFields / requiredFields.length) * 100);
-  };
-
-  // Validate all required fields are filled
-  const isFormValid = () => {
-    if (
-      !profile.full_name?.trim() ||
-      !profile.email?.trim() ||
-      !profile.bio?.trim() ||
-      !profile.location?.trim() ||
-      !profile.specialty?.trim() ||
-      !profile.gender ||
-      profile.specialties?.length === 0 ||
-      profile.therapyTypes?.length === 0 ||
-      profile.languages?.length === 0 ||
-      !profile.education || profile.education.length === 0 ||
-      !profile.experience || profile.experience.length === 0
-    ) {
-      return false;
     }
+  }, [profile.location]); // Only depend on location
 
-    // Validate education fields
-    const isEducationValid = profile.education?.every(
-      edu => edu.degree?.trim() && edu.institution?.trim() && edu.year?.trim()
-    );
-    if (!isEducationValid) return false;
-
-    // Validate experience fields
-    const isExperienceValid = profile.experience?.every(
-      exp => exp.title?.trim() && exp.place?.trim() && exp.duration?.trim()
-    );
-    if (!isExperienceValid) return false;
-
-    return true;
+  // Add a function to check if a tab is complete
+  const isTabComplete = (tabName: string): boolean => {
+    switch (tabName) {
+      case 'personal':
+        return !!(profile.fullName && profile.email && profile.gender && 
+                 profile.location && profile.phoneNumber && profile.bio);
+      case 'professional':
+        return !!(profile.specialty && profile.therapyTypes?.length && 
+                 profile.languages?.length && profile.availabilityStatus);
+      case 'qualifications':
+        return !!(profile.education?.length && profile.education.every(edu => 
+                 edu.degree && edu.institution && edu.year) && 
+                 profile.experience?.length && profile.experience.every(exp => 
+                 exp.title && exp.place && exp.duration));
+      default:
+        return false;
+    }
   };
 
-  // Save profile
-  const handleSaveProfile = async () => {
-    if (!isFormValid()) {
-      toast.error('Please fill in all required fields');
+  // Add visual indicator of tab completion
+  const getTabCompletionState = (tabName: string) => {
+    const complete = isTabComplete(tabName);
+    return {
+      label: complete ? `${tabName.charAt(0).toUpperCase() + tabName.slice(1)} ✓` : tabName.charAt(0).toUpperCase() + tabName.slice(1),
+      className: complete ? 'text-green-600 font-medium' : ''
+    };
+  };
+
+  // Add a custom tab change handler
+  const handleTabChange = (newTab: string) => {
+    // If we have unsaved changes, show a confirmation prompt
+    if (hasUnsavedChanges) {
+      setAttemptingTabChange(newTab);
+      
+      // Ask the user if they want to save changes
+      if (window.confirm('You have unsaved changes. Would you like to save before switching tabs?')) {
+        // Save changes first, then change tab
+        handleSaveProfile().then(() => {
+          setActiveTab(newTab);
+          setAttemptingTabChange(null);
+          setHasUnsavedChanges(false);
+        });
+      } else {
+        // Discard changes and switch tabs
+        setActiveTab(newTab);
+        setAttemptingTabChange(null);
+        setHasUnsavedChanges(false);
+      }
+    } else {
+      // No unsaved changes, just switch tabs
+      setActiveTab(newTab);
+    }
+  };
+
+  // Add this function after the other helper functions in the component
+  const checkPermissions = async () => {
+    if (!user?.id) {
+      toast.error('User ID is missing. Please log in again.');
       return;
     }
     
-    // Debug log for bio field
-    console.log('BIO FIELD BEFORE SAVE:', {
-      inProfileState: profile.bio,
-      length: profile.bio?.length || 0,
-      trimmed: profile.bio?.trim() || '',
-      isEmpty: !profile.bio?.trim()
-    });
-    
     try {
-      setIsSaving(true);
+      // Perform a read test
+      const readResponse = await moodMentorService.getMoodMentorById(user.id);
       
-      // Upload avatar if changed
-      let avatarUrl = profile.avatar_url;
-      if (avatarFile) {
-        const { success, url, error } = await moodMentorService.uploadProfileImage(user?.id || '', avatarFile);
-        if (success && url) {
-          avatarUrl = url;
-        } else {
-          console.error('Error uploading avatar:', error);
-        }
+      if (!readResponse.success) {
+        toast.error(`Read permission error: ${readResponse.error || 'Unknown error'}`);
+      } else {
+        toast.success('You have read permission for profiles');
       }
       
-      // Generate name_slug from full_name if not present
-      const nameSlug = profile.name_slug || profile.full_name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-      
-      // Prepare data for update
-      // Ensure all fields needed for the mentor card display are included
-      const profileData = {
-        id: profile.id,
-        userId: user?.id,
-        name: profile.full_name,
-        full_name: profile.full_name,
-        title: profile.specialty || 'Mood Mentor',
-        specialties: profile.specialties || [],
-        bio: profile.bio || '',
-        experience: typeof profile.experience === 'object' 
-          ? profile.experience.reduce((total, exp) => total + parseInt(exp.duration) || 0, 0)
-          : 1,
-        // Include the full experience array for the profile page
-        experience_details: profile.experience || [],
-        // Include the education array
-        education: profile.education || [],
-        avatar_url: avatarUrl,
-        avatarUrl: avatarUrl, // Include both naming formats for consistency
-        location: profile.location,
-        gender: profile.gender,
-        languages: profile.languages,
-        hourlyRate: profile.consultation_fee || 0,
-        rating: 5.0, // Default for new mentors
-        reviewCount: 0, // Default for new mentors
-        availability: [], // Will be updated in availability settings
-        // Always set as completed since all required fields are validated by isFormValid()
-        profileCompleted: true,
-        name_slug: nameSlug,
-        nameSlug: nameSlug, // Include both naming formats for consistency
-        therapyTypes: profile.therapyTypes || [],
-        specialty: profile.specialty || 'Mental Health'
-      };
-      
-      // Debug log profile data bio field
-      console.log('BIO FIELD IN PROFILE DATA:', {
-        bioValue: profileData.bio,
-        bioLength: profileData.bio?.length || 0,
-        bioEmpty: !profileData.bio?.trim()
+      // Perform a write test (temporary update)
+      const writeResponse = await moodMentorService.updateMoodMentorProfile({
+        userId: user.id,
+        isActive: true
       });
       
-      console.log('Saving profile data:', profileData);
-      
-      // Call API to update profile
-      const { success, data, error } = await moodMentorService.updateMoodMentorProfile(profileData);
-      
-      if (success) {
-        // Save to localStorage for faster loading next time
-        try {
-          // Save with consistent key
-          localStorage.setItem('mentor_profile_data', JSON.stringify(profileData));
-          localStorage.setItem('test_mentor_profile', JSON.stringify(profileData));
-          console.log('Profile data saved to both localStorage keys', profileData);
-          
-          // Also sync the test mentor profile to ensure consistency
-          await moodMentorService.syncTestMentorProfile();
-        } catch (storageError) {
-          console.error('Error saving to localStorage:', storageError);
-        }
+      if (!writeResponse.success) {
+        toast.error(`Write permission error: ${writeResponse.error || 'Unknown error'}`);
         
-        toast.success('Profile updated successfully');
-        setIsEditMode(false);
-        
-        // Update profile state with new data
-        setProfile(prev => ({
-          ...prev,
-          avatar_url: avatarUrl,
-          name_slug: nameSlug,
-          profile_completion: 100 // Always set to 100% when saved
-        }));
-        
-        // Offer to view the public profile page
-        const shouldViewProfile = window.confirm('Profile saved successfully! Would you like to view your public profile?');
-        if (shouldViewProfile) {
-          // Navigate to the public profile page
-          navigate(`/mood-mentor/${nameSlug}`);
-        } else {
-          // Force reload the profile data to ensure everything is in sync
-          const response = await moodMentorService.getMoodMentorById(user?.id || '');
-          if (response.success && response.data) {
-            console.log('Updated profile data retrieved:', response.data);
-          }
+        if (writeResponse.error?.includes('permission denied')) {
+          toast.error('Permission denied - check Row Level Security policy');
         }
       } else {
-        console.error('Error updating profile:', error);
-        toast.error('Failed to update profile');
+        toast.success('You have write permission for profiles');
       }
-    } catch (err) {
-      console.error('Error in profile update:', err);
-      toast.error('An error occurred while updating your profile');
-    } finally {
-      setIsSaving(false);
+    } catch (error: any) {
+      toast.error(`Permission check failed: ${error.message}`);
     }
   };
 
-  // Toggle edit mode
+  // Add a unified error handler function
+  const handleError = (error: any, context: string, detailMessage?: string): string => {
+    const errorMessage = error?.message || 'An unknown error occurred';
+    
+    // Display error to user
+    toast.error(`${context}: ${errorMessage}`);
+    
+    // Add to debug log with more details
+    console.error(`${context} Error: ${errorMessage}`, detailMessage || error?.stack);
+    
+    return errorMessage;
+  };
+
+  // Use a useEffect to fetch profile data when component mounts
+  useEffect(() => {
+    fetchProfileData();
+  }, [user]);
+
+  // Toggle edit mode with confirmation
   const toggleEditMode = () => {
-    setIsEditMode(!isEditMode);
+    // If we're exiting edit mode and have unsaved changes, confirm
+    if (isEditMode && hasUnsavedChanges) {
+      const shouldSave = window.confirm('You have unsaved changes. Would you like to save them?');
+      
+      if (shouldSave) {
+        // Save changes and then turn off edit mode
+        handleSaveProfile().then(() => {
+          // setIsEditMode is handled in handleSaveProfile
+        }).catch(() => {
+          // If saving fails, keep edit mode on
+        });
+      } else {
+        // Reset to the last saved state by re-fetching
+        fetchProfileData();
+        setHasUnsavedChanges(false);
+        setIsEditMode(false);
+      }
+    } else {
+      // If we're starting to edit a new profile that's not complete, 
+      // we should automatically set it to edit mode without toggle
+      if (!isEditMode && !profile.isProfileComplete) {
+        setIsEditMode(true);
+      } else {
+        // Toggle edit mode normally for completed profiles
+        setIsEditMode(!isEditMode);
+      }
+    }
   };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Profile Settings</h1>
-            <p className="text-muted-foreground">
-              Manage your profile information and credentials
+            <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+            <p className="text-sm text-muted-foreground">
+              Manage your profile information and visibility
             </p>
-            <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-md text-amber-800 text-sm">
-              <Info className="inline-block h-4 w-4 mr-2" />
-              All fields are required to complete your profile. Your profile must be complete before you can be visible to patients.
             </div>
+          <div className="flex items-center gap-2">
+            {isEditMode ? (
+              <>
+                <Button 
+                  onClick={toggleEditMode}
+                  variant="outline" 
+                  disabled={isLoading || isSaving}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleSaveProfile} 
+                  disabled={isLoading || isSaving || !isFormValid()}
+                >
+                  {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Changes
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button 
+                  onClick={toggleEditMode} 
+                  disabled={isLoading || isSaving}
+                >
+                  Edit Profile
+                </Button>
+              </>
+            )}
           </div>
-          {isEditMode ? (
-            <div className="space-x-2">
-              <Button 
-                variant="outline" 
-                onClick={() => setIsEditMode(false)}
-                disabled={isSaving}
-              >
-                Cancel
-              </Button>
-              <Button 
-                onClick={handleSaveProfile} 
-                disabled={isSaving || isLoading || !isFormValid()}
-              >
-                {isSaving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : 'Save Changes'}
-              </Button>
-            </div>
-          ) : (
-            <Button 
-              onClick={toggleEditMode} 
-              disabled={isLoading}
-            >
-              Edit Profile
-            </Button>
-          )}
         </div>
         
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center min-h-[400px]">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="mt-4 text-muted-foreground">Loading profile data...</p>
+          <div className="flex h-[400px] items-center justify-center">
+            <Loader2 className="h-10 w-10 animate-spin text-primary" />
           </div>
         ) : (
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-            <TabsList className="w-full bg-muted border-b rounded-none justify-start h-auto p-0">
-              <TabsTrigger
-                value="personal"
-                className="rounded-none px-4 py-2 h-10 data-[state=active]:border-b-2 data-[state=active]:border-primary"
-              >
-                Personal Info
-              </TabsTrigger>
-              <TabsTrigger
-                value="professional"
-                className="rounded-none px-4 py-2 h-10 data-[state=active]:border-b-2 data-[state=active]:border-primary"
-              >
-                Professional Details
-              </TabsTrigger>
-              <TabsTrigger
-                value="qualifications"
-                className="rounded-none px-4 py-2 h-10 data-[state=active]:border-b-2 data-[state=active]:border-primary"
-              >
-                Qualifications
-              </TabsTrigger>
+          <Card className="mt-6">
+            <Tabs value={activeTab} onValueChange={handleTabChange}>
+              <TabsList className="grid w-full md:w-auto grid-cols-3">
+                <TabsTrigger value="personal">Personal Info</TabsTrigger>
+                <TabsTrigger value="professional">Professional</TabsTrigger>
+                <TabsTrigger value="settings">Settings</TabsTrigger>
             </TabsList>
             
-            {/* Personal Info Tab */}
-            <TabsContent value="personal" className="space-y-6">
-              <Card>
+              <TabsContent value="personal" className="space-y-4">
                 <CardHeader>
-                  <CardTitle>Personal Information</CardTitle>
+                  <CardTitle className="text-xl">Personal Information</CardTitle>
                   <CardDescription>
-                    Update your personal details and profile picture
+                    Update your personal information and contact details
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Avatar Upload */}
-                  <div className="flex flex-col sm:flex-row gap-6 items-start sm:items-center">
+                <CardContent>
+                  <div className="grid gap-6">
+                    <div className="flex flex-col items-center sm:flex-row sm:items-start gap-4">
                     <div className="relative">
                       <Avatar className="h-24 w-24">
-                        <AvatarImage src={avatarPreview || ''} alt="Profile picture" />
-                        <AvatarFallback className="text-lg">
-                          {profile.full_name
-                            .split(' ')
-                            .map(n => n[0])
-                            .join('')
-                            .toUpperCase()}
+                          <AvatarImage 
+                            src={avatarPreview || profile.avatarUrl || '/avatars/default-avatar.png'} 
+                            alt={profile.fullName}
+                          />
+                          <AvatarFallback>
+                            {profile.fullName?.charAt(0) || '?'}
                         </AvatarFallback>
                       </Avatar>
-                    </div>
-                    <div className="space-y-2 flex-1">
-                      <Label htmlFor="avatar" className="text-sm font-medium">
-                        Profile Picture
-                      </Label>
-                      <div 
-                        className={`border-2 border-dashed ${!isEditMode ? 'border-gray-200 cursor-default' : 'border-gray-300 cursor-pointer hover:border-primary transition-colors'} rounded-lg p-6 flex flex-col items-center justify-center`}
-                        onClick={() => isEditMode && document.getElementById('avatar')?.click()}
-                      >
-                        <Upload className={`h-10 w-10 ${!isEditMode ? 'text-gray-300' : 'text-gray-400'} mb-2`} />
-                        <p className="text-sm font-medium">{isEditMode ? "Click to upload" : "Profile picture"}</p>
                         {isEditMode && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            JPG, PNG or GIF. Maximum size 2MB.
-                          </p>
-                        )}
-                        <Input
-                          id="avatar"
+                          <div className="absolute -bottom-2 -right-2">
+                            <label
+                              htmlFor="avatar-upload"
+                              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full bg-primary shadow-sm hover:bg-primary/90"
+                            >
+                              <Upload className="h-4 w-4 text-primary-foreground" />
+                              <span className="sr-only">Upload new photo</span>
+                              <input
+                                id="avatar-upload"
                           type="file"
                           accept="image/*"
-                          onChange={handleAvatarChange}
                           className="hidden"
-                          disabled={!isEditMode}
+                                onChange={handleAvatarChange}
                         />
+                            </label>
                       </div>
+                        )}
+                      </div>
+                      <div className="space-y-1 text-center sm:text-left">
+                        <h3 className="text-2xl font-semibold">{profile.fullName}</h3>
+                        <div className="text-sm text-muted-foreground">{profile.email}</div>
+                        <div className="flex items-center gap-2 text-sm">
+                          <Badge 
+                            variant={profile.isProfileComplete ? "default" : "outline"} 
+                            className="mt-1"
+                          >
+                            {profile.isProfileComplete ? (
+                              <><UserCheck className="mr-1 h-3 w-3" /> Verified</>
+                            ) : (
+                              'Incomplete'
+                            )}
+                          </Badge>
+                          {profile.specialty && (
+                            <Badge 
+                              variant="secondary" 
+                              className="mt-1"
+                            >
+                              <Medal className="mr-1 h-3 w-3" />
+                              {profile.specialty}
+                            </Badge>
+                          )}
+                        </div>
                     </div>
                   </div>
                   
-                  <Separator />
-                  
-                  {/* Basic Info */}
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
-                      <Label htmlFor="full_name">Full Name</Label>
+                        <Label htmlFor="fullName">Full Name</Label>
                       <Input
-                        id="full_name"
-                        name="full_name"
-                        value={profile.full_name}
+                        id="fullName"
+                        name="fullName"
+                          value={profile.fullName}
                         onChange={handleInputChange}
+                          disabled={!isEditMode || isLoading}
                         placeholder="Your full name"
-                        readOnly={!isEditMode}
-                        className={!isEditMode ? "bg-gray-100" : ""}
                       />
-                      {!profile.full_name?.trim() && (
-                        <p className="text-xs text-red-500 mt-1">*Required</p>
-                      )}
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="email">Email</Label>
+                        <Label htmlFor="email">Email</Label>
                       <Input
                         id="email"
                         name="email"
-                        value={profile.email}
-                        onChange={handleInputChange}
-                        placeholder="Your email address"
-                        type="email"
-                        readOnly
-                        className="bg-gray-100"
-                      />
-                      {!profile.email?.trim() && (
-                        <p className="text-xs text-red-500 mt-1">*Required</p>
-                      )}
+                          value={profile.email}
+                          disabled={true} // Email can't be changed here
+                          placeholder="Your email address"
+                        />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="location">Country</Label>
-                      <Input
-                        id="location"
-                        name="location"
-                        value={profile.location || ''}
-                        onChange={handleInputChange}
-                        placeholder="Your country"
-                        readOnly={!isEditMode}
-                        className={!isEditMode ? "bg-gray-100" : ""}
-                      />
-                      {!profile.location?.trim() && (
-                        <p className="text-xs text-red-500 mt-1">*Required</p>
-                      )}
+                        <Label htmlFor="phoneNumber">Phone Number</Label>
+                        <Input
+                          id="phoneNumber"
+                          name="phoneNumber"
+                          value={profile.phoneNumber}
+                          onChange={handleInputChange}
+                          disabled={!isEditMode || isLoading}
+                          placeholder="e.g. +234 800 123 4567"
+                        />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="gender">Gender</Label>
+                        <Label htmlFor="gender">Gender</Label>
                       <Select
-                        value={profile.gender || ''}
+                          value={profile.gender}
                         onValueChange={(value) => handleSelectChange('gender', value)}
-                        disabled={!isEditMode}
+                          disabled={!isEditMode || isLoading}
                       >
-                        <SelectTrigger id="gender">
+                          <SelectTrigger id="gender">
                           <SelectValue placeholder="Select gender" />
                         </SelectTrigger>
                         <SelectContent>
-                          {genderOptions.map((gender) => (
-                            <SelectItem key={gender} value={gender}>
-                              {gender}
-                            </SelectItem>
-                          ))}
+                            {genderOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))}
                         </SelectContent>
                       </Select>
-                      {!profile.gender && (
-                        <p className="text-xs text-red-500 mt-1">*Required</p>
-                      )}
                     </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="bio">Bio</Label>
-                      <Textarea
-                        id="bio"
-                        name="bio"
-                        value={profile.bio || ''}
-                        onChange={handleInputChange}
-                        placeholder="Tell us about yourself"
-                        rows={5}
-                        readOnly={!isEditMode}
-                        className={!isEditMode ? "bg-gray-100" : ""}
-                      />
-                      <p className="text-sm text-muted-foreground">
-                        This will be displayed on your public profile.
-                      </p>
-                      {!profile.bio?.trim() && (
-                        <p className="text-xs text-red-500 mt-1">*Required</p>
-                      )}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-            
-            {/* Professional Details Tab */}
-            <TabsContent value="professional" className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Professional Details</CardTitle>
-                  <CardDescription>
-                    Set your professional specialties and areas of expertise
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Specialty */}
-                  <div className="space-y-2">
-                    <Label htmlFor="specialty">Primary Specialty</Label>
+                    <div className="space-y-2">
+                        <Label htmlFor="location">Location</Label>
                     <Select
-                      value={profile.specialty || ''}
-                      onValueChange={(value) => handleSelectChange('specialty', value)}
-                      disabled={!isEditMode}
-                    >
-                      <SelectTrigger id="specialty">
-                        <SelectValue placeholder="Select a specialty" />
+                          value={profile.location}
+                          onValueChange={(value) => handleCountryChange(value)}
+                          disabled={!isEditMode || isLoading}
+                        >
+                          <SelectTrigger id="location">
+                            <SelectValue placeholder="Select country" />
                       </SelectTrigger>
                       <SelectContent>
-                        {specialtyOptions.map((specialty) => (
-                          <SelectItem key={specialty} value={specialty}>
-                            {specialty}
+                            {countryOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
-                    {!profile.specialty && (
-                      <p className="text-xs text-red-500 mt-1">*Required</p>
-                    )}
                   </div>
-                  
-                  {/* Specialties */}
                   <div className="space-y-2">
-                    <Label>Areas of Expertise</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {specialtyOptions.map((specialty) => (
-                        <div 
-                          key={specialty}
-                          className={`
-                            flex items-center p-2 rounded-md ${isEditMode ? "cursor-pointer" : "cursor-default"} transition-colors
-                            ${profile.specialties?.includes(specialty) 
-                              ? 'bg-primary/10 border-primary/30' 
-                              : 'bg-muted/40 hover:bg-muted/60'}
-                            border
-                          `}
-                          onClick={() => isEditMode && handleArraySelectChange('specialties', specialty)}
-                        >
-                          <div className={`
-                            w-4 h-4 rounded-sm mr-2 flex items-center justify-center
-                            ${profile.specialties?.includes(specialty) 
-                              ? 'bg-primary text-primary-foreground' 
-                              : 'bg-muted border'}
-                          `}>
-                            {profile.specialties?.includes(specialty) && <UserCheck className="h-3 w-3" />}
-                          </div>
-                          <span className="text-sm">{specialty}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {(!profile.specialties || profile.specialties.length === 0) && (
-                      <p className="text-xs text-red-500 mt-1">*Please select at least one area of expertise</p>
-                    )}
-                  </div>
-                  
-                  {/* Therapy Types */}
-                  <div className="space-y-2">
-                    <Label>Therapy Methods Used</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {therapyOptions.map((therapy) => (
-                        <div 
-                          key={therapy}
-                          className={`
-                            flex items-center p-2 rounded-md ${isEditMode ? "cursor-pointer" : "cursor-default"} transition-colors
-                            ${profile.therapyTypes?.includes(therapy) 
-                              ? 'bg-primary/10 border-primary/30' 
-                              : 'bg-muted/40 hover:bg-muted/60'}
-                            border
-                          `}
-                          onClick={() => isEditMode && handleArraySelectChange('therapyTypes', therapy)}
-                        >
-                          <div className={`
-                            w-4 h-4 rounded-sm mr-2 flex items-center justify-center
-                            ${profile.therapyTypes?.includes(therapy) 
-                              ? 'bg-primary text-primary-foreground' 
-                              : 'bg-muted border'}
-                          `}>
-                            {profile.therapyTypes?.includes(therapy) && <UserCheck className="h-3 w-3" />}
-                          </div>
-                          <span className="text-sm">{therapy}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {(!profile.therapyTypes || profile.therapyTypes.length === 0) && (
-                      <p className="text-xs text-red-500 mt-1">*Please select at least one therapy method</p>
-                    )}
-                  </div>
-                  
-                  {/* Languages */}
-                  <div className="space-y-2">
-                    <Label>Languages Spoken</Label>
-                    <div className="relative">
-                      <div 
-                        className={`p-2 border rounded-md flex justify-between ${isEditMode ? "cursor-pointer" : "cursor-default"} items-center ${!isEditMode ? "bg-gray-100" : ""}`}
-                        onClick={() => isEditMode && setIsLanguageDropdownOpen(!isLanguageDropdownOpen)}
-                      >
-                        <div className="flex flex-wrap gap-1">
-                          {profile.languages && profile.languages.length > 0 ? (
-                            profile.languages.map((lang, i) => (
-                              <Badge key={lang} className="bg-primary/10 text-primary border-primary/30">
-                                {lang}{i < profile.languages!.length - 1 ? ',' : ''}
-                              </Badge>
-                            ))
-                          ) : (
-                            <span className="text-gray-500">Select languages...</span>
-                          )}
-                        </div>
-                        <ChevronDown className={`h-4 w-4 transition-transform ${isLanguageDropdownOpen ? 'transform rotate-180' : ''}`} />
-                      </div>
-                      
-                      {isLanguageDropdownOpen && (
-                        <div className="absolute z-10 mt-1 w-full bg-white border rounded-md shadow-lg max-h-60 overflow-y-auto">
-                          <div className="p-2 grid grid-cols-1 gap-1">
-                            {languageOptions.map((language) => (
-                              <div 
-                                key={language}
-                                className="flex items-center p-2 hover:bg-gray-50 rounded cursor-pointer"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleArraySelectChange('languages', language);
-                                }}
+                        <Label htmlFor="languages">Languages Spoken</Label>
+                        <div className="relative">
+                          <DropdownMenu
+                            open={isLanguageDropdownOpen}
+                            onOpenChange={setIsLanguageDropdownOpen}
+                          >
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="outline"
+                                role="combobox"
+                                disabled={!isEditMode || isLoading}
+                                className="w-full justify-between font-normal"
                               >
-                                <div className={`
-                                  w-4 h-4 rounded-sm mr-2 flex items-center justify-center
-                                  ${profile.languages?.includes(language) 
-                                    ? 'bg-primary text-primary-foreground' 
-                                    : 'bg-muted border'}
-                                `}>
-                                  {profile.languages?.includes(language) && <Check className="h-3 w-3" />}
-                                </div>
-                                <span className="text-sm">{language}</span>
-                              </div>
+                                {profile.languages && profile.languages.length > 0
+                                  ? `${profile.languages.length} Selected`
+                                  : "Select languages"}
+                                <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent className="w-full max-h-[calc(var(--radix-dropdown-menu-content-available-height))] overflow-auto">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-1 p-1">
+                                {languageOptions.map((language) => (
+                                  <div 
+                                    key={language} 
+                                    className="flex items-center space-x-2 px-2 py-1 hover:bg-accent hover:text-accent-foreground rounded-sm cursor-pointer"
+                                    onClick={() => handleArraySelectChange('languages', language)}
+                                  >
+                                    <div className={`h-4 w-4 border rounded-sm ${
+                                      profile.languages?.includes(language) ? 'bg-primary border-primary flex items-center justify-center' : 'border-input'
+                                    }`}>
+                                      {profile.languages?.includes(language) && (
+                                        <Check className="h-3 w-3 text-white" />
+                      )}
+                    </div>
+                                    <span>{language}</span>
+                  </div>
+                                ))}
+                          </div>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {profile.languages?.map((language) => (
+                            <Badge key={language} variant="secondary" className="flex items-center gap-1">
+                              <Languages className="h-3 w-3" />
+                              {language}
+                                {isEditMode && (
+                                  <button
+                                  type="button"
+                                  className="h-3 w-3 rounded-full"
+                                  onClick={() => handleArraySelectChange('languages', language)}
+                                >
+                                  <X className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </Badge>
                             ))}
                           </div>
                         </div>
-                      )}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">Please select all languages you speak fluently</p>
-                    {(!profile.languages || profile.languages.length === 0) && (
-                      <p className="text-xs text-red-500">*Please select at least one language</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle>Session Settings</CardTitle>
-                  <CardDescription>
-                    Configure your session and consultation settings
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {/* Consultation Fee - Disabled for now */}
-                  <div className="mb-6">
-                    <div className="flex items-center justify-between">
-                      <Label htmlFor="consultation_fee" className="mb-2 block">Consultation Fee</Label>
-                      <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50">Currently Free</Badge>
-                    </div>
-                    <div className="relative">
-                      <Input
-                        id="consultation_fee"
-                        name="consultation_fee"
-                        type="number"
-                        value={0}
-                        disabled={true}
-                        className="pl-8 bg-gray-50 cursor-not-allowed"
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="bio">Bio</Label>
+                      <Textarea
+                        id="bio"
+                        name="bio"
+                        value={profile.bio}
+                        onChange={handleInputChange}
+                        disabled={!isEditMode || isLoading}
+                        placeholder="Tell patients a bit about yourself..."
+                        className="min-h-[100px]"
                       />
-                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                        <span className="text-gray-500">$</span>
-                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1 flex items-center">
-                      <Info className="h-3 w-3 mr-1" />
-                      Sessions are currently free. This may change in the future.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="availability_status">Availability Status</Label>
-                    <Select
-                      value={profile.availability_status || 'Available'}
-                      onValueChange={(value) => handleSelectChange('availability_status', value)}
-                      disabled={!isEditMode}
-                    >
-                      <SelectTrigger id="availability_status">
-                        <SelectValue placeholder="Select status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Available">Available</SelectItem>
-                        <SelectItem value="Limited Availability">Limited Availability</SelectItem>
-                        <SelectItem value="Unavailable">Unavailable</SelectItem>
-                      </SelectContent>
-                    </Select>
                   </div>
                 </CardContent>
-              </Card>
             </TabsContent>
             
-            {/* Qualifications Tab */}
-            <TabsContent value="qualifications" className="space-y-6">
-              <Card>
+              <TabsContent value="professional" className="space-y-4">
                 <CardHeader>
-                  <CardTitle>Education</CardTitle>
+                  <CardTitle className="text-xl">Professional Information</CardTitle>
                   <CardDescription>
-                    Add your educational background and qualifications
+                    Add your professional credentials, experience and specialties
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-6">
-                  {profile.education?.map((edu, index) => (
-                    <div key={index} className="border rounded-md p-4 space-y-4">
-                      <div className="flex justify-between items-center">
-                        <h4 className="font-medium">Education #{index + 1}</h4>
-                        {profile.education && profile.education.length > 1 && isEditMode && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeEducation(index)}
-                          >
-                            Remove
-                          </Button>
-                        )}
+                <CardContent>
+                  <div className="grid gap-6">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="specialty">Primary Specialty</Label>
+                        <Input
+                          id="specialty"
+                          name="specialty"
+                          value={profile.specialty}
+                          onChange={handleInputChange}
+                          disabled={!isEditMode || isLoading}
+                          placeholder="e.g. Clinical Psychologist"
+                        />
                       </div>
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label htmlFor={`education-degree-${index}`}>Degree</Label>
-                          <Input
-                            id={`education-degree-${index}`}
-                            value={edu.degree}
-                            onChange={(e) => updateEducation(index, 'degree', e.target.value)}
-                            placeholder="e.g., Master of Psychology"
-                            readOnly={!isEditMode}
-                            className={!isEditMode ? "bg-gray-100" : ""}
-                          />
-                          {!edu.degree?.trim() && (
-                            <p className="text-xs text-red-500">*Required</p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`education-institution-${index}`}>Institution</Label>
-                          <Input
-                            id={`education-institution-${index}`}
-                            value={edu.institution}
-                            onChange={(e) => updateEducation(index, 'institution', e.target.value)}
-                            placeholder="e.g., University of California"
-                            readOnly={!isEditMode}
-                            className={!isEditMode ? "bg-gray-100" : ""}
-                          />
-                          {!edu.institution?.trim() && (
-                            <p className="text-xs text-red-500">*Required</p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`education-year-${index}`}>Year</Label>
-                          <Input
-                            id={`education-year-${index}`}
-                            value={edu.year}
-                            onChange={(e) => updateEducation(index, 'year', e.target.value)}
-                            placeholder="e.g., 2015"
-                            readOnly={!isEditMode}
-                            className={!isEditMode ? "bg-gray-100" : ""}
-                          />
-                          {!edu.year?.trim() && (
-                            <p className="text-xs text-red-500">*Required</p>
-                          )}
-                        </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="sessionDuration">Typical Session Duration</Label>
+                        <Select
+                          value={profile.sessionDuration}
+                          onValueChange={(value) => handleSelectChange('sessionDuration', value)}
+                          disabled={!isEditMode || isLoading}
+                        >
+                          <SelectTrigger id="sessionDuration">
+                            <SelectValue placeholder="Select session length" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="30 Min">30 Minutes</SelectItem>
+                            <SelectItem value="45 Min">45 Minutes</SelectItem>
+                            <SelectItem value="60 Min">60 Minutes</SelectItem>
+                            <SelectItem value="90 Min">90 Minutes</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
-                  ))}
-                  <Button
-                    variant="outline"
-                    onClick={addEducation}
-                    className="w-full"
-                    disabled={!isEditMode}
-                  >
-                    <GraduationCap className="mr-2 h-4 w-4" />
-                    Add Education
-                  </Button>
-                  {(!profile.education || profile.education.length === 0) && (
-                    <p className="text-xs text-red-500 mt-2">*At least one education entry is required</p>
-                  )}
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle>Experience</CardTitle>
-                  <CardDescription>
-                    Add your professional experience and work history
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  {profile.experience?.map((exp, index) => (
-                    <div key={index} className="border rounded-md p-4 space-y-4">
-                      <div className="flex justify-between items-center">
-                        <h4 className="font-medium">Experience #{index + 1}</h4>
-                        {profile.experience && profile.experience.length > 1 && isEditMode && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => removeExperience(index)}
-                          >
-                            Remove
-                          </Button>
+
+                    {/* Education Section */}
+                    <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <Label>Education</Label>
+                        {isEditMode && (
+                      <Button
+                            type="button"
+                        variant="outline"
+                        size="sm"
+                            onClick={addEducation}
+                            disabled={isLoading}
+                      >
+                        Add Education
+                      </Button>
                         )}
-                      </div>
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <Label htmlFor={`experience-title-${index}`}>Title</Label>
-                          <Input
-                            id={`experience-title-${index}`}
-                            value={exp.title}
-                            onChange={(e) => updateExperience(index, 'title', e.target.value)}
-                            placeholder="e.g., Clinical Psychologist"
-                            readOnly={!isEditMode}
-                            className={!isEditMode ? "bg-gray-100" : ""}
-                          />
-                          {!exp.title?.trim() && (
-                            <p className="text-xs text-red-500">*Required</p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`experience-place-${index}`}>Place</Label>
-                          <Input
-                            id={`experience-place-${index}`}
-                            value={exp.place}
-                            onChange={(e) => updateExperience(index, 'place', e.target.value)}
-                            placeholder="e.g., City Medical Center"
-                            readOnly={!isEditMode}
-                            className={!isEditMode ? "bg-gray-100" : ""}
-                          />
-                          {!exp.place?.trim() && (
-                            <p className="text-xs text-red-500">*Required</p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor={`experience-duration-${index}`}>Duration</Label>
-                          <Input
-                            id={`experience-duration-${index}`}
-                            value={exp.duration}
-                            onChange={(e) => updateExperience(index, 'duration', e.target.value)}
-                            placeholder="e.g., 2018-2022"
-                            readOnly={!isEditMode}
-                            className={!isEditMode ? "bg-gray-100" : ""}
-                          />
-                          {!exp.duration?.trim() && (
-                            <p className="text-xs text-red-500">*Required</p>
-                          )}
-                        </div>
+                    </div>
+                      <div className="space-y-3">
+                      {profile.education?.map((edu, index) => (
+                          <div key={index} className="grid gap-3 rounded-lg border p-3">
+                            <div className="grid gap-2 md:grid-cols-3">
+                              <div className="space-y-1">
+                                <Label htmlFor={`edu-degree-${index}`}>Degree</Label>
+                                <Input
+                                  id={`edu-degree-${index}`}
+                                  value={edu.degree}
+                                  onChange={(e) => updateEducation(index, 'degree', e.target.value)}
+                                  disabled={!isEditMode || isLoading}
+                                  placeholder="e.g. Ph.D in Psychology"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`edu-institution-${index}`}>Institution</Label>
+                                <Input
+                                  id={`edu-institution-${index}`}
+                                  value={edu.institution}
+                                  onChange={(e) => updateEducation(index, 'institution', e.target.value)}
+                                  disabled={!isEditMode || isLoading}
+                                  placeholder="e.g. University of Nairobi"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`edu-year-${index}`}>Year</Label>
+                                <Input
+                                  id={`edu-year-${index}`}
+                                  value={edu.year}
+                                  onChange={(e) => updateEducation(index, 'year', e.target.value)}
+                                  disabled={!isEditMode || isLoading}
+                                  placeholder="e.g. 2018"
+                                />
+                              </div>
+                            </div>
+                            {isEditMode && (
+                                  <Button
+                                type="button"
+                                    variant="destructive"
+                                    size="sm"
+                                className="w-auto self-end"
+                                onClick={() => removeEducation(index)}
+                                disabled={isLoading || profile.education.length <= 1}
+                                  >
+                                    Remove
+                                  </Button>
+                              )}
+                            </div>
+                      ))}
+                    </div>
+                  </div>
+
+                    {/* Work Experience Section */}
+                    <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <Label>Work Experience</Label>
+                        {isEditMode && (
+                      <Button
+                            type="button"
+                        variant="outline"
+                        size="sm"
+                            onClick={addExperience}
+                            disabled={isLoading}
+                      >
+                        Add Experience
+                      </Button>
+                        )}
+                    </div>
+                      <div className="space-y-3">
+                      {profile.experience?.map((exp, index) => (
+                          <div key={index} className="grid gap-3 rounded-lg border p-3">
+                            <div className="grid gap-2 md:grid-cols-3">
+                              <div className="space-y-1">
+                                <Label htmlFor={`exp-title-${index}`}>Title</Label>
+                                <Input
+                                  id={`exp-title-${index}`}
+                                  value={exp.title}
+                                  onChange={(e) => updateExperience(index, 'title', e.target.value)}
+                                  disabled={!isEditMode || isLoading}
+                                  placeholder="e.g. Clinical Psychologist"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`exp-place-${index}`}>Place</Label>
+                                <Input
+                                  id={`exp-place-${index}`}
+                                  value={exp.place}
+                                  onChange={(e) => updateExperience(index, 'place', e.target.value)}
+                                  disabled={!isEditMode || isLoading}
+                                  placeholder="e.g. Nairobi Hospital"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`exp-duration-${index}`}>Duration</Label>
+                                <Input
+                                  id={`exp-duration-${index}`}
+                                  value={exp.duration}
+                                  onChange={(e) => updateExperience(index, 'duration', e.target.value)}
+                                  disabled={!isEditMode || isLoading}
+                                  placeholder="e.g. 2018-Present"
+                                />
+                              </div>
+                            </div>
+                            {isEditMode && (
+                                  <Button
+                                type="button"
+                                    variant="destructive"
+                                    size="sm"
+                                className="w-auto self-end"
+                                onClick={() => removeExperience(index)}
+                                disabled={isLoading || profile.experience.length <= 1}
+                                  >
+                                    Remove
+                                  </Button>
+                              )}
+                            </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                  <Button
-                    variant="outline"
-                    onClick={addExperience}
-                    className="w-full"
-                    disabled={!isEditMode}
-                  >
-                    <Briefcase className="mr-2 h-4 w-4" />
-                    Add Experience
-                  </Button>
-                  {(!profile.experience || profile.experience.length === 0) && (
-                    <p className="text-xs text-red-500 mt-2">*At least one experience entry is required</p>
-                  )}
+
+                    <div className="space-y-2">
+                      <Label>Therapy Types</Label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {therapyOptions.map((therapy) => (
+                          <div 
+                            key={therapy} 
+                            className={`flex items-center space-x-2 p-3 rounded-lg border cursor-pointer transition-colors ${
+                              profile.therapyTypes?.includes(therapy) 
+                                ? 'border-primary bg-primary/10'
+                                : 'border-input hover:bg-accent hover:text-accent-foreground'
+                            } ${!isEditMode && 'pointer-events-none'}`}
+                            onClick={() => isEditMode && handleArraySelectChange('therapyTypes', therapy)}
+                          >
+                            {therapy}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </CardContent>
-              </Card>
             </TabsContent>
-          </Tabs>
+            
+              <TabsContent value="settings" className="space-y-4">
+                <CardHeader>
+                  <CardTitle className="text-xl">Settings</CardTitle>
+                  <CardDescription>
+                    Manage your account settings
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-6">
+                    {/* Account Status */}
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-medium">Account Status</h3>
+                      <div className="flex items-center justify-between border p-4 rounded-lg">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium">Availability Status</div>
+                          <div className="text-sm text-muted-foreground">
+                            Set your status to control whether patients can book sessions with you
+                          </div>
+                        </div>
+                        <div>
+                          <Select
+                            value={profile.availabilityStatus}
+                            onValueChange={(value) => handleSelectChange('availabilityStatus', value)}
+                            disabled={!isEditMode || isLoading}
+                          >
+                            <SelectTrigger className="w-40">
+                              <SelectValue placeholder="Select status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="available">Available</SelectItem>
+                              <SelectItem value="unavailable">Unavailable</SelectItem>
+                              <SelectItem value="busy">Busy</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between border p-4 rounded-lg">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium">Account Active</div>
+                          <div className="text-sm text-muted-foreground">
+                            Enable or disable your account visibility on the platform
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            className={`px-3 py-1 rounded-md ${
+                              profile.isActive
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground'
+                            }`}
+                            onClick={() => isEditMode && handleSelectChange('isActive', true)}
+                            disabled={!isEditMode || isLoading}
+                          >
+                            Active
+                          </button>
+                          <button
+                            className={`px-3 py-1 rounded-md ${
+                              !profile.isActive
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground'
+                            }`}
+                            onClick={() => isEditMode && handleSelectChange('isActive', false)}
+                            disabled={!isEditMode || isLoading}
+                          >
+                            Inactive
+                          </button>
+              </div>
+                      </div>
+                    </div>
+                    
+                    {/* Payment Settings */}
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-medium">Payment Settings</h3>
+                      <div className="flex items-center justify-between border p-4 rounded-lg">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium">Free Consultation</div>
+                          <div className="text-sm text-muted-foreground">
+                            Offer free initial consultations to patients
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            className={`px-3 py-1 rounded-md ${
+                              profile.isFree
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground'
+                            }`}
+                            onClick={() => isEditMode && handleSelectChange('isFree', true)}
+                            disabled={!isEditMode || isLoading}
+                          >
+                            Yes
+                          </button>
+                          <button
+                            className={`px-3 py-1 rounded-md ${
+                              !profile.isFree
+                                ? 'bg-primary text-primary-foreground'
+                                : 'bg-muted text-muted-foreground'
+                            }`}
+                            onClick={() => isEditMode && handleSelectChange('isFree', false)}
+                            disabled={!isEditMode || isLoading}
+                          >
+                            No
+                          </button>
+                      </div>
+                        </div>
+                      
+                      <div className="flex items-center justify-between border p-4 rounded-lg">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium">Hourly Rate</div>
+                          <div className="text-sm text-muted-foreground">
+                            The fee you charge per hour (USD)
+                    </div>
+                        </div>
+                        <div className="w-24">
+                          <Input
+                            type="number"
+                            name="hourlyRate"
+                            value={profile.hourlyRate}
+                            onChange={handleInputChange}
+                            disabled={!isEditMode || isLoading || profile.isFree}
+                            min="0"
+                            max="500"
+                            className="text-right"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Privacy */}
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-medium">Privacy Settings</h3>
+                      <div className="text-sm text-muted-foreground mb-2">
+                        Control what information is visible on your public profile
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="show-email"
+                            className="h-4 w-4 rounded border-gray-300"
+                            checked={true}
+                            disabled={true}
+                          />
+                          <label htmlFor="show-email" className="text-sm font-medium">
+                            Show name on public profile (required)
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="show-phone"
+                            className="h-4 w-4 rounded border-gray-300"
+                            checked={false}
+                            disabled={true}
+                          />
+                          <label htmlFor="show-phone" className="text-sm font-medium">
+                            Show phone number on public profile (controlled by admin)
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Account Management */}
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-medium">Account Management</h3>
+                      <div className="text-sm text-muted-foreground mb-2">
+                        Manage your account on the platform
+                      </div>
+                      <Button variant="destructive" disabled={true} className="w-auto">
+                        Request Account Deletion
+                      </Button>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Note: Account deletion requests are processed by administrators. Please contact support for immediate assistance.
+                      </div>
+                    </div>
+              </div>
+            </CardContent>
+              </TabsContent>
+            </Tabs>
+          </Card>
         )}
       </div>
-
-      {/* Debug section - only visible in development */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="mt-8 p-4 bg-gray-100 rounded-lg">
-          <h3 className="text-lg font-medium mb-2">Debug Tools</h3>
-          <div className="flex flex-wrap gap-2 mb-4">
-            <button
-              type="button"
-              onClick={async () => {
-                await moodMentorService.completeResetAndCreateTestProfile();
-                toast.success("Reset completed and test profile created");
-                window.location.reload();
-              }}
-              className="px-3 py-1 bg-red-500 text-white text-sm rounded-md"
-            >
-              Reset All & Create Test Profile
-            </button>
-            
-            <button
-              type="button"
-              onClick={async () => {
-                await moodMentorService.registerTestMentorProfile();
-                toast.success("Test mentor profile registered");
-              }}
-              className="px-3 py-1 bg-blue-500 text-white text-sm rounded-md"
-            >
-              Register Test Profile
-            </button>
-            
-            <button
-              type="button"
-              onClick={async () => {
-                await moodMentorService.syncTestMentorProfile();
-                toast.success("Test mentor profile synced");
-              }}
-              className="px-3 py-1 bg-green-500 text-white text-sm rounded-md"
-            >
-              Sync Profile Data
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => {
-                console.log("Current localStorage data:");
-                for (let i = 0; i < localStorage.length; i++) {
-                  const key = localStorage.key(i);
-                  if (key && (key.includes('mentor') || key.includes('mood'))) {
-                    console.log(`- ${key}:`, localStorage.getItem(key));
-                  }
-                }
-                toast.success("Check console for localStorage data");
-              }}
-              className="px-3 py-1 bg-purple-500 text-white text-sm rounded-md"
-            >
-              Log Storage Data
-            </button>
-          </div>
-          
-          <div className="bg-yellow-50 p-3 border border-yellow-200 rounded-md text-sm mb-3">
-            <h4 className="font-medium mb-1">Current Bio Field Data:</h4>
-            <p className="text-xs mb-1"><strong>Bio content:</strong> {profile.bio ? profile.bio.substring(0, 50) + '...' : 'None'}</p>
-            <p className="text-xs mb-1"><strong>Bio length:</strong> {profile.bio?.length || 0} characters</p>
-            <p className="text-xs"><strong>About field:</strong> {profile.about || 'Not set'}</p>
-          </div>
-          
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                // Open test mentor profile in new tab
-                const nameSlug = profile.name_slug || profile.nameSlug || 
-                  profile.full_name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'test-mentor';
-                window.open(`/mood-mentor/${nameSlug}`, '_blank');
-              }}
-              className="px-3 py-1 bg-teal-500 text-white text-sm rounded-md"
-            >
-              Open Public Profile
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => {
-                // Sync and directly redirect to profile
-                const nameSlug = profile.name_slug || profile.nameSlug || 
-                  profile.full_name?.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'test-mentor';
-                
-                // First sync the profile data to ensure consistency
-                moodMentorService.syncTestMentorProfile().then(() => {
-                  window.location.href = `/mood-mentor/${nameSlug}`;
-                });
-              }}
-              className="px-3 py-1 bg-indigo-500 text-white text-sm rounded-md"
-            >
-              Sync & View Profile
-            </button>
-          </div>
-        </div>
-      )}
     </DashboardLayout>
   );
-} 
-
-
+}

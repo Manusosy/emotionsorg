@@ -1,6 +1,7 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import React, { useState, useEffect } from "react";
-import { DashboardLayout } from "../components/DashboardLayout";
+import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import React, { useState, useEffect, useContext } from "react";
+import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { supabase } from "@/lib/supabase";
 import {
   Table,
   TableBody,
@@ -9,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Calendar,
@@ -23,7 +24,7 @@ import {
   MoreVertical,
 } from "lucide-react";
 // Supabase import removed
-import { useAuth } from "@/hooks/use-auth";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Select,
@@ -42,6 +43,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
+import { AuthContext } from "@/contexts/authContext";
 
 interface AppointmentDisplay {
   id: string;
@@ -60,7 +62,8 @@ interface AppointmentDisplay {
 }
 
 export default function AppointmentsPage() {
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user } = useContext(AuthContext);
   const [appointments, setAppointments] = useState<AppointmentDisplay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");

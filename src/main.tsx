@@ -1,57 +1,53 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import App from './App';
-import ErrorBoundary from './components/ErrorBoundary';
 import './styles/index.css';
+import './styles/App.css';
+import 'tailwindcss/tailwind.css';
+import App from './App';
 
-// Global error handling with more detailed logging
-window.addEventListener('error', (event) => {
-  console.error('Global error caught:', {
-    message: event.error?.message,
-    stack: event.error?.stack,
-    filename: event.filename,
-    lineno: event.lineno,
-    colno: event.colno
+// Check for environment variables
+const checkEnvironment = () => {
+  // Define environment variable keys to check
+  const envKeys = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
+  
+  // Check each source for the variables
+  const missingVars = envKeys.filter(key => {
+    // Check both sources
+    const fromWindow = window.ENV_CONFIG?.[key];
+    const fromVite = import.meta.env[key];
+    
+    // Log source for debugging
+    if (fromWindow) console.log(`${key} found in window.ENV_CONFIG`);
+    else if (fromVite) console.log(`${key} found in import.meta.env`);
+    
+    // Return true if the variable is missing from both sources
+    return !fromWindow && !fromVite;
   });
-});
+  
+  if (missingVars.length > 0) {
+    console.warn(
+      `⚠️ Missing environment variables: ${missingVars.join(', ')}.\n` +
+      `Please check that your environment is properly configured.`
+    );
+  } else {
+    console.log('✅ Environment variables loaded successfully.');
+  }
+};
 
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('Unhandled promise rejection:', {
-    reason: event.reason,
-    stack: event.reason?.stack
-  });
-});
+// Start application with environment checks
+const startApp = () => {
+  checkEnvironment();
+  
+  // Simple root rendering
+  const rootElement = document.getElementById('root');
+  if (!rootElement) throw new Error('Root element not found');
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      staleTime: 30000,
-    },
-  },
-});
-
-const rootElement = document.getElementById('root');
-
-if (!rootElement) {
-  throw new Error('Failed to find the root element');
-}
-
-const root = createRoot(rootElement);
-
-// Wrap the render in a try-catch for better error handling
-try {
-  root.render(
+  createRoot(rootElement).render(
     <React.StrictMode>
-      <ErrorBoundary>
-        <QueryClientProvider client={queryClient}>
-          <App />
-        </QueryClientProvider>
-      </ErrorBoundary>
+      <App />
     </React.StrictMode>
   );
-  console.log('Application rendered successfully');
-} catch (error) {
-  console.error('Failed to render application:', error);
-}
+};
+
+// Initialize the app
+startApp();

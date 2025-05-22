@@ -1,35 +1,31 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useContext } from "react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import AuthLayout from "../components/AuthLayout";
 import { toast } from "sonner";
-// Supabase import removed
+import AuthLayout from "../components/AuthLayout";
+import { AuthContext } from "@/contexts/authContext";
+import { Link } from "react-router-dom";
 import { Mail } from "lucide-react";
 
 export default function ForgotPassword() {
+  const navigate = useNavigate();
+  const { resetPassword } = useContext(AuthContext);
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
 
-  const handleResetPassword = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isLoading) return;
-    
     setIsLoading(true);
-    
-    try {
-      const result = await authService.resetPassword(email, `${window.location.origin}/reset-password`);
 
-      if (result.error) throw result.error;
-      
-      setIsSubmitted(true);
-      toast.success("Password reset link sent to your email");
+    try {
+      await resetPassword(email);
+      toast.success("Password reset email sent. Please check your inbox.");
+      navigate('/signin');
     } catch (error: any) {
-      console.error('Password reset error:', error);
-      toast.error(error.message || "Failed to send reset link. Please try again.");
+      toast.error(error.message || "Failed to send reset email");
     } finally {
       setIsLoading(false);
     }
@@ -45,7 +41,7 @@ export default function ForgotPassword() {
       }
     >
       {!isSubmitted ? (
-        <form onSubmit={handleResetPassword} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <div className="relative">

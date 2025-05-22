@@ -1,196 +1,226 @@
-import { IAuthService, User, AuthCredentials, AuthResponse } from './auth.interface';
+import { supabase } from '@/lib/supabase';
+import { User } from '@supabase/supabase-js';
+import { UserRole } from '@/types/user';
 
-/**
- * Mock Auth Service
- * Implements the AuthService interface with mock functionality
- */
-export class MockAuthService implements IAuthService {
-  private currentUser: User | null = null;
-  private listeners: ((user: User | null) => void)[] = [];
-  
-  // Mock users for testing
-  private mockUsers: Record<string, User & { password: string }> = {
-    'user@example.com': {
-      id: '1',
-      email: 'user@example.com',
-      password: 'password123',
-      name: 'Test User',
-      role: 'patient',
-      avatarUrl: 'https://ui-avatars.com/api/?name=Test+User'
-    },
-    'mentor@example.com': {
-      id: '2',
-      email: 'mentor@example.com',
-      password: 'password123',
-      name: 'Test Mentor',
-      role: 'mood_mentor',
-      avatarUrl: 'https://ui-avatars.com/api/?name=Test+Mentor'
-    }
+// Extended User type to include metadata
+export interface UserWithMetadata extends User {
+  user_metadata: {
+    name: string;
+    role: UserRole;
+    avatarUrl?: string;
   };
+}
 
-  constructor() {
-    // Check if there's a stored user in localStorage
-    const storedUser = localStorage.getItem('mockAuthUser');
-    if (storedUser) {
-      try {
-        this.currentUser = JSON.parse(storedUser);
-        this.notifyListeners();
-      } catch (e) {
-        localStorage.removeItem('mockAuthUser');
+export interface AuthService {
+  getCurrentUser: () => Promise<UserWithMetadata | null>;
+  getUserRole: () => Promise<UserRole | null>;
+  signIn: (email: string, password: string) => Promise<{ user: UserWithMetadata | null; error?: string }>;
+  signUp: (data: {
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    role: UserRole;
+    country: string;
+    gender?: string | null;
+  }) => Promise<{ user: UserWithMetadata | null; error?: string }>;
+  signOut: () => Promise<void>;
+  resetPassword: (email: string) => Promise<{ error?: string }>;
+  updatePassword: (currentPassword: string, newPassword: string) => Promise<{ error?: string }>;
+  updateProfile: (userId: string, data: Partial<UserWithMetadata>) => Promise<{ error?: string }>;
+  deleteAccount: (userId: string) => Promise<{ error?: string }>;
+  updateUserMetadata: (metadata: Record<string, any>) => Promise<{ 
+    success: boolean; 
+    data: any | null; 
+    error: string | null; 
+  }>;
+}
+
+class SupabaseAuthService implements AuthService {
+  async getCurrentUser(): Promise<UserWithMetadata | null> {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user as UserWithMetadata | null;
+  }
+
+  async getUserRole(): Promise<UserRole | null> {
+    const { data: { user } } = await supabase.auth.getUser();
+    return user?.user_metadata?.role || null;
+  }
+
+  async signIn(email: string, password: string): Promise<{ user: UserWithMetadata | null; error?: string }> {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) throw error;
+      return { user: data.user as UserWithMetadata | null };
+    } catch (error) {
+      console.error('Error in signIn:', error);
+      return { user: null, error: error.message };
+    }
+  }
+
+  async signUp(data: {
+    email: string;
+    password: string;
+    firstName: string;
+    lastName: string;
+    role: UserRole;
+    country: string;
+    gender?: string | null;
+  }): Promise<{ user: UserWithMetadata | null; error?: string }> {
+    try {
+      const { data: authData, error } = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+        options: {
+          data: {
+            name: `${data.firstName} ${data.lastName}`,
+            role: data.role,
+            country: data.country,
+            gender: data.gender
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      if (authData.user) {
+        // Create profile based on role
+        if (data.role === 'patient') {
+          await supabase.from('patient_profiles').insert({
+            id: authData.user.id,
+            full_name: `${data.firstName} ${data.lastName}`,
+            email: data.email,
+            country: data.country,
+            gender: data.gender
+          });
+        } else if (data.role === 'mood_mentor') {
+          await supabase.from('mood_mentor_profiles').insert({
+            id: authData.user.id,
+            full_name: `${data.firstName} ${data.lastName}`,
+            email: data.email,
+            country: data.country,
+            gender: data.gender
+          });
+        }
       }
+
+      return { user: authData.user as UserWithMetadata | null };
+    } catch (error) {
+      console.error('Error in signUp:', error);
+      return { user: null, error: error.message };
     }
   }
 
-  async signIn(credentials: AuthCredentials): Promise<AuthResponse> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    const user = this.mockUsers[credentials.email];
-    
-    if (!user || user.password !== credentials.password) {
-      return { user: null, error: 'Invalid credentials' };
-    }
-    
-    // Remove password from user object
-    const { password, ...userWithoutPassword } = user;
-    this.currentUser = userWithoutPassword;
-    
-    // Store user in localStorage for persistence
-    localStorage.setItem('mockAuthUser', JSON.stringify(userWithoutPassword));
-    
-    // Notify listeners of auth change
-    this.notifyListeners();
-    
-    return { user: userWithoutPassword, error: null, session: { token: 'mock-jwt-token' } };
-  }
-  
-  async signUp(credentials: AuthCredentials, userData?: Partial<User>): Promise<AuthResponse> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 700));
-    
-    if (this.mockUsers[credentials.email]) {
-      return { user: null, error: 'User already exists' };
-    }
-    
-    const newUser: User & { password: string } = {
-      id: Math.random().toString(36).substring(2, 15),
-      email: credentials.email,
-      password: credentials.password,
-      name: userData?.name || credentials.email.split('@')[0],
-      role: userData?.role || 'patient',
-      avatarUrl: userData?.avatarUrl || `https://ui-avatars.com/api/?name=${credentials.email.split('@')[0]}`
-    };
-    
-    // Add to mock users
-    this.mockUsers[credentials.email] = newUser;
-    
-    // Set as current user
-    const { password, ...userWithoutPassword } = newUser;
-    this.currentUser = userWithoutPassword;
-    
-    // Store in localStorage
-    localStorage.setItem('mockAuthUser', JSON.stringify(userWithoutPassword));
-    
-    // Notify listeners
-    this.notifyListeners();
-    
-    return { user: userWithoutPassword, error: null, session: { token: 'mock-jwt-token' } };
-  }
-  
   async signOut(): Promise<void> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
-    this.currentUser = null;
-    localStorage.removeItem('mockAuthUser');
-    
-    // Notify listeners
-    this.notifyListeners();
-  }
-  
-  async getCurrentUser(): Promise<User | null> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    return this.currentUser;
-  }
-  
-  async resetPassword(email: string): Promise<{ error: string | null }> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    if (!this.mockUsers[email]) {
-      return { error: 'User not found' };
-    }
-    
-    console.log(`Password reset requested for ${email}`);
-    return { error: null };
-  }
-  
-  async updatePassword(password: string, token?: string): Promise<{ error: string | null }> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    if (!this.currentUser) {
-      return { error: 'No authenticated user' };
-    }
-    
-    // Update password in mock users
-    const userEmail = this.currentUser.email;
-    if (this.mockUsers[userEmail]) {
-      this.mockUsers[userEmail].password = password;
-      return { error: null };
-    }
-    
-    return { error: 'User not found' };
-  }
-  
-  async updateUser(data: Partial<User>): Promise<{ user: User | null; error: string | null }> {
-    // Simulate network delay
-    await new Promise(resolve => setTimeout(resolve, 500));
-    
-    if (!this.currentUser) {
-      return { user: null, error: 'No authenticated user' };
-    }
-    
-    // Update user data
-    const updatedUser = { ...this.currentUser, ...data };
-    this.currentUser = updatedUser;
-    
-    // Update in mock users if it exists
-    const userEmail = updatedUser.email;
-    if (this.mockUsers[userEmail]) {
-      const { password } = this.mockUsers[userEmail];
-      this.mockUsers[userEmail] = { ...updatedUser, password };
-    }
-    
-    // Store updated user in localStorage
-    localStorage.setItem('mockAuthUser', JSON.stringify(updatedUser));
-    
-    // Notify listeners
-    this.notifyListeners();
-    
-    return { user: updatedUser, error: null };
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
   }
 
-  onAuthStateChange(callback: (user: User | null) => void): () => void {
-    this.listeners.push(callback);
-    
-    // Call immediately with current state
-    callback(this.currentUser);
-    
-    // Return unsubscribe function
-    return () => {
-      this.listeners = this.listeners.filter(listener => listener !== callback);
-    };
+  async resetPassword(email: string): Promise<{ error?: string }> {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      });
+
+      if (error) throw error;
+      return {};
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      return { error: error.message };
+    }
   }
-  
-  private notifyListeners(): void {
-    for (const listener of this.listeners) {
-      listener(this.currentUser);
+
+  async updatePassword(currentPassword: string, newPassword: string): Promise<{ error?: string }> {
+    try {
+      const { error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+      if (error) throw error;
+      return {};
+    } catch (error) {
+      console.error('Error updating password:', error);
+      return { error: error.message };
+    }
+  }
+
+  async updateProfile(userId: string, data: Partial<UserWithMetadata>): Promise<{ error?: string }> {
+    try {
+      const { error } = await supabase.auth.updateUser(data);
+      if (error) throw error;
+      return {};
+    } catch (error) {
+      console.error('Error updating profile:', error);
+      return { error: error.message };
+    }
+  }
+
+  async deleteAccount(userId: string): Promise<{ error?: string }> {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('No user found');
+
+      // Delete the user's profile based on their role
+      const userRole = user.user_metadata?.role;
+      if (userRole === 'patient') {
+        const { error: profileError } = await supabase
+          .from('patient_profiles')
+          .delete()
+          .eq('id', userId);
+        if (profileError) throw profileError;
+      } else if (userRole === 'mood_mentor') {
+        const { error: profileError } = await supabase
+          .from('mood_mentor_profiles')
+          .delete()
+          .eq('id', userId);
+        if (profileError) throw profileError;
+      }
+
+      // We can't directly delete the user with client API
+      // We'll need to trigger account deletion workflow
+      // This would typically send a request to a server function
+      // For now, just sign out the user
+      await supabase.auth.signOut();
+      
+      return {};
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      return { error: error.message };
+    }
+  }
+
+  async updateUserMetadata(metadata: Record<string, any>): Promise<{ 
+    success: boolean; 
+    data: any | null; 
+    error: string | null; 
+  }> {
+    try {
+      // This uses the newer Supabase client method to update user metadata
+      const { data, error } = await supabase.auth.updateUser({
+        data: metadata
+      });
+
+      if (error) throw error;
+
+      return {
+        success: true,
+        data: data.user,
+        error: null
+      };
+    } catch (error) {
+      console.error('Error updating user metadata:', error);
+      
+      // Return a detailed error to help with debugging
+      return {
+        success: false,
+        data: null,
+        error: error.message || 'Failed to update user metadata'
+      };
     }
   }
 }
 
-// Export a singleton instance
-export const authService: IAuthService = new MockAuthService(); 
+export const authService = new SupabaseAuthService(); 

@@ -1,9 +1,9 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
+import { dataService } from '../../../services';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-// Supabase import removed
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,14 +12,13 @@ import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth } from '@/contexts/authContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 import DashboardLayout from '../components/DashboardLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
 import { getDeviceInfo, getFormattedDeviceInfo } from '@/utils/device-detection';
 import { toast } from '@/components/ui/use-toast';
-// Supabase import removed
 
 // Define the schema for patient profile form
 const patientFormSchema = z.object({
@@ -78,9 +77,10 @@ export default function Settings() {
   const [currentDeviceInfo, setCurrentDeviceInfo] = useState('');
   const [hasInitialized, setHasInitialized] = useState(false);
   const [hasUpdatedDeviceInfo, setHasUpdatedDeviceInfo] = useState(false);
-  const { user } = useAuth();
+  const { user, updateUser, updateUserMetadata } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Pre-load form data with empty values to reduce flickering
   const defaultValues: PatientFormValues = {
@@ -119,43 +119,29 @@ export default function Settings() {
           setValue(key as keyof PatientFormValues, defaultValues[key as keyof PatientFormValues]);
         });
         
-        // Load both user metadata and profile data in parallel for speed
-        const [userData, patientProfile] = await Promise.all([
-          authService.getCurrentUser(),
-          patientService.getPatientProfile(user.id)
-        ]);
+        // Load profile data
+        const { data: profileData, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user.id)
+          .single();
         
-        if (userData) {
-          // Set values from user data
-          setValue('first_name', userData.name.split(' ')[0] || '');
-          setValue('last_name', userData.name.split(' ')[1] || '');
-          setValue('phone_number', userData.phoneNumber || '');
-          setValue('gender', userData.gender || 'prefer-not-to-say');
-          setValue('date_of_birth', userData.dateOfBirth || '');
-          setValue('country', userData.country || '');
-          setValue('address', userData.address || '');
-          setValue('city', userData.city || '');
-          setValue('state', userData.state || '');
-          setValue('pincode', userData.pincode || '');
-          setValue('avatar_url', userData.avatarUrl || '');
-          setValue('about_me', userData.bio || '');
-        }
+        if (error) throw error;
         
-        // Update with profile data if it exists
-        if (patientProfile && patientProfile.data) {
-          const profileData = patientProfile.data;
-          setValue('first_name', profileData.firstName || watch('first_name'));
-          setValue('last_name', profileData.lastName || watch('last_name'));
-          setValue('phone_number', profileData.phoneNumber || watch('phone_number'));
-          setValue('gender', profileData.gender || watch('gender'));
-          setValue('date_of_birth', profileData.dateOfBirth || watch('date_of_birth'));
-          setValue('country', profileData.country || watch('country'));
-          setValue('address', profileData.address || watch('address'));
-          setValue('city', profileData.city || watch('city'));
-          setValue('state', profileData.state || watch('state'));
-          setValue('pincode', profileData.pincode || watch('pincode'));
-          setValue('avatar_url', profileData.avatarUrl || watch('avatar_url'));
-          setValue('about_me', profileData.bio || watch('about_me'));
+        if (profileData) {
+          // Set values from profile data
+          setValue('first_name', profileData.first_name || '');
+          setValue('last_name', profileData.last_name || '');
+          setValue('phone_number', profileData.phone_number || '');
+          setValue('gender', profileData.gender || 'prefer-not-to-say');
+          setValue('date_of_birth', profileData.date_of_birth || '');
+          setValue('country', profileData.country || '');
+          setValue('address', profileData.address || '');
+          setValue('city', profileData.city || '');
+          setValue('state', profileData.state || '');
+          setValue('pincode', profileData.pincode || '');
+          setValue('avatar_url', profileData.avatar_url || '');
+          setValue('about_me', profileData.about_me || '');
         }
         
         // Mark as initialized to prevent repeat loading
@@ -201,7 +187,7 @@ export default function Settings() {
       // Do the API call asynchronously in the background later
       if (user?.id) {
         setTimeout(() => {
-          authService.updateUserMetadata({
+          updateUserMetadata({
             current_session: {
               device_type: deviceInfo.deviceType,
               browser: deviceInfo.browser,
@@ -224,89 +210,126 @@ export default function Settings() {
 
   const handleAvatarUpload = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) {
-      toast.error("File size must be less than 2MB");
+      toast({
+        title: "Error",
+        description: "File size must be less than 2MB",
+        variant: "destructive"
+      });
       return;
     }
 
     setUploading(true);
     try {
-      // Upload the file
-      const response = await userService.updateAvatar(user?.id || '', file);
+      // Create a timestamp and random string to avoid filename collisions and caching
+      const timestamp = new Date().getTime();
+      const randomStr = Math.random().toString(36).substring(2, 10);
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user?.id}-${timestamp}-${randomStr}.${fileExt}`;
       
-      if (!response.success) {
-        throw new Error(response.error || "Failed to upload avatar");
+      // Try multiple buckets in case one fails
+      const bucketOptions = ['avatars', 'public', 'profile-images'];
+      let publicUrl = null;
+      let uploadError = null;
+      
+      // Try each bucket until one works
+      for (const bucketName of bucketOptions) {
+        try {
+          const filePath = `${bucketName === 'public' ? 'profiles' : 'avatars'}/${fileName}`;
+          
+          // Try upload
+          const { error } = await supabase.storage
+            .from(bucketName)
+            .upload(filePath, file, { upsert: true, cacheControl: 'no-cache' });
+            
+          if (!error) {
+            // Get the public URL if upload was successful
+            const { data } = supabase.storage
+              .from(bucketName)
+              .getPublicUrl(filePath);
+              
+            publicUrl = data.publicUrl;
+            break; // Exit loop on successful upload
+          } else {
+            uploadError = error; // Keep track of error but continue trying other buckets
+          }
+        } catch (bucketError) {
+          console.warn(`Avatar upload to ${bucketName} failed:`, bucketError);
+          uploadError = bucketError;
+          // Continue to next bucket
+        }
+      }
+      
+      if (!publicUrl) {
+        // If all uploads failed, throw the last error
+        throw uploadError || new Error('Failed to upload to any storage bucket');
+      }
+      
+      // Update both profile and auth metadata with separate calls
+      
+      // 1. First update Supabase profile
+      const { error: profileUpdateError } = await supabase
+        .from('profiles')
+        .update({ 
+          avatar_url: publicUrl,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user?.id);
+
+      if (profileUpdateError) {
+        console.warn('Profile update had error:', profileUpdateError, 'but continuing with auth update');
       }
 
-      // Update user profile with the new avatar URL
-      const { error: updateError } = await authService.updateUser({
-        data: { avatarUrl: response.url }
+      // 2. Then update auth metadata (which should trigger our context update)
+      await updateUserMetadata({ 
+        avatar_url: publicUrl
       });
-      
-      if (updateError) {
-        throw new Error(updateError);
-      }
-      
-      toast.success("Avatar updated successfully");
-      
-      // Refresh user data
-      await refreshUserData();
-    } catch (error) {
+
+      // Set form value
+      setValue('avatar_url', publicUrl);
+
+      toast({
+        title: "Success",
+        description: "Avatar updated successfully"
+      });
+
+    } catch (error: any) {
       console.error("Error uploading avatar:", error);
-      toast.error("Failed to upload avatar");
+      toast({
+        title: "Error",
+        description: error?.message || "Failed to upload avatar",
+        variant: "destructive"
+      });
     } finally {
       setUploading(false);
     }
   };
 
   const onSubmit = async (data: PatientFormValues) => {
-    setUpdating(true);
+    setIsUpdating(true);
     setSaveSuccess(false);
     setSaveError(false);
     
     try {
-      // Update user metadata
-      const updateUserPromise = authService.updateUser({
-        data: {
-          name: `${data.first_name} ${data.last_name}`,
-        }
-      });
+      // Update user metadata in profiles table
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({
+          first_name: data.first_name,
+          last_name: data.last_name,
+          phone_number: data.phone_number,
+          gender: data.gender,
+          date_of_birth: data.date_of_birth || '',
+          about_me: data.about_me || '',
+          country: data.country,
+          address: data.address || '',
+          city: data.city || '',
+          state: data.state || '', 
+          pincode: data.pincode || '',
+        })
+        .eq('id', user?.id);
 
-      // Prepare profile data
-      const profileData = {
-        first_name: data.first_name,
-        last_name: data.last_name,
-        phone_number: data.phone_number,
-        gender: data.gender,
-        date_of_birth: data.date_of_birth || '',
-        about_me: data.about_me || '',
-        country: data.country,
-        address: data.address || '',
-        city: data.city || '',
-        state: data.state || '', 
-        pincode: data.pincode || '',
-      };
+      if (profileError) throw profileError;
 
-      // Update user profile
-      const updateProfilePromise = userService.updateUserProfile(user?.id || '', profileData);
-
-      // Run both operations in parallel
-      const [userResult, profileResult] = await Promise.all([
-        updateUserPromise,
-        updateProfilePromise
-      ]);
-
-      if (userResult.error) {
-        console.error("Error updating user metadata:", userResult.error);
-        throw userResult.error;
-      }
-
-      if (!profileResult) {
-        console.error("Error updating profile in database");
-        throw new Error("Failed to update profile");
-      }
-
-      console.log("Profile successfully updated");
-      
       // Success notification
       setSaveSuccess(true);
       
@@ -318,7 +341,7 @@ export default function Settings() {
       setSaveError(true);
       setTimeout(() => setSaveError(false), 3000);
     } finally {
-      setUpdating(false);
+      setIsUpdating(false);
     }
   };
 

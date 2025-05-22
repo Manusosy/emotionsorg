@@ -1,0 +1,49 @@
+# Supabase Configuration
+# Copy this file to .env in the project root
+
+# Supabase Project URL and Anon Key
+VITE_SUPABASE_URL=https://hibeorkevqignkinaafy.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpYmVvcmtldnFpZ25raW5hYWZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc4MTMwNjgsImV4cCI6MjA2MzM4OTA2OH0.T-Dda-Rox11B6YFgrOt2PpK_vzhNB7GRuf5RxnYhNOE
+
+# JWT Secret for additional security (if needed)
+# VITE_SUPABASE_JWT_SECRET=update_with_your_new_jwt_secret
+
+# Optional: Service role key for admin operations (if needed)
+# VITE_SUPABASE_SERVICE_KEY=your_new_supabase_service_key 
+
+# Environment Variables Setup Instructions
+
+## Core Supabase Settings
+VITE_SUPABASE_URL=https://hibeorkevqignkinaafy.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhpYmVvcmtldnFpZ25raW5hYWZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDc4MTMwNjgsImV4cCI6MjA2MzM4OTA2OH0.T-Dda-Rox11B6YFgrOt2PpK_vzhNB7GRuf5RxnYhNOE
+# VITE_SUPABASE_SERVICE_KEY=your_supabase_service_key
+
+## Google OAuth Configuration
+VITE_GOOGLE_CLIENT_ID=your_google_client_id
+VITE_GOOGLE_CLIENT_SECRET=your_google_client_secret
+
+## Application Settings
+VITE_APP_URL=http://localhost:5173
+
+# Instructions for Google OAuth Setup
+
+1. Create OAuth credentials in Google Cloud Console:
+   - Go to https://console.cloud.google.com
+   - Navigate to "APIs & Services" > "Credentials"
+   - Create an OAuth 2.0 client ID (Web application)
+   - Add authorized redirect URI: https://hibeorkevqignkinaafy.supabase.co/auth/v1/callback
+   - For local development, also add: http://localhost:5173/auth/callback
+   - Copy Client ID and Client Secret to the environment variables above
+
+2. Configure Supabase Authentication:
+   - Go to Supabase dashboard > Authentication > Providers
+   - Enable Google provider
+   - Enter the Google Client ID and Client Secret
+   - Save changes
+
+3. Create a .env file in the project root and copy the variables from this file
+   - Replace the placeholder values with your actual credentials
+
+4. For local development, you can use:
+   - VITE_APP_URL=http://localhost:5173
+   - For production, use your deployed app URL 
