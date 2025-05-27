@@ -4,8 +4,16 @@
   "outputDirectory": "dist",
   "routes": [
     {
+      "src": "/lovable-uploads/(.*)",
+      "dest": "/lovable-uploads/$1"
+    },
+    {
       "src": "/assets/(.*)",
       "dest": "/assets/$1"
+    },
+    {
+      "src": "/(.*)\\.(.+)",
+      "dest": "/$1.$2"
     },
     {
       "src": "/(.*)",

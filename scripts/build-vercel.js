@@ -45,6 +45,38 @@ function parseEnvFile() {
   }
 }
 
+// Function to ensure directories exist in the build output
+function ensureDirectoryExists(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+    console.log(`Created directory: ${dirPath}`);
+  }
+}
+
+// Function to copy directory recursively
+function copyDirectory(source, destination) {
+  // Create destination directory if it doesn't exist
+  ensureDirectoryExists(destination);
+  
+  // Read source directory contents
+  const entries = fs.readdirSync(source, { withFileTypes: true });
+  
+  // Process each entry
+  for (const entry of entries) {
+    const sourcePath = path.join(source, entry.name);
+    const destPath = path.join(destination, entry.name);
+    
+    if (entry.isDirectory()) {
+      // Recursively copy subdirectories
+      copyDirectory(sourcePath, destPath);
+    } else {
+      // Copy files
+      fs.copyFileSync(sourcePath, destPath);
+      console.log(`Copied: ${sourcePath} -> ${destPath}`);
+    }
+  }
+}
+
 // Main build function
 async function build() {
   try {
@@ -63,6 +95,27 @@ async function build() {
         SKIP_TYPESCRIPT_CHECK: 'true'
       }
     });
+    
+    // Copy image assets to the build directory
+    console.log('Copying image assets to build directory...');
+    
+    // Define source and destination directories
+    const publicDir = path.join(__dirname, '../public');
+    const buildDir = path.join(__dirname, '../dist');
+    
+    // Ensure lovable-uploads directory exists in build output
+    const lovableUploadsSource = path.join(publicDir, 'lovable-uploads');
+    const lovableUploadsDest = path.join(buildDir, 'lovable-uploads');
+    
+    if (fs.existsSync(lovableUploadsSource)) {
+      console.log('Copying lovable-uploads directory...');
+      copyDirectory(lovableUploadsSource, lovableUploadsDest);
+    } else {
+      console.log('lovable-uploads directory not found in public folder');
+      
+      // Create an empty directory to prevent 404 errors
+      ensureDirectoryExists(lovableUploadsDest);
+    }
     
     console.log('Build completed successfully!');
   } catch (error) {
