@@ -14,6 +14,7 @@ import { Loader2, Search, Send, MessageSquare, AlertCircle } from "lucide-react"
 import { toast } from "sonner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
 
 // Import the dashboard layout component
 import DashboardLayout from "../components/DashboardLayout";
@@ -331,16 +332,11 @@ export default function MessagesPage() {
                   <CardHeader className="px-4 py-3 border-b flex flex-row items-center justify-between">
                     {otherUserData && (
                       <div className="flex items-center">
-                        <Avatar className="h-8 w-8 mr-2">
-                          <AvatarImage src={otherUserData.avatarUrl} alt={otherUserData.name} />
-                          <AvatarFallback>
-                            {otherUserData.name
-                              .split(" ")
-                              .map((n) => n[0])
-                              .join("")
-                              .toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
+                        <FallbackAvatar
+                          src={otherUserData.avatarUrl}
+                          name={otherUserData.name}
+                          className="h-8 w-8 mr-2"
+                        />
                         <div>
                           <CardTitle className="text-md">{otherUserData.name}</CardTitle>
                           <p className="text-xs text-muted-foreground capitalize">

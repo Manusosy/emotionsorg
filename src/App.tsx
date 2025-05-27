@@ -39,6 +39,7 @@ import MoodMentorDashboard from "@/features/mood_mentors/pages/MoodMentorDashboa
 import MoodMentorSettingsPage from "@/features/mood_mentors/pages/SettingsPage";
 import MoodMentorProfilePage from "@/features/mood_mentors/pages/ProfilePage";
 import MoodMentorDeleteAccountPage from "@/features/mood_mentors/pages/DeleteAccountPage";
+import MoodMentorAnalyticsPage from "@/features/mood_mentors/pages/AnalyticsPage";
 import { AuthProvider, AuthContext } from "@/contexts/authContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Resources from "@/pages/Resources";
@@ -322,6 +323,11 @@ const AppContent = () => {
                   <MoodMentorAvailabilityPage />
                 </ProtectedErrorBoundary>
               } />
+              <Route path="/mood-mentor-dashboard/analytics" element={
+                <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
+                  <MoodMentorAnalyticsPage />
+                </ProtectedErrorBoundary>
+              } />
               
               {/* Not Found Page */}
               <Route path="*" element={<NotFound />} />
@@ -338,6 +344,26 @@ const AppContent = () => {
 const App = () => {
   useEffect(() => {
     console.log("App initialized with Supabase auth");
+    
+    // Setup storage in the background
+    import('./utils/storage-setup').then(({ default: ensureStorageBucketsExist }) => {
+      ensureStorageBucketsExist()
+        .then(result => {
+          if (result.success) {
+            console.log('✅ Storage buckets ready!');
+            if (result.createdBuckets.length > 0) {
+              console.log(`Created buckets: ${result.createdBuckets.join(', ')}`);
+            }
+          } else {
+            console.warn('⚠️ Some storage buckets could not be set up:');
+            console.warn('Errors:', result.errors);
+            console.log('You may experience issues with file uploads.');
+          }
+        })
+        .catch(err => {
+          console.error('Storage setup error:', err);
+        });
+    });
     
     // Log all navigation events
     const unregister = window.addEventListener('popstate', () => {

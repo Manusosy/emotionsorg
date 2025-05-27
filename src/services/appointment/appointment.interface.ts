@@ -5,25 +5,30 @@
 
 export interface Appointment {
   id: string;
-  patientId: string;
-  moodMentorId: string;
+  patient_id: string;
+  mentor_id: string;
   title: string;
   description?: string;
   date: string;
-  startTime: string;
-  endTime: string;
-  status: 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
-  meetingLink?: string;
+  start_time: string;
+  end_time: string;
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
+  meeting_link?: string;
+  meeting_type: 'video' | 'audio' | 'chat';
   notes?: string;
-  createdAt: string;
-  updatedAt: string;
+  created_at: string;
+  updated_at: string;
+  cancellation_reason?: string;
+  cancelled_by?: string;
+  rating?: number;
+  feedback?: string;
 }
 
 export interface AppointmentSlot {
-  moodMentorId: string;
+  mentor_id: string;
   date: string;
-  startTime: string;
-  endTime: string;
+  start_time: string;
+  end_time: string;
   available: boolean;
 }
 
@@ -32,20 +37,22 @@ export interface IAppointmentService {
    * Get appointments for a patient
    */
   getPatientAppointments(patientId: string, options?: {
-    status?: 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
+    status?: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
     startDate?: string;
     endDate?: string;
     limit?: number;
+    offset?: number;
   }): Promise<Appointment[]>;
   
   /**
    * Get appointments for a mood mentor
    */
-  getMoodMentorAppointments(moodMentorId: string, options?: {
-    status?: 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
+  getMoodMentorAppointments(mentorId: string, options?: {
+    status?: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
     startDate?: string;
     endDate?: string;
     limit?: number;
+    offset?: number;
   }): Promise<Appointment[]>;
   
   /**
@@ -56,7 +63,7 @@ export interface IAppointmentService {
   /**
    * Book a new appointment
    */
-  bookAppointment(appointment: Omit<Appointment, 'id' | 'status' | 'createdAt' | 'updatedAt'>): Promise<Appointment>;
+  bookAppointment(appointment: Omit<Appointment, 'id' | 'status' | 'created_at' | 'updated_at' | 'cancellation_reason' | 'cancelled_by' | 'rating' | 'feedback'>): Promise<Appointment>;
   
   /**
    * Update an appointment
@@ -79,9 +86,14 @@ export interface IAppointmentService {
   completeAppointment(id: string, notes?: string): Promise<Appointment | null>;
   
   /**
+   * Rate an appointment
+   */
+  rateAppointment(id: string, rating: number, feedback?: string): Promise<Appointment | null>;
+  
+  /**
    * Get available appointment slots for a mood mentor
    */
-  getAvailableSlots(moodMentorId: string, options?: {
+  getAvailableSlots(mentorId: string, options?: {
     startDate?: string;
     endDate?: string;
   }): Promise<AppointmentSlot[]>;

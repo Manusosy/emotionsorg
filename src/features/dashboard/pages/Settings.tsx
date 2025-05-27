@@ -1,4 +1,4 @@
-import { dataService } from '../../../services';
+import { dataService, patientService } from '../../../services';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,83 +19,141 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
 import { getDeviceInfo, getFormattedDeviceInfo } from '@/utils/device-detection';
 import { toast } from '@/components/ui/use-toast';
+import { PatientProfile } from '@/services/patient/patient.interface';
+import { UserActivity } from '@/services/patient/patient.interface';
+import ensureStorageBucketsExist from '@/utils/storage-setup';
+import uploadImage from '@/utils/image-service';
+import FallbackAvatar from '@/components/ui/fallback-avatar';
+
+// Avatar error component to handle upload failures
+const AvatarErrorState = ({ error, onRetry }: { error: string, onRetry: () => void }) => {
+  return (
+    <div className="relative h-24 w-24 bg-red-50 border border-red-200 rounded-full flex flex-col items-center justify-center text-red-500">
+      <span className="text-2xl mb-1">⚠️</span>
+      <button 
+        onClick={onRetry}
+        className="text-xs font-medium px-2 py-1 bg-white hover:bg-red-50 border border-red-300 rounded-md text-red-600 transition-colors"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
 
 // Define the schema for patient profile form
 const patientFormSchema = z.object({
-  first_name: z.string().min(2, 'First name must be at least 2 characters'),
-  last_name: z.string().min(2, 'Last name must be at least 2 characters'),
-  phone_number: z.string().min(10, 'Please enter a valid phone number'),
-  gender: z.enum(['male', 'female', 'non-binary', 'prefer-not-to-say'], {
+  fullName: z.string().min(2, 'Full name must be at least 2 characters'),
+  phoneNumber: z.string().min(10, 'Please enter a valid phone number').or(z.string().length(0)),
+  gender: z.enum(['Male', 'Female', 'Non-binary', 'Prefer not to say'], {
     required_error: "Please select a gender",
   }),
-  date_of_birth: z.string().optional(),
-  country: z.string().min(1, 'Please select your country'),
+  dateOfBirth: z.string().optional(),
+  location: z.string().min(1, 'Please select your country'),
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
   pincode: z.string().optional(),
-  avatar_url: z.string().optional(),
-  about_me: z.string().optional(),
+  avatarUrl: z.string().optional(),
+  bio: z.string().optional(),
 });
 
 type PatientFormValues = z.infer<typeof patientFormSchema>;
 
-// Define the patient profile type
-interface PatientProfile {
-  id: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  phone_number: string;
-  gender: string;
-  date_of_birth: string;
-  country: string;
-  address: string;
-  city: string;
-  state: string;
-  pincode: string;
-  avatar_url: string;
-  about_me: string;
-  created_at: string;
-  updated_at: string;
-  patient_id?: string;
-}
-
-// Define gender options
+// Define gender options - matching the options in the database
 const GENDER_OPTIONS = [
-  { value: 'male', label: 'Male' },
-  { value: 'female', label: 'Female' },
-  { value: 'non-binary', label: 'Non-binary' },
-  { value: 'prefer-not-to-say', label: 'Prefer not to say' }
+  { value: 'Male', label: 'Male' },
+  { value: 'Female', label: 'Female' },
+  { value: 'Non-binary', label: 'Non-binary' },
+  { value: 'Prefer not to say', label: 'Prefer not to say' }
 ];
+
+// Storage troubleshooting component
+const StorageTroubleshootingMessage = ({ onTryFix }: { onTryFix: () => void }) => (
+  <div className="bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded mb-4 flex flex-col gap-2">
+    <div className="flex items-center">
+      <span className="text-xl mr-2">ℹ️</span>
+      <h3 className="font-semibold">Storage configuration issue detected</h3>
+    </div>
+    <p className="text-sm ml-7">
+      We detected that your storage buckets might not be properly configured, which can prevent 
+      uploading profile pictures.
+    </p>
+    <div className="ml-7 mt-1">
+      <button
+        onClick={onTryFix}
+        className="text-sm px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+      >
+        Attempt to fix
+      </button>
+    </div>
+  </div>
+);
+
+// Add a URL input option component
+const ExternalUrlInput = ({ 
+  value, 
+  onChange, 
+  onSubmit 
+}: { 
+  value: string; 
+  onChange: (url: string) => void; 
+  onSubmit: () => void 
+}) => {
+  return (
+    <div className="flex flex-col gap-2 mt-2">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Enter image URL"
+          className="flex-1 p-1 text-xs border border-gray-300 rounded"
+        />
+        <button
+          onClick={onSubmit}
+          className="bg-blue-600 text-white text-xs px-2 py-1 rounded hover:bg-blue-700"
+        >
+          Use
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const [currentDeviceInfo, setCurrentDeviceInfo] = useState('');
   const [hasInitialized, setHasInitialized] = useState(false);
   const [hasUpdatedDeviceInfo, setHasUpdatedDeviceInfo] = useState(false);
+  const [userActivities, setUserActivities] = useState<UserActivity[]>([]);
+  const [loadingActivities, setLoadingActivities] = useState(true);
   const { user, updateUser, updateUserMetadata } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [isUpdating, setIsUpdating] = useState(false);
+  const [showStorageFix, setShowStorageFix] = useState(false);
+  const [fixingStorage, setFixingStorage] = useState(false);
+  const [externalUrl, setExternalUrl] = useState('');
+  const [showUrlInput, setShowUrlInput] = useState(false);
 
   // Pre-load form data with empty values to reduce flickering
   const defaultValues: PatientFormValues = {
-    first_name: '',
-    last_name: '',
-    phone_number: '',
-    gender: 'prefer-not-to-say',
-    date_of_birth: '',
-    country: '',
+    fullName: '',
+    phoneNumber: '',
+    gender: 'Prefer not to say',
+    dateOfBirth: '',
+    location: '',
     address: '',
     city: '',
     state: '',
     pincode: '',
-    avatar_url: '',
-    about_me: '',
+    avatarUrl: '',
+    bio: '',
   };
 
   const { register, handleSubmit, formState: { errors }, setValue, watch, control } = useForm<PatientFormValues>({
@@ -119,29 +177,33 @@ export default function Settings() {
           setValue(key as keyof PatientFormValues, defaultValues[key as keyof PatientFormValues]);
         });
         
-        // Load profile data
-        const { data: profileData, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
+        // Get user metadata for fallback values
+        const metadata = user.user_metadata as any || {};
         
-        if (error) throw error;
+        // Load profile data using patientService
+        const response = await patientService.getPatientById(user.id);
         
-        if (profileData) {
+        if (response.success && response.data) {
+          const profileData = response.data;
+          
           // Set values from profile data
-          setValue('first_name', profileData.first_name || '');
-          setValue('last_name', profileData.last_name || '');
-          setValue('phone_number', profileData.phone_number || '');
-          setValue('gender', profileData.gender || 'prefer-not-to-say');
-          setValue('date_of_birth', profileData.date_of_birth || '');
-          setValue('country', profileData.country || '');
+          setValue('fullName', profileData.fullName || metadata.name || '');
+          setValue('phoneNumber', profileData.phoneNumber || '');
+          setValue('gender', (profileData.gender || 'Prefer not to say') as 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say');
+          setValue('dateOfBirth', profileData.dateOfBirth || '');
+          setValue('location', profileData.location || metadata.country || '');
           setValue('address', profileData.address || '');
           setValue('city', profileData.city || '');
           setValue('state', profileData.state || '');
           setValue('pincode', profileData.pincode || '');
-          setValue('avatar_url', profileData.avatar_url || '');
-          setValue('about_me', profileData.about_me || '');
+          setValue('avatarUrl', profileData.avatarUrl || metadata.avatarUrl || '');
+          setValue('bio', profileData.bio || '');
+        } else {
+          // Use user metadata as fallback
+          setValue('fullName', metadata.name || '');
+          setValue('location', metadata.country || '');
+          setValue('gender', (metadata.gender || 'Prefer not to say') as 'Male' | 'Female' | 'Non-binary' | 'Prefer not to say');
+          setValue('avatarUrl', metadata.avatarUrl || '');
         }
         
         // Mark as initialized to prevent repeat loading
@@ -208,7 +270,35 @@ export default function Settings() {
     }
   }, [user, hasUpdatedDeviceInfo, loading, currentDeviceInfo]);
 
+  // Load user activity data
+  useEffect(() => {
+    const loadUserActivity = async () => {
+      if (!user?.id) return;
+      
+      try {
+        setLoadingActivities(true);
+        const { data: activities, error } = await patientService.getUserActivity(user.id, 5);
+        
+        if (error) {
+          console.error("Error loading user activity:", error);
+        } else if (activities) {
+          setUserActivities(activities);
+        }
+      } catch (error) {
+        console.error("Error in user activity loading:", error);
+      } finally {
+        setLoadingActivities(false);
+      }
+    };
+    
+    if (user?.id) {
+      loadUserActivity();
+    }
+  }, [user]);
+
   const handleAvatarUpload = async (file: File) => {
+    if (!user?.id) return;
+    
     if (file.size > 2 * 1024 * 1024) {
       toast({
         title: "Error",
@@ -219,84 +309,69 @@ export default function Settings() {
     }
 
     setUploading(true);
+    setAvatarError(null); // Clear any previous errors
     try {
-      // Create a timestamp and random string to avoid filename collisions and caching
-      const timestamp = new Date().getTime();
-      const randomStr = Math.random().toString(36).substring(2, 10);
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user?.id}-${timestamp}-${randomStr}.${fileExt}`;
+      console.log("Starting profile image upload...");
       
-      // Try multiple buckets in case one fails
-      const bucketOptions = ['avatars', 'public', 'profile-images'];
-      let publicUrl = null;
-      let uploadError = null;
+      // Use the new image service that handles multiple upload methods
+      const result = await uploadImage(file, user.id);
       
-      // Try each bucket until one works
-      for (const bucketName of bucketOptions) {
-        try {
-          const filePath = `${bucketName === 'public' ? 'profiles' : 'avatars'}/${fileName}`;
-          
-          // Try upload
-          const { error } = await supabase.storage
-            .from(bucketName)
-            .upload(filePath, file, { upsert: true, cacheControl: 'no-cache' });
-            
-          if (!error) {
-            // Get the public URL if upload was successful
-            const { data } = supabase.storage
-              .from(bucketName)
-              .getPublicUrl(filePath);
-              
-            publicUrl = data.publicUrl;
-            break; // Exit loop on successful upload
-          } else {
-            uploadError = error; // Keep track of error but continue trying other buckets
+      if (result.success && result.url) {
+        // Update the form with the new avatar URL
+        setValue('avatarUrl', result.url);
+        
+        // Display appropriate success message based on the source
+        toast({
+          title: "Success",
+          description: result.source === 'external' 
+            ? "Profile picture uploaded to external service successfully" 
+            : "Profile picture updated successfully",
+        });
+        
+        // Record the activity
+        await patientService.recordUserActivity({
+          activityType: 'profile_update',
+          description: 'Updated profile picture',
+          timestamp: new Date().toISOString(),
+          metadata: {
+            source: result.source,
+            fileSize: file.size
           }
-        } catch (bucketError) {
-          console.warn(`Avatar upload to ${bucketName} failed:`, bucketError);
-          uploadError = bucketError;
-          // Continue to next bucket
+        });
+        
+        // Refresh the activity list to show the new profile picture update activity
+        const { data: activities } = await patientService.getUserActivity(user.id, 5);
+        if (activities) {
+          setUserActivities(activities);
         }
+      } else {
+        console.error("Upload failed:", result.error);
+        setAvatarError(result.error || 'Failed to upload image');
+        throw new Error(result.error || 'Failed to upload image');
       }
-      
-      if (!publicUrl) {
-        // If all uploads failed, throw the last error
-        throw uploadError || new Error('Failed to upload to any storage bucket');
-      }
-      
-      // Update both profile and auth metadata with separate calls
-      
-      // 1. First update Supabase profile
-      const { error: profileUpdateError } = await supabase
-        .from('profiles')
-        .update({ 
-          avatar_url: publicUrl,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', user?.id);
-
-      if (profileUpdateError) {
-        console.warn('Profile update had error:', profileUpdateError, 'but continuing with auth update');
-      }
-
-      // 2. Then update auth metadata (which should trigger our context update)
-      await updateUserMetadata({ 
-        avatar_url: publicUrl
-      });
-
-      // Set form value
-      setValue('avatar_url', publicUrl);
-
-      toast({
-        title: "Success",
-        description: "Avatar updated successfully"
-      });
-
     } catch (error: any) {
-      console.error("Error uploading avatar:", error);
+      console.error('Avatar upload error:', error);
+      
+      // More descriptive error message
+      let errorMsg = "Failed to upload profile picture";
+      
+      if (error.message && error.message.includes("Bucket not found")) {
+        errorMsg = "Storage bucket not found. Please try the external URL option below.";
+        // Show URL input option as fallback
+        setShowUrlInput(true);
+      } else if (error.message && error.message.includes("storage")) {
+        errorMsg = "Storage issue: " + error.message;
+        // Show URL input option as fallback
+        setShowUrlInput(true);
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+      
+      setAvatarError(errorMsg);
+      
       toast({
-        title: "Error",
-        description: error?.message || "Failed to upload avatar",
+        title: "Upload Error",
+        description: errorMsg,
         variant: "destructive"
       });
     } finally {
@@ -304,44 +379,186 @@ export default function Settings() {
     }
   };
 
+  // Function to open the file picker for retry
+  const handleRetryUpload = () => {
+    setAvatarError(null);
+    // Automatically click the hidden file input
+    document.getElementById('profile-upload')?.click();
+  };
+
+  // Handler for using external URL
+  const handleUseExternalUrl = () => {
+    if (!externalUrl || !externalUrl.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid URL",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Basic URL validation
+    try {
+      new URL(externalUrl);
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid URL",
+        variant: "destructive"
+      });
+      return;
+    }
+    
+    // Set the avatar URL
+    setValue('avatarUrl', externalUrl);
+    setAvatarError(null);
+    setShowUrlInput(false);
+    setExternalUrl('');
+    
+    toast({
+      title: "Success",
+      description: "Profile picture URL set successfully",
+    });
+  };
+
   const onSubmit = async (data: PatientFormValues) => {
+    if (!user?.id) return;
+    
     setIsUpdating(true);
     setSaveSuccess(false);
     setSaveError(false);
+    setErrorMessage('');
     
     try {
-      // Update user metadata in profiles table
-      const { error: profileError } = await supabase
-        .from('profiles')
-        .update({
-          first_name: data.first_name,
-          last_name: data.last_name,
-          phone_number: data.phone_number,
-          gender: data.gender,
-          date_of_birth: data.date_of_birth || '',
-          about_me: data.about_me || '',
-          country: data.country,
-          address: data.address || '',
-          city: data.city || '',
-          state: data.state || '', 
-          pincode: data.pincode || '',
-        })
-        .eq('id', user?.id);
+      // Update profile using patientService
+      const updateResult = await patientService.updatePatientProfile({
+        userId: user.id,
+        email: user.email || '',
+        fullName: data.fullName,
+        phoneNumber: data.phoneNumber,
+        gender: data.gender,
+        dateOfBirth: data.dateOfBirth || '',
+        bio: data.bio || '',
+        location: data.location,
+        address: data.address || '',
+        city: data.city || '',
+        state: data.state || '', 
+        pincode: data.pincode || '',
+        avatarUrl: data.avatarUrl || '',
+      });
 
-      if (profileError) throw profileError;
+      if (!updateResult.success) {
+        throw new Error(updateResult.error || 'Failed to update profile');
+      }
+
+      // Record this activity
+      await patientService.recordUserActivity({
+        activityType: 'profile_update',
+        description: 'Updated profile information',
+        deviceInfo: currentDeviceInfo || getFormattedDeviceInfo(),
+        timestamp: new Date().toISOString(),
+        metadata: {
+          updatedFields: Object.keys(data).filter(key => !!data[key as keyof PatientFormValues])
+        }
+      });
+
+      // Refresh the activity list
+      const { data: activities } = await patientService.getUserActivity(user.id, 5);
+      if (activities) {
+        setUserActivities(activities);
+      }
 
       // Success notification
       setSaveSuccess(true);
       
       // Success notification will auto-hide after 3 seconds
       setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving profile:', error);
       setSaveSuccess(false);
       setSaveError(true);
-      setTimeout(() => setSaveError(false), 3000);
+      setErrorMessage(error.message || 'There was an error saving your changes.');
+      setTimeout(() => setSaveError(false), 5000);
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  // Helper function to format activity timestamp
+  const formatActivityTime = (timestamp: string) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffHour = Math.floor(diffMs / 3600000);
+    const diffDay = Math.floor(diffMs / 86400000);
+    
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin} min ago`;
+    if (diffHour < 24) return `${diffHour} hr ago`;
+    if (diffDay < 7) return `${diffDay} days ago`;
+    
+    return format(date, 'MMM d, yyyy');
+  };
+  
+  // Helper function to get activity icon
+  const getActivityIcon = (type: string) => {
+    switch (type) {
+      case 'login': return '🔐'; // Lock
+      case 'profile_update': return '👤'; // Person
+      case 'assessment': return '📊'; // Chart
+      case 'appointment': return '📅'; // Calendar
+      case 'journal': return '📓'; // Notebook
+      case 'message': return '💬'; // Chat
+      case 'session': return '⏱️'; // Timer
+      default: return '📋'; // Clipboard
+    }
+  };
+
+  // If we detect a storage error, show the storage fix option
+  useEffect(() => {
+    if (avatarError && 
+        (avatarError.includes('Bucket not found') || 
+         avatarError.includes('storage') || 
+         avatarError.includes('bucket'))) {
+      setShowStorageFix(true);
+    }
+  }, [avatarError]);
+  
+  // Function to attempt fixing storage buckets
+  const attemptStorageFix = async () => {
+    setFixingStorage(true);
+    try {
+      const result = await ensureStorageBucketsExist();
+      
+      if (result.success) {
+        toast({
+          title: "Success",
+          description: "Storage buckets have been configured! Please try uploading again.",
+        });
+        
+        // Clear the error so user can try again
+        setAvatarError(null);
+        setShowStorageFix(false);
+      } else {
+        // Still failed
+        toast({
+          title: "Configuration Failed",
+          description: "Unable to configure storage buckets. Please contact support.",
+          variant: "destructive"
+        });
+        
+        console.error("Storage configuration errors:", result.errors);
+      }
+    } catch (error) {
+      console.error("Error fixing storage:", error);
+      toast({
+        title: "Error",
+        description: "An error occurred while configuring storage.",
+        variant: "destructive"
+      });
+    } finally {
+      setFixingStorage(false);
     }
   };
 
@@ -375,7 +592,20 @@ export default function Settings() {
         
         {saveError && (
           <div className="bg-red-100 border border-red-300 text-red-700 px-4 py-3 rounded mb-4">
-            There was an error saving your changes. Please try again.
+            <p className="font-semibold">There was an error saving your changes.</p>
+            {errorMessage && <p className="text-sm mt-1">{errorMessage}</p>}
+            <p className="text-sm mt-1">Please try again or contact support if the issue persists.</p>
+          </div>
+        )}
+        
+        {showStorageFix && (
+          <StorageTroubleshootingMessage onTryFix={attemptStorageFix} />
+        )}
+        
+        {fixingStorage && (
+          <div className="bg-blue-100 border border-blue-300 text-blue-700 px-4 py-3 rounded mb-4 flex items-center">
+            <div className="mr-3 h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            Configuring storage buckets... Please wait.
           </div>
         )}
         
@@ -396,21 +626,15 @@ export default function Settings() {
                   {/* Avatar Upload Section */}
                   <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 mb-8">
                     <div className="relative cursor-pointer">
-                      <Avatar className="h-24 w-24 cursor-pointer">
-                        <AvatarImage 
-                          src={watch('avatar_url')} 
-                          alt="Profile picture"
-                          onError={(e) => {
-                            console.log("Avatar failed to load:", e);
-                            // Hide the image if it fails to load
-                            const target = e.currentTarget as HTMLImageElement;
-                            target.style.display = 'none';
-                          }}
+                      {avatarError ? (
+                        <AvatarErrorState error={avatarError} onRetry={handleRetryUpload} />
+                      ) : (
+                        <FallbackAvatar
+                          src={watch('avatarUrl')}
+                          name={watch('fullName') || 'User'}
+                          className="h-24 w-24 cursor-pointer"
                         />
-                        <AvatarFallback className="bg-blue-600 text-white text-lg">
-                          {watch('first_name')?.[0]}{watch('last_name')?.[0]}
-                        </AvatarFallback>
-                      </Avatar>
+                      )}
                       <label htmlFor="profile-upload" className="absolute inset-0 cursor-pointer">
                         <span className="sr-only">Upload profile picture</span>
                       </label>
@@ -440,9 +664,24 @@ export default function Settings() {
                       <p className="text-xs text-slate-400 mt-1">
                         Recommended: Square image, at least 300x300 pixels
                       </p>
-                      {watch('avatar_url') && (
+                      {avatarError && (
+                        <p className="text-xs text-red-600 mt-1 max-w-[220px]">
+                          Error: {avatarError}
+                        </p>
+                      )}
+                      {showUrlInput && (
+                        <div className="mt-2">
+                          <p className="text-xs text-blue-600">Alternative: Use a public image URL</p>
+                          <ExternalUrlInput 
+                            value={externalUrl} 
+                            onChange={setExternalUrl}
+                            onSubmit={handleUseExternalUrl}
+                          />
+                        </div>
+                      )}
+                      {!avatarError && watch('avatarUrl') && (
                         <p className="text-xs text-green-600 mt-1">
-                          Avatar URL: {watch('avatar_url').substring(0, 30)}...
+                          Avatar URL: {watch('avatarUrl').substring(0, 30)}...
                         </p>
                       )}
                     </div>
@@ -451,47 +690,35 @@ export default function Settings() {
                   {/* Personal Details Section */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                      <Label htmlFor="first_name">First Name <span className="text-red-500">*</span></Label>
+                      <Label htmlFor="fullName">Full Name <span className="text-red-500">*</span></Label>
                       <Input
-                        id="first_name"
-                        {...register('first_name')}
+                        id="fullName"
+                        {...register('fullName')}
                         className="mt-1"
                       />
-                      {errors.first_name && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.first_name.message)}</p>
+                      {errors.fullName && (
+                        <p className="text-red-500 text-sm mt-1">{String(errors.fullName.message)}</p>
                       )}
                     </div>
 
                     <div>
-                      <Label htmlFor="last_name">Last Name <span className="text-red-500">*</span></Label>
+                      <Label htmlFor="phoneNumber">Phone Number <span className="text-red-500">*</span></Label>
                       <Input
-                        id="last_name"
-                        {...register('last_name')}
+                        id="phoneNumber"
+                        {...register('phoneNumber')}
                         className="mt-1"
                       />
-                      {errors.last_name && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.last_name.message)}</p>
+                      {errors.phoneNumber && (
+                        <p className="text-red-500 text-sm mt-1">{String(errors.phoneNumber.message)}</p>
                       )}
                     </div>
 
                     <div>
-                      <Label htmlFor="phone_number">Phone Number <span className="text-red-500">*</span></Label>
+                      <Label htmlFor="dateOfBirth">Date of Birth</Label>
                       <Input
-                        id="phone_number"
-                        {...register('phone_number')}
-                        className="mt-1"
-                      />
-                      {errors.phone_number && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.phone_number.message)}</p>
-                      )}
-                    </div>
-
-                    <div>
-                      <Label htmlFor="date_of_birth">Date of Birth</Label>
-                      <Input
-                        id="date_of_birth"
+                        id="dateOfBirth"
                         type="date"
-                        {...register('date_of_birth')}
+                        {...register('dateOfBirth')}
                         className="mt-1"
                       />
                     </div>
@@ -519,24 +746,24 @@ export default function Settings() {
                     </div>
 
                     <div>
-                      <Label htmlFor="country">Country <span className="text-red-500">*</span></Label>
+                      <Label htmlFor="location">Country <span className="text-red-500">*</span></Label>
                       <Input
-                        id="country"
-                        {...register('country')}
+                        id="location"
+                        {...register('location')}
                         className="mt-1"
                       />
-                      {errors.country && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.country.message)}</p>
+                      {errors.location && (
+                        <p className="text-red-500 text-sm mt-1">{String(errors.location.message)}</p>
                       )}
                     </div>
                   </div>
 
                   {/* About Me Section */}
                   <div className="mt-6">
-                    <Label htmlFor="about_me">About Me</Label>
+                    <Label htmlFor="bio">About Me</Label>
                     <Textarea
-                      id="about_me"
-                      {...register('about_me')}
+                      id="bio"
+                      {...register('bio')}
                       className="mt-1"
                       rows={4}
                       placeholder="Share a little about yourself, your interests, or why you're using this platform"
@@ -547,12 +774,13 @@ export default function Settings() {
                   <div className="mt-6">
                     <h3 className="text-lg font-medium mb-4">Address Information</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="md:col-span-2">
+                      <div>
                         <Label htmlFor="address">Street Address</Label>
                         <Input
                           id="address"
                           {...register('address')}
                           className="mt-1"
+                          placeholder="Enter your street address"
                         />
                       </div>
 
@@ -562,6 +790,7 @@ export default function Settings() {
                           id="city"
                           {...register('city')}
                           className="mt-1"
+                          placeholder="Enter your city"
                         />
                       </div>
 
@@ -571,23 +800,46 @@ export default function Settings() {
                           id="state"
                           {...register('state')}
                           className="mt-1"
+                          placeholder="Enter your state or province"
                         />
                       </div>
 
                       <div>
-                        <Label htmlFor="pincode">Postal/Zip Code</Label>
+                        <Label htmlFor="pincode">Postal/ZIP Code</Label>
                         <Input
                           id="pincode"
                           {...register('pincode')}
                           className="mt-1"
+                          placeholder="Enter your postal or ZIP code"
                         />
                       </div>
                     </div>
                   </div>
 
-                  <Button type="submit" className="bg-[#20C0F3] hover:bg-[#20C0F3]/90 text-white mt-6">
-                    Save Changes
-                  </Button>
+                  <div className="flex justify-end gap-4 mt-8">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => navigate(-1)}
+                      disabled={isUpdating}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="submit"
+                      className="bg-[#20C0F3] text-white hover:bg-[#20C0F3]/90"
+                      disabled={isUpdating}
+                    >
+                      {isUpdating ? (
+                        <>
+                          <span className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></span>
+                          Saving...
+                        </>
+                      ) : (
+                        'Save Changes'
+                      )}
+                    </Button>
+                  </div>
                 </form>
               </CardContent>
             </Card>
@@ -635,18 +887,55 @@ export default function Settings() {
                   </div>
                   
                   <div className="pt-6 mt-6 border-t">
-                    <h3 className="text-lg font-medium mb-2">Login History</h3>
+                    <h3 className="text-lg font-medium mb-2">Account Activity</h3>
                     <p className="text-sm text-slate-500 mb-4">
-                      Recent logins to your account
+                      Recent activity in your account
                     </p>
                     
                     <div className="space-y-3">
-                      <div className="flex justify-between p-3 rounded-lg bg-slate-50">
-                        <div>
-                          <p className="font-medium">Current session</p>
-                          <p className="text-sm text-slate-500">
-                            {currentDeviceInfo || getFormattedDeviceInfo()}
-                          </p>
+                      {loadingActivities ? (
+                        // Loading state for activities
+                        <>
+                          <Skeleton className="h-16 w-full rounded-lg" />
+                          <Skeleton className="h-16 w-full rounded-lg" />
+                          <Skeleton className="h-16 w-full rounded-lg" />
+                        </>
+                      ) : userActivities.length > 0 ? (
+                        // Show user activities
+                        userActivities.map((activity) => (
+                          <div key={activity.id} className="flex justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
+                            <div className="flex items-start gap-3">
+                              <div className="text-2xl">{getActivityIcon(activity.activityType)}</div>
+                              <div>
+                                <p className="font-medium">{activity.description}</p>
+                                {activity.deviceInfo && (
+                                  <p className="text-sm text-slate-500">{activity.deviceInfo}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-sm text-right flex flex-col justify-between">
+                              <p>{format(new Date(activity.timestamp), 'MMM d, yyyy')}</p>
+                              <p className="text-slate-500">{formatActivityTime(activity.timestamp)}</p>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        // Fallback if no activities
+                        <div className="flex justify-center p-4 rounded-lg bg-slate-50">
+                          <p className="text-slate-500">No recent activity found</p>
+                        </div>
+                      )}
+                      
+                      {/* Current session - always show this */}
+                      <div className="flex justify-between p-3 rounded-lg bg-blue-50 border border-blue-100">
+                        <div className="flex items-start gap-3">
+                          <div className="text-2xl">🔐</div>
+                          <div>
+                            <p className="font-medium">Current session</p>
+                            <p className="text-sm text-slate-500">
+                              {currentDeviceInfo || getFormattedDeviceInfo()}
+                            </p>
+                          </div>
                         </div>
                         <div className="text-sm text-right">
                           <p>

@@ -149,11 +149,16 @@ export default function PatientSignup() {
       }
 
       if (user) {
-        // Create patient profile in the database
+        // Create patient profile in the database with correct fields
         const { error: profileError } = await supabase.from('patient_profiles').insert({
-          id: user.id,
+          user_id: user.id,
           email: formData.email,
           full_name: `${formData.firstName} ${formData.lastName}`,
+          location: formData.country,
+          name_slug: `${formData.firstName.toLowerCase()}-${formData.lastName.toLowerCase()}`,
+          gender: 'Prefer not to say', // Default value
+          is_profile_complete: false,
+          is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         });

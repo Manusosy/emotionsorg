@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/authContext';
-import { dataService } from '@/services';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { AnimatePresence, motion } from "framer-motion";
 import EmotionButton from "@/features/mood-tracking/components/EmotionButton";
 import QuestionCard from "@/features/mood-tracking/components/QuestionCard";
-import { ArrowRight, Book, Heart, LifeBuoy, FileText, Users } from 'lucide-react';
+import { ArrowRight, Heart } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 
 // Emotion data
 const emotions = [{
@@ -128,13 +128,11 @@ const DashboardMoodAssessment = () => {
   const saveMoodEntry = async () => {
     if (!user?.id) {
       toast.error('You must be logged in to save your assessment');
-      setIsSaving(false);
       return;
     }
 
     if (!selectedEmotion) {
       toast.error('Please select an emotion before saving');
-      setIsSaving(false);
       return;
     }
 
@@ -150,11 +148,11 @@ const DashboardMoodAssessment = () => {
       // Calculate mood score
       const moodScore = getMoodScore(selectedEmotion, score);
       
-      // Prepare save data
-      const saveData = {
+      // Prepare save data with timestamps
+      const entryData = {
         user_id: user.id,
         mood: moodScore,
-        mood_type: selectedEmotionData.type as 'happy' | 'calm' | 'sad' | 'angry' | 'worried' | 'neutral',
+        mood_type: selectedEmotionData.type,
         assessment_result: selectedEmotion,
         assessment_score: score,
         notes: `Assessment score: ${score}`,
@@ -163,29 +161,39 @@ const DashboardMoodAssessment = () => {
           score >= 4 ? 'high-concern' : 
           score >= 2 ? 'moderate-concern' : 'low-concern'
         ],
-        activities: ['emotion-check', 'quick-assessment']
+        activities: ['emotion-check', 'quick-assessment'],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
       
-      // Save to database with timeout
-      const savePromise = dataService.addMoodEntry(saveData);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Save operation timed out')), 10000)
-      );
+      // Insert directly into Supabase
+      const { data, error } = await supabase
+        .from('mood_entries')
+        .insert(entryData)
+        .select('id')
+        .single();
+      
+      if (error) {
+        throw error;
+      }
 
-      await Promise.race([savePromise, timeoutPromise]);
-
+      // Success - show toast
       toast.success("Mood assessment saved successfully!");
       
       // Store in sessionStorage for components that might load later
       sessionStorage.setItem('last_mood_assessment', JSON.stringify({
+        id: data.id,
         moodScore,
         moodType: selectedEmotionData.type,
         timestamp: new Date().toISOString(),
-        saved: true,
-        saveTime: new Date().toISOString()
+        saved: true
       }));
 
-      // Reset the form after successful save
+      // Dispatch events to update UI components
+      window.dispatchEvent(new CustomEvent('mood-assessment-completed'));
+      window.dispatchEvent(new CustomEvent('dashboard-reload-needed'));
+
+      // Reset the form
       resetAll();
 
     } catch (error) {
@@ -328,38 +336,48 @@ const DashboardMoodAssessment = () => {
                       onClick={navigateToMoodMentors} 
                       className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white text-sm"
                     >
-                      Talk to Mentor
+                      Find a Mentor
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
                     
                     <Button 
-                      onClick={navigateToHelpGroups}
-                      className="w-full bg-[#0078FF]/10 hover:bg-[#0078FF]/20 text-[#0078FF] text-sm"
+                      onClick={navigateToHelpGroups} 
+                      variant="outline" 
+                      className="w-full border-[#20C0F3] text-[#20C0F3] hover:bg-[#20C0F3]/5 hover:text-[#0078FF] text-sm"
                     >
-                      Join Groups
+                      Join Support Group
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
                   </div>
                 </div>
               )}
-            </div>
-
-            <div className="flex gap-3">
-              <Button
-                onClick={saveMoodEntry}
-                disabled={isSaving}
-                className="flex-1 bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white"
-              >
-                {isSaving ? 'Saving...' : 'Save Assessment'}
-              </Button>
               
-              <Button
-                onClick={resetAll}
-                variant="outline"
-                className="border-gray-300 text-gray-700 hover:bg-gray-50"
-              >
-                Start Over
-              </Button>
+              <div className="mt-4 flex justify-between">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={resetAll}
+                  disabled={isSaving}
+                >
+                  Start Over
+                </Button>
+                
+                <Button
+                  onClick={saveMoodEntry}
+                  disabled={isSaving}
+                  className="bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white"
+                >
+                  {isSaving ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Saving...
+                    </>
+                  ) : "Save Assessment"}
+                </Button>
+              </div>
             </div>
           </motion.div>
         )}

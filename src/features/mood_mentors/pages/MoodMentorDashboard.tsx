@@ -20,7 +20,9 @@ import {
   Settings,
   LayoutDashboard,
   ChevronLeft,
-  BookOpen
+  BookOpen,
+  MoreVertical,
+  X
 } from "lucide-react";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { AuthContext } from "@/contexts/authContext";
@@ -39,6 +41,12 @@ import {
 import { motion } from "framer-motion";
 import { supabase } from "@/lib/supabase";
 import { MoodMentorProfile } from "@/types/user";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
 
 // Add interface for dashboard Activities since we don't have a real activity service
 interface Activity {
@@ -59,11 +67,14 @@ interface StatCard {
 // Define appointment interface
 interface Appointment {
   id: string;
+  patient_id: string;
   patient_name: string;
   date: string;
   time: string;
   type: 'video' | 'in-person' | 'chat';
   status: 'upcoming' | 'canceled' | 'completed';
+  patient_email?: string;
+  patient_avatar_url?: string;
 }
 
 // Note: We now use the imported MoodMentorProfile interface from @/types/user
@@ -147,6 +158,9 @@ export default function MoodMentorDashboard() {
   const [appointmentDates, setAppointmentDates] = useState<number[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(true);
   
+  // Update the calendar state to track appointments per day
+  const [appointmentsByDay, setAppointmentsByDay] = useState<{[key: number]: number}>({});
+  
   // Get calendar data
   const currentMonthName = format(currentDate, "MMMM yyyy");
   const daysInMonth = getDaysInMonth(currentDate);
@@ -167,30 +181,44 @@ export default function MoodMentorDashboard() {
         const firstDay = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
         const lastDay = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
         
-        // Use try-catch to handle potential 404 errors
+        // Format dates properly for the query
+        const firstDayFormatted = format(firstDay, 'yyyy-MM-dd');
+        const lastDayFormatted = format(lastDay, 'yyyy-MM-dd');
+        
         try {
+          // Use the mentor_appointments_view instead of appointments table directly
           const { data: appointments, error } = await supabase
-            .from('appointments')
+            .from('mentor_appointments_view')
             .select('*')
             .eq('mentor_id', user.id)
-            .gte('start_time', firstDay.toISOString())
-            .lte('start_time', lastDay.toISOString())
+            .gte('date', firstDayFormatted)
+            .lte('date', lastDayFormatted)
             .neq('status', 'cancelled');
             
           if (error) {
             console.warn('Error fetching calendar appointments:', error);
             setAppointmentDates([]);
+            setAppointmentsByDay({});
             return;
           }
           
           if (!appointments || appointments.length === 0) {
             setAppointmentDates([]);
+            setAppointmentsByDay({});
           } else {
+            // Count appointments per day
+            const appointmentCounts: {[key: number]: number} = {};
             const daysWithAppointments = appointments.map(apt => {
-              const date = new Date(apt.start_time);
+              const date = new Date(apt.date);
+              const day = date.getDate();
+              
+              // Count appointments for this day
+              appointmentCounts[day] = (appointmentCounts[day] || 0) + 1;
+              
               return date.getDate();
             });
             
+            console.log("Days with appointments:", daysWithAppointments);
             setAppointmentDates(daysWithAppointments);
           }
         } catch (supabaseError) {
@@ -237,41 +265,51 @@ export default function MoodMentorDashboard() {
       
       setIsLoading(true);
       try {
-        try {
-          // Use appointmentService with correct method name
-          const response = await appointmentService.getMoodMentorAppointments(
-            user.id,
-            { 
-              status: 'scheduled',
-              limit: 5
-            }
-          );
-            
-          if (!response || response.length === 0) {
-            // No appointments found, return empty array
-            setAppointments([]);
-          } else {
-            // Format the real data to match our appointment interface
-            const formattedAppointments = response.map(apt => ({
-              id: apt.id,
-              patient_name: apt.title || 'Appointment', // Using title as patient name
-              date: apt.date,
-              time: apt.startTime,
-              type: 'video' as 'video' | 'in-person' | 'chat', // Type assertion to match the interface
-              status: apt.status === 'scheduled' ? 'upcoming' as const : 'completed' as const
-            }));
-            
-            setAppointments(formattedAppointments);
-          }
-        } catch (serviceError) {
-          console.warn('Error calling appointment service:', serviceError);
-          setAppointments([]);
+        // Get today's date in YYYY-MM-DD format
+        const todayFormatted = format(new Date(), 'yyyy-MM-dd');
+        console.log("Fetching appointments for date >= ", todayFormatted);
+        
+        // Use the mentor_appointments_view directly through Supabase
+        const { data: appointmentsData, error } = await supabase
+          .from('mentor_appointments_view')
+          .select('*')
+          .eq('mentor_id', user.id)
+          .in('status', ['pending', 'scheduled'])
+          .gte('date', todayFormatted)
+          .order('date', { ascending: true });
           
-          // Show a helpful message only once for this specific error
-          if (!localStorage.getItem('showed_appointment_missing_warning')) {
-            toast.warning('Appointment data may be unavailable until the database is set up.');
-            localStorage.setItem('showed_appointment_missing_warning', 'true');
-          }
+        if (error) {
+          console.error('Error fetching appointments:', error);
+          toast.error("Failed to fetch appointments");
+          setAppointments([]);
+          return;
+        }
+        
+        console.log("Raw appointments data:", appointmentsData);
+        
+        if (!appointmentsData || appointmentsData.length === 0) {
+          // No appointments found, return empty array
+          console.log("No appointments found");
+          setAppointments([]);
+        } else {
+          // Format the real data to match our appointment interface
+          const formattedAppointments = appointmentsData.map(apt => ({
+            id: apt.id,
+            patient_id: apt.patient_id,
+            patient_name: apt.patient_name || 'Unknown Patient',
+            date: apt.date,
+            time: apt.start_time,
+            type: apt.meeting_type as 'video' | 'in-person' | 'chat',
+            status: apt.status === 'scheduled' ? 'upcoming' as const : 'completed' as const,
+            patient_email: apt.patient_email,
+            patient_avatar_url: apt.patient_avatar_url
+          }));
+          
+          console.log("Formatted appointments for mentor dashboard:", formattedAppointments);
+          setAppointments(formattedAppointments);
+          
+          // Also trigger a refresh of the dashboard stats to ensure they're in sync
+          fetchDashboardStats();
         }
       } catch (error) {
         console.error('Error in appointment fetch:', error);
@@ -326,7 +364,7 @@ export default function MoodMentorDashboard() {
           fullName: user.user_metadata?.name || '',
           email: user.email || '',
           bio: '',
-          avatarUrl: user.user_metadata?.avatar_url || '',
+          avatarUrl: user.user_metadata?.avatarUrl || '',
           specialties: [],
           isProfileComplete: false
         });
@@ -337,6 +375,27 @@ export default function MoodMentorDashboard() {
     } catch (error) {
       console.error('Error checking user status:', error);
       toast.error('Error loading profile data');
+    }
+  };
+  
+  // Check if an appointment is starting soon (within 15 minutes)
+  const isAppointmentStartingSoon = (appointmentTime: string, appointmentDate: string) => {
+    if (!appointmentTime || !appointmentDate) return false;
+    
+    try {
+      const now = new Date();
+      const [hours, minutes] = appointmentTime.split(':').map(Number);
+      const appointmentDateTime = new Date(appointmentDate);
+      appointmentDateTime.setHours(hours, minutes, 0, 0);
+      
+      // Calculate difference in minutes
+      const diffInMinutes = (appointmentDateTime.getTime() - now.getTime()) / (1000 * 60);
+      
+      // Return true if appointment is within 15 minutes (and not in the past)
+      return diffInMinutes >= 0 && diffInMinutes <= 15;
+    } catch (error) {
+      console.error('Error checking appointment time:', error);
+      return false;
     }
   };
   
@@ -375,167 +434,200 @@ export default function MoodMentorDashboard() {
     if (!user) return;
     
     try {
-      // Get total active patients
-      const { data: patients, error: patientsError } = await supabase
-        .from('appointments')
-        .select('patient_id', { count: 'exact', head: true })
-        .eq('mentor_id', user.id)
-        .gte('start_time', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()) // Last 90 days
-        .neq('status', 'cancelled');
+      console.log("Fetching dashboard stats for user:", user.id);
       
-      if (patientsError) throw patientsError;
-
-      // Get upcoming appointments count
-      const { data: upcomingApts, error: aptsError } = await supabase
-        .from('appointments')
-        .select('*', { count: 'exact', head: true })
-        .eq('mentor_id', user.id)
-        .gte('start_time', new Date().toISOString())
-        .neq('status', 'cancelled');
+      // Try to get stats from the new mentor_dashboard_stats view first
+      const { data: dashboardStats, error: statsError } = await supabase
+        .from('mentor_dashboard_stats')
+        .select('*')
+        .eq('user_id', user.id)
+        .single();
         
-      if (aptsError) throw aptsError;
-
-      // Get active support groups count
-      const { data: groups, error: groupsError } = await supabase
-        .from('mentor_groups')
-        .select('*', { count: 'exact', head: true })
-        .eq('mentor_id', user.id)
-        .eq('status', 'active');
+      if (statsError) {
+        console.warn('Error fetching from mentor_dashboard_stats:', statsError);
+        // Fall back to individual queries if view doesn't exist or has other errors
         
-      if (groupsError) throw groupsError;
+        // Get total active patients
+        const { count: patientCount, error: patientsError } = await supabase
+          .from('appointments')
+          .select('patient_id', { count: 'exact', head: true })
+          .eq('mentor_id', user.id)
+          .gte('created_at', format(subDays(new Date(), 90), 'yyyy-MM-dd')) // Last 90 days
+          .neq('status', 'cancelled');
+        
+        if (patientsError) throw patientsError;
 
-      // Get average rating
-      const { data: ratings, error: ratingsError } = await supabase
-        .from('mentor_reviews')
-        .select('rating')
-        .eq('mentor_id', user.id);
-      
-      if (ratingsError) throw ratingsError;
+        // Get upcoming appointments count - use the mentor_appointments_view
+        const todayFormatted = format(new Date(), 'yyyy-MM-dd');
+        console.log("Today's date for appointments query:", todayFormatted);
+        
+        // First try to directly query the appointments table
+        const { data: appointmentsData, count: upcomingCount, error: aptsError } = await supabase
+          .from('mentor_appointments_view')
+          .select('*', { count: 'exact' })
+          .eq('mentor_id', user.id)
+          .in('status', ['pending', 'scheduled'])
+          .gte('date', todayFormatted);
+          
+        if (aptsError) {
+          console.error('Error fetching upcoming appointments count:', aptsError);
+          throw aptsError;
+        }
+        
+        console.log("Found appointments:", appointmentsData?.length, "with count:", upcomingCount);
 
-      const averageRating = ratings && ratings.length > 0
-        ? (ratings.reduce((acc, curr) => acc + curr.rating, 0) / ratings.length).toFixed(1)
-        : 0;
+        // Get active support groups count
+        const { count: groupsCount, error: groupsError } = await supabase
+          .from('mentor_groups')
+          .select('*', { count: 'exact', head: true })
+          .eq('mentor_id', user.id)
+          .eq('is_active', true);
+          
+        if (groupsError) throw groupsError;
 
-      // Update stats
+        // Get average rating
+        const { data: ratings, error: ratingsError } = await supabase
+          .from('mentor_reviews')
+          .select('rating')
+          .eq('mentor_id', user.id);
+        
+        if (ratingsError) throw ratingsError;
+
+        const averageRating = ratings && ratings.length > 0
+          ? (ratings.reduce((acc, curr) => acc + curr.rating, 0) / ratings.length).toFixed(1)
+          : 0;
+
+        console.log("Dashboard stats (individual queries):", { 
+          patientCount, 
+          upcomingCount, 
+          actualAppointments: appointmentsData?.length || 0,
+          groupsCount, 
+          averageRating 
+        });
+
+        // Update stats - use appointmentsData.length as a fallback if count is not working
+        const actualAppointmentCount = upcomingCount || appointmentsData?.length || 0;
+        
         setStats([
           {
             title: "Total Patients",
-          value: patients?.count || 0,
+            value: patientCount || 0,
             icon: <Users className="h-5 w-5 text-blue-500" />
           },
           {
             title: "Upcoming Appointments",
-          value: upcomingApts?.count || 0,
+            value: actualAppointmentCount,
             icon: <Calendar className="h-5 w-5 text-purple-500" />
           },
           {
             title: "Support Groups",
-          value: groups?.count || 0,
+            value: groupsCount || 0,
             icon: <Users className="h-5 w-5 text-amber-500" />
           },
           {
             title: "Patient Satisfaction",
-          value: `${averageRating}/5`,
+            value: `${averageRating}/5`,
             icon: <BarChart3 className="h-5 w-5 text-green-500" />
           }
         ]);
+      } else if (dashboardStats) {
+        // Use the data from the stats view
+        console.log("Dashboard stats (from view):", dashboardStats);
+        
+        setStats([
+          {
+            title: "Total Patients",
+            value: dashboardStats.total_patients || 0,
+            icon: <Users className="h-5 w-5 text-blue-500" />
+          },
+          {
+            title: "Upcoming Appointments",
+            value: dashboardStats.upcoming_appointments || 0,
+            icon: <Calendar className="h-5 w-5 text-purple-500" />
+          },
+          {
+            title: "Support Groups",
+            value: dashboardStats.active_groups || 0,
+            icon: <Users className="h-5 w-5 text-amber-500" />
+          },
+          {
+            title: "Patient Satisfaction",
+            value: `${dashboardStats.average_rating || 0}/5`,
+            icon: <BarChart3 className="h-5 w-5 text-green-500" />
+          }
+        ]);
+      }
     } catch (error) {
       console.error('Error fetching dashboard stats:', error);
       toast.error('Failed to load dashboard statistics');
     }
   };
   
-  // Fetch recent activities by mocking the function (no real activity service)
+  // Fetch recent activities by using the mentor_activities_view
   const fetchRecentActivities = async () => {
     if (!user) return;
     
     setActivitiesLoading(true);
     try {
-      // Get recent appointments
-      const { data: recentAppointments, error: apptsError } = await supabase
-        .from('appointments')
-        .select(`
-          id,
-          start_time,
-          status,
-          patient:patient_id (
-            name
-          )
-        `)
-        .eq('mentor_id', user.id)
-        .order('start_time', { ascending: false })
-        .limit(5);
-      
-      if (apptsError) throw apptsError;
-
-      // Get recent messages
-      const { data: recentMessages, error: msgsError } = await supabase
-        .from('messages')
-        .select(`
-          id,
-          created_at,
-          sender:sender_id (
-            name
-          )
-        `)
-        .eq('recipient_id', user.id)
+      // Use the new mentor_activities_view
+      const { data: activities, error: activitiesError } = await supabase
+        .from('mentor_activities_view')
+        .select('*')
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(5);
-        
-      if (msgsError) throw msgsError;
-
-      // Get recent group activities
-      const { data: recentGroupActivities, error: groupsError } = await supabase
-        .from('group_participants')
-        .select(`
-          group_id,
-          joined_at,
-          patient:patient_id (
-            name
-          ),
-          group:group_id (
-            name
-          )
-        `)
-        .eq('group:mentor_id', user.id)
-        .order('joined_at', { ascending: false })
-        .limit(5);
+        .limit(10);
       
-      if (groupsError) throw groupsError;
-          
-      // Combine and sort all activities
-      const allActivities = [
-        ...(recentAppointments?.map(apt => ({
-          id: apt.id,
-          title: `Appointment with ${apt.patient.name}`,
-          time: apt.start_time,
-          icon: <Calendar className="h-4 w-4" />,
-          iconBgClass: 'bg-blue-100',
-          iconColorClass: 'text-blue-600'
-        })) || []),
-        ...(recentMessages?.map(msg => ({
-          id: msg.id,
-          title: `New message from ${msg.sender.name}`,
-          time: msg.created_at,
-          icon: <MessageSquare className="h-4 w-4" />,
-          iconBgClass: 'bg-purple-100',
-          iconColorClass: 'text-purple-600'
-        })) || []),
-        ...(recentGroupActivities?.map(activity => ({
-          id: `${activity.group_id}-${activity.patient.id}`,
-          title: `${activity.patient.name} joined ${activity.group.name}`,
-          time: activity.joined_at,
-          icon: <Users className="h-4 w-4" />,
-          iconBgClass: 'bg-amber-100',
-          iconColorClass: 'text-amber-600'
-        })) || [])
-      ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-       .slice(0, 10);
+      if (activitiesError) {
+        console.warn('Error fetching from mentor_activities_view:', activitiesError);
+        throw activitiesError;
+      }
 
-      setRecentActivities(allActivities);
+      if (!activities || activities.length === 0) {
+        setRecentActivities([]);
+      } else {
+        // Map the activity data to our UI format
+        const formattedActivities = activities.map(activity => {
+          let icon, iconBgClass, iconColorClass;
+          
+          // Set the appropriate icon and styles based on activity type
+          switch (activity.activity_type) {
+            case 'appointment':
+              icon = <Calendar className="h-4 w-4" />;
+              iconBgClass = 'bg-blue-100';
+              iconColorClass = 'text-blue-600';
+              break;
+            case 'review':
+              icon = <BarChart3 className="h-4 w-4" />;
+              iconBgClass = 'bg-green-100';
+              iconColorClass = 'text-green-600';
+              break;
+            case 'group':
+              icon = <Users className="h-4 w-4" />;
+              iconBgClass = 'bg-amber-100';
+              iconColorClass = 'text-amber-600';
+              break;
+            default:
+              icon = <Bell className="h-4 w-4" />;
+              iconBgClass = 'bg-gray-100';
+              iconColorClass = 'text-gray-600';
+          }
+          
+          return {
+            id: activity.activity_id,
+            title: activity.activity_title,
+            time: formatActivityTime(activity.created_at),
+            icon,
+            iconBgClass,
+            iconColorClass
+          };
+        });
+        
+        setRecentActivities(formattedActivities);
+      }
     } catch (error) {
       console.error('Error fetching recent activities:', error);
-      toast.error('Failed to load recent activities');
+      // Fallback to showing an empty state
+      setRecentActivities([]);
     } finally {
       setActivitiesLoading(false);
     }
@@ -659,12 +751,49 @@ export default function MoodMentorDashboard() {
     );
   };
 
+  // Add this function after the getAppointmentBadge function
+  const handleStatusChange = async (appointmentId: string, newStatus: string) => {
+    try {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ status: newStatus })
+        .eq("id", appointmentId);
+
+      if (error) throw error;
+      
+      toast.success(`Appointment ${newStatus} successfully`);
+      
+      // Refresh appointments
+      const updatedAppointments = appointments.map(apt => 
+        apt.id === appointmentId 
+          ? { ...apt, status: newStatus === 'scheduled' ? 'upcoming' : newStatus as 'upcoming' | 'canceled' | 'completed' }
+          : apt
+      );
+      
+      setAppointments(updatedAppointments);
+    } catch (error: any) {
+      console.error('Error updating appointment status:', error);
+      toast.error(error.message || "Failed to update appointment status");
+    }
+  };
+
+  // Add separate useEffect for dashboard stats with proper dependencies
+  useEffect(() => {
+    if (user) {
+      console.log("Calling fetchDashboardStats from useEffect");
+      fetchDashboardStats();
+    }
+  }, [user]);
+
+  // Add separate useEffect for recent activities
+  useEffect(() => {
+    if (user) {
+      fetchRecentActivities();
+    }
+  }, [user]);
+
   return (
-    <DashboardLayout
-      title={getTimeBasedGreeting()}
-      subtitle={getMotivationalMessage()}
-      userType="mentor"
-    >
+    <DashboardLayout>
       {/* Welcome Dialog for new users */}
       <Dialog open={showWelcomeDialog} onOpenChange={setShowWelcomeDialog}>
         <DialogContent className="sm:max-w-md">
@@ -720,7 +849,7 @@ export default function MoodMentorDashboard() {
         {/* Welcome Section */}
         <section className="space-y-2">
           <h1 className="text-2xl font-bold text-gray-900">
-            {getTimeBasedGreeting()}, {user?.fullName?.split(' ')[0]}
+            {getTimeBasedGreeting()}, {profile?.fullName?.split(' ')[0] || 'Mentor'}
           </h1>
           <p className="text-gray-600">{getMotivationalMessage()}</p>
         </section>
@@ -787,26 +916,84 @@ export default function MoodMentorDashboard() {
                     {appointments.map((appointment) => (
                       <div
                         key={appointment.id}
-                        className="flex items-center p-3 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
+                        className="flex flex-col p-4 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
                       >
-                        <Avatar className="h-10 w-10 mr-4">
-                          <AvatarFallback className="bg-blue-100 text-blue-600">
-                            {appointment.patient_name
-                              .split(' ')
-                              .map((n) => n[0])
-                              .join('')
-                              .toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-gray-900 truncate">
-                            {appointment.patient_name}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            {format(new Date(appointment.date), 'MMM d')} • {appointment.time}
-                          </p>
+                        <div className="flex items-center">
+                          <Avatar className="h-10 w-10 mr-4">
+                            {appointment.patient_avatar_url ? (
+                              <AvatarImage src={appointment.patient_avatar_url} alt={appointment.patient_name} />
+                            ) : (
+                              <AvatarFallback className="bg-blue-100 text-blue-600">
+                                {appointment.patient_name
+                                  .split(' ')
+                                  .map((n) => n[0])
+                                  .join('')
+                                  .toUpperCase()}
+                              </AvatarFallback>
+                            )}
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-gray-900 truncate">
+                              {appointment.patient_name}
+                            </p>
+                            <div className="flex flex-col text-sm text-gray-500">
+                              <span>{format(new Date(appointment.date), 'MMM d')} • {appointment.time}</span>
+                              {appointment.patient_email && (
+                                <span className="text-xs text-gray-400 truncate">{appointment.patient_email}</span>
+                              )}
+                            </div>
+                          </div>
+                          {getAppointmentBadge(appointment.type)}
                         </div>
-                        {getAppointmentBadge(appointment.type)}
+                        
+                        {/* Action buttons */}
+                        <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            className="h-8 px-3 rounded-full"
+                            onClick={() => navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`)}
+                          >
+                            <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
+                            Message
+                          </Button>
+                          
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button 
+                                variant="outline"
+                                size="sm" 
+                                className="h-8 px-3 rounded-full"
+                              >
+                                <MoreVertical className="h-3.5 w-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
+                                <Check className="w-4 h-4 mr-2" /> Mark as Completed
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "cancelled")}>
+                                <X className="w-4 h-4 mr-2" /> Cancel Appointment
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          
+                          <Button 
+                            size="sm" 
+                            className={`h-8 px-3 rounded-full ${
+                              isAppointmentStartingSoon(appointment.time, appointment.date)
+                              ? 'bg-green-600 hover:bg-green-700'
+                              : 'bg-blue-600 hover:bg-blue-700'
+                            }`}
+                            onClick={() => navigate(`/mood-mentor-dashboard/session/${appointment.id}`)}
+                            disabled={!isAppointmentStartingSoon(appointment.time, appointment.date)}
+                          >
+                            <Video className="h-3.5 w-3.5 mr-1.5" />
+                            {isAppointmentStartingSoon(appointment.time, appointment.date) 
+                              ? 'Join Now'
+                              : 'Join'}
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -883,14 +1070,27 @@ export default function MoodMentorDashboard() {
                       <div
                         key={`day-${day}`}
                         className="relative h-8 flex items-center justify-center"
+                        title={appointmentsByDay[day] ? `${appointmentsByDay[day]} appointment${appointmentsByDay[day] > 1 ? 's' : ''}` : ''}
                       >
                         <div
                           className={`
                             w-8 h-8 rounded-full flex items-center justify-center text-xs
                             ${hasDayAppointment(day) ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-900'}
+                            ${hasDayAppointment(day) ? 'hover:bg-blue-200 cursor-pointer' : ''}
                           `}
+                          onClick={() => {
+                            if (hasDayAppointment(day)) {
+                              const selectedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
+                              navigate(`/mood-mentor-dashboard/appointments?date=${format(selectedDate, 'yyyy-MM-dd')}`);
+                            }
+                          }}
                         >
                           {day}
+                          {appointmentsByDay[day] > 1 && (
+                            <span className="absolute -bottom-1 -right-1 bg-blue-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
+                              {appointmentsByDay[day]}
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}

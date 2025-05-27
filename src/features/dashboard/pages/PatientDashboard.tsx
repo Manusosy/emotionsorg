@@ -38,6 +38,7 @@ import {
   HeartHandshake
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AuthContext } from "@/contexts/authContext";
@@ -52,19 +53,54 @@ import { WelcomeDialog } from "@/components/WelcomeDialog";
 import NotificationManager from '../components/NotificationManager';
 import StressAssessmentModal from "../components/StressAssessmentModal";
 import { PostgrestSingleResponse } from '@supabase/supabase-js';
+import { dataService } from '@/services';
 
-// Define interfaces for appointment data
+// Add this interface before the MoodMentor interface
+interface UserProfile {
+  id: string;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  phone_number?: string;
+  date_of_birth?: string;
+  gender?: string;
+  country?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  avatar_url?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 interface MoodMentor {
   id: string;
-  name: string;
-  specialization: string;
-  avatar_url?: string;
+  user_metadata: {
+    full_name?: string;
+    specialty?: string;
+    avatar_url?: string;
+    [key: string]: any;
+  };
+}
+
+interface DbAppointment {
+  id: string;
+  patient_id: string;
+  mentor_id: string;
+  date: string;
+  start_time: string;
+  end_time: string;
+  meeting_type: 'video' | 'audio' | 'chat';
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
+  description?: string;
+  notes?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 interface AppointmentWithMentor extends DbAppointment {
   mood_mentor?: MoodMentor;
-  time?: string;
-  type?: string;
 }
 
 export default function PatientDashboard() {
@@ -79,8 +115,9 @@ export default function PatientDashboard() {
   const [recentJournalEntries, setRecentJournalEntries] = useState<any[]>([]);
   const [appointmentFilter, setAppointmentFilter] = useState<string>("all");
   const [lastCheckIn, setLastCheckIn] = useState<string>("");
-  const [lastCheckInDate, setLastCheckInDate] = useState<string>("");
-  const [lastAssessmentDate, setLastAssessmentDate] = useState<string>("");
+  const [lastCheckInDate, setLastCheckInDate] = useState<string>("Not available");
+  const [lastAssessmentDate, setLastAssessmentDate] = useState<string>("Not taken");
+  const [lastStressCheckIn, setLastStressCheckIn] = useState<string>("Not available");
   const [userMetrics, setUserMetrics] = useState({
     moodScore: 0,
     stressLevel: 0,
@@ -90,6 +127,7 @@ export default function PatientDashboard() {
     firstCheckInDate: ""
   });
   const [hasAssessments, setHasAssessments] = useState(false);
+  const [hasStressAssessments, setHasStressAssessments] = useState(false);
   const [appointmentReports, setAppointmentReports] = useState<AppointmentWithMentor[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
   const [checkInDates, setCheckInDates] = useState<Date[]>([]);
@@ -172,14 +210,14 @@ export default function PatientDashboard() {
         if (moodError) {
           console.error("Error fetching mood entries:", moodError);
         } else if (moodEntriesData && moodEntriesData.length > 0) {
-          // User has mood entries
+          // User has mood entries - set hasAssessments for mood tracking ONLY
           setHasAssessments(true);
           
           // Calculate average mood score
           const moodValues = moodEntriesData.map(entry => Number(entry.mood));
           const avgMood = moodValues.reduce((sum, mood) => sum + mood, 0) / moodValues.length;
           
-          // Update user metrics
+          // Update user metrics - only mood-related metrics
           setUserMetrics(prev => ({
             ...prev,
             moodScore: parseFloat(avgMood.toFixed(1)),
@@ -187,57 +225,33 @@ export default function PatientDashboard() {
             firstCheckInDate: format(parseISO(moodEntriesData[moodEntriesData.length - 1].created_at), 'MMM d, yyyy')
           }));
           
-          // Set last assessment date
+          // Set last mood check-in date - NOT affecting stress assessment date
           if (moodEntriesData[0]) {
-            setLastAssessmentDate(format(parseISO(moodEntriesData[0].created_at), 'MMM d, yyyy'));
+            // Only update mood-related timestamps, not stress assessment
             setLastCheckIn(format(parseISO(moodEntriesData[0].created_at), 'h:mm a'));
             setLastCheckInDate(format(parseISO(moodEntriesData[0].created_at), 'MMM d, yyyy'));
           }
           
-          // Calculate streak
-          const dates = moodEntriesData.map(entry => new Date(entry.created_at));
-          setCheckInDates(dates);
-          
-          if (dates.length > 0) {
-            let streak = 0;
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
+          // Get streak from SQL function via dataService
+          try {
+            const { data: streak, error: streakError } = await dataService.getMoodStreak(user.id);
             
-            const hasCheckInToday = dates.some(date => {
-              const checkInDate = new Date(date);
-              checkInDate.setHours(0, 0, 0, 0);
-              return checkInDate.getTime() === today.getTime();
-            });
-            
-            if (hasCheckInToday) {
-              streak = 1;
-              
-              let currentDate = new Date(today);
-              currentDate.setDate(currentDate.getDate() - 1);
-              
-              let streakContinues = true;
-              while (streakContinues) {
-                const hasCheckIn = dates.some(date => {
-                  const checkInDate = new Date(date);
-                  checkInDate.setHours(0, 0, 0, 0);
-                  return checkInDate.getTime() === currentDate.getTime();
-                });
-                
-                if (hasCheckIn) {
-                  streak++;
-                  currentDate.setDate(currentDate.getDate() - 1);
-                } else {
-                  streakContinues = false;
-                }
-              }
-              
-              // Update user metrics with streak
+            if (streakError) {
+              console.error("Error getting mood streak:", streakError);
+            } else {
+              // Update user metrics with streak from database
               setUserMetrics(prev => ({
                 ...prev,
-                streak: streak
+                streak: streak || 0
               }));
             }
+          } catch (error) {
+            console.error("Error calculating streak:", error);
           }
+          
+          // Store check-in dates for reference
+          const dates = moodEntriesData.map(entry => new Date(entry.created_at));
+          setCheckInDates(dates);
         }
         
         // Process appointments
@@ -298,20 +312,21 @@ export default function PatientDashboard() {
             console.error("Error fetching stress assessments:", stressResult.error);
           } else if (stressResult.data && stressResult.data.length > 0) {
             // User has stress assessments
-            setHasAssessments(true);
+            setHasStressAssessments(true);
             
             // Get the most recent assessment
             const latestAssessment = stressResult.data[0];
             
-            // Format the date properly
+            // Format the date properly for stress assessments
             const assessmentDate = format(new Date(latestAssessment.created_at), "MMM d, yyyy");
+            const checkInTime = format(new Date(latestAssessment.created_at), "h:mm a");
             setLastAssessmentDate(assessmentDate);
+            setLastStressCheckIn(`${checkInTime}, ${assessmentDate}`);
             
             // Update user metrics with normalized stress level
             setUserMetrics(prev => ({
               ...prev,
-              stressLevel: latestAssessment.raw_score,
-              lastCheckInStatus: "Completed"
+              stressLevel: latestAssessment.raw_score
             }));
           }
         }).catch(error => {
@@ -420,6 +435,26 @@ export default function PatientDashboard() {
     };
   }, [user, navigate]);
 
+  useEffect(() => {
+    if (user?.id) {
+      setReportsLoading(true);
+      fetchAppointmentReports(user.id)
+        .then((result) => {
+          console.log("Appointment reports result:", result);
+          const reportsData = result?.data || [];
+          console.log("Parsed appointment reports:", reportsData);
+          setAppointmentReports(reportsData);
+        })
+        .catch(error => {
+          console.error("Error fetching filtered appointment reports:", error);
+          toast.error("Failed to load appointments");
+        })
+        .finally(() => {
+          setReportsLoading(false);
+        });
+    }
+  }, [appointmentFilter, user?.id]);
+
   const handleUpdateProfile = async (updatedData: Partial<UserProfile>) => {
     try {
       if (!profile?.id) return;
@@ -472,17 +507,24 @@ export default function PatientDashboard() {
       // Add patient info
       doc.setFontSize(11);
       doc.setTextColor(0, 0, 0);
-      doc.text(`Patient: ${profile?.first_name} ${profile?.last_name}`, 14, 30);
+      doc.text(`Patient: ${profile?.first_name || ''} ${profile?.last_name || ''}`, 14, 30);
       doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 36);
 
       // Create data for table
-      const tableRows = appointmentReports.map(report => [
-        report.id, 
-        report.mood_mentor?.name,
-        `${report.date}, ${report.time}`,
-        report.type,
-        report.status
-      ]);
+      const tableRows = appointmentReports.map(report => {
+        // Format status for display
+        const displayStatus = report.status === 'pending' || report.status === 'scheduled' 
+          ? 'Upcoming' 
+          : report.status.charAt(0).toUpperCase() + report.status.slice(1);
+          
+        return [
+          formatAppointmentId(report.id), 
+          report.mood_mentor?.user_metadata?.full_name || 'Unknown',
+          `${report.date}, ${report.start_time}`,
+          report.meeting_type,
+          displayStatus
+        ];
+      });
 
       // Add table with appointment data
       (doc as any).autoTable({
@@ -535,14 +577,23 @@ export default function PatientDashboard() {
       doc.setFontSize(12);
       doc.setTextColor(0, 0, 0);
       
+      // Get mentor details
+      const mentorName = appointment.mood_mentor?.user_metadata?.full_name || "Unknown Mentor";
+      const mentorSpecialty = appointment.mood_mentor?.user_metadata?.specialty || "Specialist";
+      
+      // Format status for display
+      const displayStatus = appointment.status === 'pending' || appointment.status === 'scheduled' 
+        ? 'Upcoming' 
+        : appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1);
+      
       // Appointment details
-      doc.text(`ID: ${appointment.id}`, 14, 35);
-      doc.text(`Mood Mentor: ${appointment.mood_mentor?.name}`, 14, 45);
-      doc.text(`Specialization: ${appointment.mood_mentor?.specialization}`, 14, 55);
+      doc.text(`ID: ${formatAppointmentId(appointment.id)}`, 14, 35);
+      doc.text(`Mood Mentor: ${mentorName}`, 14, 45);
+      doc.text(`Specialization: ${mentorSpecialty}`, 14, 55);
       doc.text(`Date: ${appointment.date}`, 14, 65);
-      doc.text(`Time: ${appointment.time}`, 14, 75);
-      doc.text(`Type: ${appointment.type}`, 14, 85);
-      doc.text(`Status: ${appointment.status}`, 14, 95);
+      doc.text(`Time: ${appointment.start_time}`, 14, 75);
+      doc.text(`Type: ${appointment.meeting_type}`, 14, 85);
+      doc.text(`Status: ${displayStatus}`, 14, 95);
       
       // Add notes if available
       if (appointment.notes) {
@@ -583,11 +634,8 @@ export default function PatientDashboard() {
   // Replace appointmentService.getPatientAppointments with direct Supabase call
   const fetchAppointments = async (userId: string) => {
     return await supabase
-      .from('appointments')
-      .select(`
-        *,
-        mood_mentor:mood_mentors(*)
-      `)
+      .from('patient_appointments_view')
+      .select('*')
       .eq('patient_id', userId)
       .order('created_at', { ascending: false });
   };
@@ -603,14 +651,68 @@ export default function PatientDashboard() {
 
   // Replace patientService.getAppointmentReports with direct Supabase call
   const fetchAppointmentReports = async (userId: string) => {
-    return await supabase
-      .from('appointments')
-      .select(`
-        *,
-        mood_mentor:mood_mentors(*)
-      `)
-      .eq('patient_id', userId)
-      .order('created_at', { ascending: false });
+    try {
+      // Use the patient_appointments_view which should have all the joined data
+      let query = supabase
+        .from('patient_appointments_view')
+        .select('*')
+        .eq('patient_id', userId);
+        
+      // Apply filters based on appointmentFilter
+      if (appointmentFilter === 'upcoming') {
+        query = query.in('status', ['pending', 'scheduled']);
+      } else if (appointmentFilter === 'completed') {
+        query = query.eq('status', 'completed');
+      } else if (appointmentFilter === 'cancelled') {
+        query = query.eq('status', 'cancelled');
+      }
+        
+      // Order by date and time for better usability
+      const { data, error } = await query
+        .order('date', { ascending: true })
+        .order('start_time', { ascending: true });
+      
+      if (error) {
+        console.error("Error fetching appointment reports:", error);
+        return { data: [], error };
+      }
+      
+      // Transform the data to match the expected structure
+      const formattedData = data?.map(apt => ({
+        id: apt.id,
+        patient_id: apt.patient_id,
+        mentor_id: apt.mentor_id,
+        date: apt.date,
+        start_time: apt.start_time,
+        end_time: apt.end_time,
+        meeting_type: apt.meeting_type,
+        status: apt.status,
+        description: apt.description,
+        notes: apt.notes,
+        created_at: apt.created_at,
+        updated_at: apt.updated_at,
+        mood_mentor: {
+          id: apt.mentor_id,
+          user_metadata: {
+            full_name: apt.mentor_name,
+            specialty: apt.mentor_specialty,
+            avatar_url: apt.mentor_avatar_url
+          }
+        }
+      })) || [];
+      
+      console.log("Formatted appointment data:", formattedData);
+      return { data: formattedData, error: null };
+    } catch (err) {
+      console.error("Exception in fetchAppointmentReports:", err);
+      return { data: [], error: err };
+    }
+  };
+
+  // Format the appointment ID to be more user-friendly
+  const formatAppointmentId = (id: string) => {
+    // Use a shorter format like #Apt followed by the last 4-5 characters
+    return `#Apt${id.slice(-5)}`;
   };
 
   return (
@@ -675,7 +777,7 @@ export default function PatientDashboard() {
                     <span className="text-xs bg-green-100 text-green-600 px-2 py-1 rounded-full">Active</span>
                   )}
                 </div>
-                <div className="text-3xl font-bold">{userMetrics.moodScore.toFixed(1)}</div>
+                <div className="text-xl font-bold">{userMetrics.moodScore.toFixed(1)}</div>
                 <p className="text-xs text-slate-500 mt-2">
                   {hasAssessments ? "Average from recent check-ins" : "Start your first check-in"}
                 </p>
@@ -690,14 +792,14 @@ export default function PatientDashboard() {
                     <Activity className="w-5 h-5 text-blue-500 mr-2" />
                     <span className="text-sm font-medium">Stress Level</span>
                   </div>
-                  {hasAssessments && userMetrics.stressLevel > 0 && (
+                  {hasStressAssessments && userMetrics.stressLevel > 0 && (
                     <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">Tracked</span>
                   )}
                 </div>
                 
                 {userMetrics.stressLevel > 0 ? (
                   <>
-                    <div className="text-3xl font-bold mb-1">
+                    <div className="text-xl font-bold mb-1">
                       {Math.round(((5 - userMetrics.stressLevel) / 4) * 100)}%
                     </div>
                     <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
@@ -733,9 +835,9 @@ export default function PatientDashboard() {
                     <span className="text-sm font-medium">Last Check-in</span>
                   </div>
                 </div>
-                <div className="text-3xl font-bold">{hasAssessments ? "Today" : "None"}</div>
+                <div className="text-xl font-bold">{hasStressAssessments ? "Taken" : "None"}</div>
                 <p className="text-xs text-slate-500 mt-2">
-                  {hasAssessments ? `${lastCheckIn}, ${lastCheckInDate}` : "Complete your first assessment"}
+                  {hasStressAssessments ? lastStressCheckIn : "Complete your first assessment"}
                 </p>
               </CardContent>
             </Card>
@@ -754,7 +856,7 @@ export default function PatientDashboard() {
                     </span>
                   )}
                 </div>
-                <div className="text-3xl font-bold">
+                <div className="text-xl font-bold">
                   {hasAssessments 
                     ? userMetrics.consistency > 0 
                       ? `${Math.round(userMetrics.consistency * 10)}%` 
@@ -787,8 +889,8 @@ export default function PatientDashboard() {
             stressLevel={userMetrics.stressLevel} 
             lastCheckIn={lastAssessmentDate}
             onViewDetails={() => navigate('/patient-dashboard/reports')}
-            hasAssessments={hasAssessments}
-            statusText={getHealthStatus(userMetrics.stressLevel)}
+            hasAssessments={hasStressAssessments}
+            statusText={hasStressAssessments ? getHealthStatus(userMetrics.stressLevel) : undefined}
             onTakeAssessment={() => {
               console.log("EmotionalHealthWheel onTakeAssessment clicked on PatientDashboard - opening modal.");
               setIsStressModalOpen(true);
@@ -897,7 +999,8 @@ export default function PatientDashboard() {
                           if (!status) return "bg-slate-100 text-slate-700 hover:bg-slate-200";
                           
                           switch(status.toLowerCase()) {
-                            case 'upcoming':
+                            case 'pending':
+                            case 'scheduled':
                               return "bg-indigo-100 text-indigo-700 hover:bg-indigo-200";
                             case 'completed':
                               return "bg-purple-100 text-purple-700 hover:bg-purple-200";
@@ -913,7 +1016,8 @@ export default function PatientDashboard() {
                           if (!status) return "bg-slate-500";
                           
                           switch(status.toLowerCase()) {
-                            case 'upcoming':
+                            case 'pending':
+                            case 'scheduled':
                               return "bg-indigo-500";
                             case 'completed':
                               return "bg-purple-500";
@@ -924,43 +1028,61 @@ export default function PatientDashboard() {
                           }
                         };
 
+                        // Format the status for display
+                        const getDisplayStatus = (status: string) => {
+                          if (!status) return "Unknown";
+                          
+                          if (status.toLowerCase() === 'pending' || status.toLowerCase() === 'scheduled') {
+                            return "Upcoming";
+                          }
+                          
+                          return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+                        };
+
+                        // Get mentor name from the mood_mentor relationship
+                        const mentorName = report.mood_mentor?.user_metadata?.full_name || "Unknown Mentor";
+                        const mentorSpecialty = report.mood_mentor?.user_metadata?.specialty || "Specialist";
+                        const mentorAvatar = report.mood_mentor?.user_metadata?.avatar_url || "";
+
                         return (
                           <tr key={report.id} className="hover:bg-blue-50/30 transition-colors">
                             <td className="p-4">
-                              <span className="text-blue-600 font-medium">{report.id}</span>
+                              <span className="text-blue-600 font-medium">{formatAppointmentId(report.id)}</span>
                             </td>
                             <td className="p-4">
                               <div className="flex items-center gap-3">
-                                {report.mood_mentor?.avatar_url ? (
-                                  <Avatar className="h-10 w-10 relative">
-                                    <AvatarImage 
-                                      src={report.mood_mentor?.avatar_url}
-                                      alt={report.mood_mentor?.name}
-                                      className="object-cover"
-                                    />
-                                    <AvatarFallback>
-                                      {(report.mood_mentor?.name || "").split(' ').map(n => n[0]).join('')}
-                                    </AvatarFallback>
-                                  </Avatar>
+                                {mentorAvatar ? (
+                                  <FallbackAvatar
+                                    src={mentorAvatar}
+                                    name={mentorName}
+                                    className="h-10 w-10"
+                                  />
                                 ) : (
-                                  <span className="text-blue-500 font-medium">
-                                    {(report.mood_mentor?.name || "").split(' ').map(n => n[0]).join('')}
-                                  </span>
+                                  <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-medium">
+                                    {mentorName.split(' ').map(n => n[0]).join('')}
+                                  </div>
                                 )}
                                 <div>
-                                  <div className="font-medium">{report.mood_mentor?.name}</div>
-                                  <div className="text-xs text-slate-500">{report.mood_mentor?.specialization}</div>
+                                  <div className="font-medium text-gray-800">{mentorName}</div>
+                                  <div className="text-xs text-slate-500">{mentorSpecialty}</div>
                                 </div>
                               </div>
                             </td>
-                            <td className="p-4 text-sm">{`${report.date}, ${report.time}`}</td>
-                            <td className="p-4 text-sm">{report.type}</td>
+                            <td className="p-4 text-sm text-gray-700">{`${report.date}, ${report.start_time}`}</td>
+                            <td className="p-4">
+                              <span className="inline-flex items-center text-sm text-gray-700">
+                                {report.meeting_type === 'video' && <Video className="h-3.5 w-3.5 mr-1.5 text-blue-500" />}
+                                {report.meeting_type === 'audio' && <Phone className="h-3.5 w-3.5 mr-1.5 text-blue-500" />}
+                                {report.meeting_type === 'chat' && <MessageSquare className="h-3.5 w-3.5 mr-1.5 text-blue-500" />}
+                                {report.meeting_type.charAt(0).toUpperCase() + report.meeting_type.slice(1)}
+                              </span>
+                            </td>
                             <td className="p-4">
                               <div className="flex items-center gap-2">
                                 <Badge className={`${getBadgeClasses(report.status)} font-medium px-3 py-1 rounded-full`}>
                                   <span className="flex items-center">
                                     <span className={`h-1.5 w-1.5 rounded-full ${getDotColor(report.status)} mr-1.5`}></span>
-                                    {report.status}
+                                    {getDisplayStatus(report.status)}
                                   </span>
                                 </Badge>
                                 <Button 

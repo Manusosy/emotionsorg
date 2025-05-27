@@ -20,9 +20,10 @@ import {
 } from "@/components/ui/select";
 import { useRef } from "react";
 import HeroSection from "../components/HeroSection";
-// Supabase import removed
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useAuth } from "@/contexts/authContext";
+import { MoodMentorUI } from "@/services/mood-mentor/mood-mentor.interface";
 
 const steps = [
   { id: 1, name: "Specialty" },
@@ -39,7 +40,7 @@ const timeSlots = [
 ];
 
 const appointmentTypes = [
-  { id: "video", name: "Video Call", description: "Talk face-to-face via video conference", icon: "🎥" },
+  { id: "video", name: "Video Call", description: "Talk face-to-face via video conference", icon: "📹" },
   { id: "audio", name: "Audio Call", description: "Voice call without video", icon: "🎧" },
   { id: "chat", name: "Chat", description: "Text-based conversation", icon: "💬" },
 ];
@@ -47,8 +48,9 @@ const appointmentTypes = [
 const BookingPage = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [searchParams] = useSearchParams();
-  const moodMentorId = searchParams.get("moodMentorId"); // Get the mood mentor ID from URL parameters
+  const moodMentorId = searchParams.get("mentor") || searchParams.get("moodMentorId"); // Support both parameter names
   const navigate = useNavigate();
+  const { user, isAuthenticated } = useAuth();
   
   // State for form fields
   const [selectedSpecialty, setSelectedSpecialty] = useState("Mental Health");
@@ -62,74 +64,13 @@ const BookingPage = () => {
     concerns: "",
   });
   
-  const [user, setUser] = useState<any>(null);
-  const [moodMentor, setMoodMentor] = useState<any>(null);
+  const [moodMentor, setMoodMentor] = useState<MoodMentorUI | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAuthDialog, setShowAuthDialog] = useState(false);
   
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data } = await authService.getCurrentUser();
-      if (data.session) {
-        setUser(data.session.user);
-        
-        // Pre-fill user data if available
-        const userData = data.session.user;
-        if (userData) {
-          setFormData(prev => ({
-            ...prev,
-            name: `${userData.first_name || ""} ${userData.last_name || ""}`.trim(),
-            email: data.session.user.email || "",
-          }));
-        }
-        
-        // Check for saved booking data
-        const savedBookingData = localStorage.getItem("bookingData");
-        if (savedBookingData) {
-          try {
-            const parsedData = JSON.parse(savedBookingData);
-            
-            // Restore saved form data
-            if (parsedData.specialty) setSelectedSpecialty(parsedData.specialty);
-            if (parsedData.appointmentType) setSelectedAppointmentType(parsedData.appointmentType);
-            if (parsedData.time) setSelectedTime(parsedData.time);
-            
-            // Restore date (needs special handling)
-            if (parsedData.date) {
-              setSelectedDate(new Date(parsedData.date));
-            }
-            
-            // Restore form data (merge with user data)
-            if (parsedData.formData) {
-              setFormData(prev => ({
-                ...prev,
-                ...parsedData.formData,
-                // Keep email from authenticated user
-                email: prev.email || parsedData.formData.email,
-              }));
-            }
-            
-            // Determine which step to navigate to
-            if (parsedData.appointmentType && parsedData.date && parsedData.time) {
-              // Skip to review step if most data is filled
-              setCurrentStep(5);
-            } else if (parsedData.appointmentType) {
-              // Skip to date/time step
-              setCurrentStep(3);
-            } else if (parsedData.specialty) {
-              // Skip to appointment type
-              setCurrentStep(2);
-            }
-            
-            // Remove saved booking data
-            localStorage.removeItem("bookingData");
-          } catch (error) {
-            console.error("Error restoring booking data:", error);
-            // If there's an error parsing, just remove the data
-            localStorage.removeItem("bookingData");
-          }
-        }
-      }
+    const initPage = async () => {
+      setLoading(true);
       
       // If we have a mood mentor ID, fetch mood mentor details
       if (moodMentorId) {
@@ -137,46 +78,46 @@ const BookingPage = () => {
       } else {
         setLoading(false);
       }
+      
+      // Pre-fill user data if available
+      if (isAuthenticated && user) {
+        setFormData(prev => ({
+          ...prev,
+          name: user.user_metadata?.name || "",
+          email: user.email || "",
+        }));
+      }
     };
     
     const fetchMoodMentorDetails = async (id: string) => {
       try {
+        setLoading(true);
         // Fetch mood mentor data using the service
-        const mentorData = await moodMentorService.getMoodMentorById(id);
+        const response = await moodMentorService.getMoodMentorById(id);
         
-        if (!mentorData) {
-          console.error("Error fetching mood mentor details");
-          
-          // For development/demo purposes - Use hard-coded data if not found
-          const mockedMentorData = {
-            id: "1",
-            name: "Dr. Ruby Perrin",
-            credentials: "PhD in Psychology, Mental Health Specialist",
-            specialty: "Depression & Anxiety Specialist",
-            rating: 5,
-            location: "Kigali, Rwanda",
-            image: "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80",
-            bio: "Dr. Ruby Perrin is a highly skilled mental health professional with extensive experience in treating depression and anxiety disorders. She provides a safe and supportive environment for her clients."
-          };
-          
-          setMoodMentor(mockedMentorData);
-          setSelectedSpecialty(mockedMentorData.specialty.split(" ")[0]);
-        } else {
-          setMoodMentor(mentorData);
-          if (mentorData.specialty) {
-            setSelectedSpecialty(mentorData.specialty);
-          }
+        if (!response || !response.success || !response.data) {
+          console.error("Error fetching mood mentor details:", response?.error || "No data returned");
+          toast.error("Could not load mood mentor details. Please try again later.");
+          navigate("/find-mentors"); // Redirect to find mentors page if mentor not found
+          return;
+        }
+        
+        setMoodMentor(response.data);
+        if (response.data.specialty) {
+          setSelectedSpecialty(response.data.specialty.split(" ")[0]);
         }
         
         setLoading(false);
       } catch (error) {
         console.error("Error fetching mood mentor details:", error);
+        toast.error("An error occurred while loading mentor details");
         setLoading(false);
+        navigate("/find-mentors"); // Redirect to find mentors page on error
       }
     };
     
-    checkAuth();
-  }, [moodMentorId, navigate]);
+    initPage();
+  }, [moodMentorId, isAuthenticated, user, navigate]);
   
   // Handle step navigation
   const nextStep = () => {
@@ -228,17 +169,7 @@ const BookingPage = () => {
   const handleBookingSubmit = async () => {
     try {
       // Check if user is authenticated
-      if (!user) {
-        // Store booking data in localStorage
-        localStorage.setItem("bookingData", JSON.stringify({
-          moodMentorId,
-          specialty: selectedSpecialty,
-          appointmentType: selectedAppointmentType,
-          date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
-          time: selectedTime,
-          formData
-        }));
-        
+      if (!isAuthenticated || !user) {
         // Show auth dialog
         setShowAuthDialog(true);
         return;
@@ -249,56 +180,72 @@ const BookingPage = () => {
         return;
       }
       
+      // Calculate end time (1 hour after start time)
+      const timeFormat = selectedTime.includes("AM") || selectedTime.includes("PM") 
+        ? "hh:mm A" 
+        : "HH:mm";
+      
+      const startTime = selectedTime.replace(" AM", "").replace(" PM", "");
+      const [hours, minutes] = startTime.split(":");
+      const endHour = (parseInt(hours) + 1) % 24;
+      const endTime = `${endHour.toString().padStart(2, '0')}:${minutes}`;
+      
+      // Get the mood mentor's userId which is linked to auth.users
+      if (!moodMentor) {
+        toast.error("Mood mentor information is missing");
+        return;
+      }
+      
+      // Use the userId from the mood mentor object which references auth.users
+      const mentorUserId = moodMentor.userId;
+      
+      if (!mentorUserId) {
+        console.error("Mentor user ID is missing", moodMentor);
+        toast.error("Could not find mentor user ID");
+        return;
+      }
+      
       // Create the booking entry using the correct field names
       const bookingData = {
         patient_id: user.id,
-        mood_mentor_id: moodMentorId,
-        session_date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : new Date().toISOString().split('T')[0],
-        session_time: selectedTime,
-        notes: formData.concerns,
-        status: "pending" as const
+        mentor_id: mentorUserId, // Use the userId which references auth.users
+        title: `Session with ${moodMentor?.fullName || "Mood Mentor"}`,
+        description: formData.concerns || "No specific concerns mentioned",
+        date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : new Date().toISOString().split('T')[0],
+        start_time: startTime,
+        end_time: endTime,
+        meeting_type: selectedAppointmentType as 'video' | 'audio' | 'chat',
+        meeting_link: `https://meet.emotionsapp.com/${user.id}/${mentorUserId}`,
+        notes: formData.concerns || "No notes provided"
       };
       
-      const result = await appointmentService.createBooking(bookingData);
-        
-      if (result.error) throw result.error;
+      console.log("Submitting booking data:", bookingData);
+      toast.loading("Booking your appointment...");
       
+      const result = await appointmentService.bookAppointment(bookingData);
+        
+      if (result.error) {
+        console.error("Appointment booking error:", result.error);
+        toast.dismiss();
+        toast.error(`Failed to book appointment: ${result.error}`);
+        return;
+      }
+      
+      toast.dismiss();
       toast.success("Appointment booked successfully!");
       setCurrentStep(6); // Move to confirmation step
     } catch (error) {
       console.error("Error booking appointment:", error);
+      toast.dismiss();
       toast.error("Failed to book appointment. Please try again.");
     }
   };
 
   const redirectToLogin = () => {
-    // Store booking intent and data in localStorage
-    localStorage.setItem("bookingIntent", JSON.stringify({ moodMentorId }));
-    localStorage.setItem("bookingData", JSON.stringify({
-      moodMentorId,
-      specialty: selectedSpecialty,
-      appointmentType: selectedAppointmentType,
-      date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
-      time: selectedTime,
-      formData
-    }));
-    
     navigate("/patient-signin");
   };
   
   const redirectToSignup = () => {
-    // Save current booking data to localStorage
-    localStorage.setItem("bookingIntent", JSON.stringify({ moodMentorId }));
-    
-    localStorage.setItem("bookingData", JSON.stringify({
-      moodMentorId,
-      specialty: selectedSpecialty,
-      appointmentType: selectedAppointmentType,
-      date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
-      time: selectedTime,
-      formData
-    }));
-    
     navigate("/patient-signup");
   };
   
@@ -312,26 +259,28 @@ const BookingPage = () => {
             
             {loading ? (
               <div className="flex justify-center items-center py-12">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#20C0F3]"></div>
               </div>
             ) : moodMentor ? (
-              <Card className="border-2 border-blue-200 overflow-hidden">
-                <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-4">
+              <Card className="border-2 border-[#20C0F3]/20 overflow-hidden hover:shadow-md transition-all">
+                <div className="bg-[#20C0F3] text-white p-4">
                   <h3 className="text-xl font-semibold">Your Selected Mood Mentor</h3>
                 </div>
                 <CardContent className="p-6">
                   <div className="flex flex-col md:flex-row gap-6 items-center md:items-start">
-                    <Avatar className="h-24 w-24 border-2 border-blue-100">
-                      <AvatarImage src={moodMentor.image} alt={moodMentor.name} />
-                      <AvatarFallback>{moodMentor.name?.split(" ").map((n: string) => n[0]).join("")}</AvatarFallback>
+                    <Avatar className="h-24 w-24 border-2 border-[#20C0F3]/20">
+                      <AvatarImage src={moodMentor.avatarUrl} alt={moodMentor.fullName} />
+                      <AvatarFallback className="bg-[#20C0F3]/10 text-[#20C0F3]">
+                        {moodMentor.fullName?.split(" ").map((n: string) => n[0]).join("")}
+                      </AvatarFallback>
                     </Avatar>
                     
                     <div className="flex-1 text-center md:text-left">
-                      <h3 className="text-xl font-bold text-gray-800">{moodMentor.name}</h3>
-                      <p className="text-gray-500 text-sm mb-2">{moodMentor.credentials}</p>
+                      <h3 className="text-xl font-bold text-gray-800">{moodMentor.fullName}</h3>
+                      <p className="text-gray-500 text-sm mb-2">{moodMentor.specialty}</p>
                       
                       <div className="flex flex-col md:flex-row gap-2 md:gap-4 mb-4 mt-2 items-center md:items-start">
-                        <div className="flex items-center text-blue-600">
+                        <div className="flex items-center text-[#20C0F3]">
                           <Award className="w-4 h-4 mr-1" />
                           <span className="text-sm">{moodMentor.specialty}</span>
                         </div>
@@ -343,9 +292,9 @@ const BookingPage = () => {
                         )}
                       </div>
                       
-                      <div className="bg-blue-50 p-4 rounded-lg mt-4 text-blue-800">
+                      <div className="bg-[#20C0F3]/10 p-4 rounded-lg mt-4 text-[#20C0F3]">
                         <p className="text-sm">
-                          You selected <span className="font-semibold">{moodMentor.name}</span>. 
+                          You selected <span className="font-semibold">{moodMentor.fullName}</span>. 
                           {moodMentor.specialty && (
                             <> They are a specialist in <span className="font-semibold">{moodMentor.specialty.replace('Specialist', '').trim()}</span>. 
                             You can discuss all matters related to their specialty.</>
@@ -366,14 +315,14 @@ const BookingPage = () => {
             ) : (
               <Card className="border-2 border-gray-200">
                 <CardContent className="p-6 flex flex-col items-center text-center">
-                  <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
+                  <div className="w-16 h-16 bg-[#20C0F3]/20 rounded-full flex items-center justify-center mb-4">
                     <span className="text-2xl">🧠</span>
                   </div>
                   <h3 className="text-xl font-semibold mb-2">Mental Health</h3>
                   <p className="text-gray-500 mb-4">Discuss stress, anxiety, depression and other mental health concerns</p>
                   <Button 
                     variant="outline"
-                    className={`${selectedSpecialty === "Mental Health" ? "bg-blue-50" : ""}`}
+                    className={`${selectedSpecialty === "Mental Health" ? "bg-[#20C0F3]/10 text-[#20C0F3] border-[#20C0F3]" : ""}`}
                     onClick={() => setSelectedSpecialty("Mental Health")}
                   >
                     {selectedSpecialty === "Mental Health" ? "Selected" : "Select"}
@@ -391,10 +340,23 @@ const BookingPage = () => {
             <RadioGroup value={selectedAppointmentType} onValueChange={setSelectedAppointmentType}>
               <div className="grid gap-4">
                 {appointmentTypes.map((type) => (
-                  <Card key={type.id} className={`border-2 ${selectedAppointmentType === type.id ? "border-blue-500" : "border-gray-200"}`}>
+                  <Card 
+                    key={type.id} 
+                    className={`border-2 transition-all hover:shadow-md ${
+                      selectedAppointmentType === type.id 
+                      ? "border-[#20C0F3] bg-[#20C0F3]/5" 
+                      : "border-gray-200"
+                    }`}
+                  >
                     <CardContent className="p-6 flex items-center">
-                      <RadioGroupItem value={type.id} id={type.id} className="mr-4" />
-                      <div className="mr-4 text-2xl">{type.icon}</div>
+                      <RadioGroupItem 
+                        value={type.id} 
+                        id={type.id} 
+                        className="mr-4 text-[#20C0F3] border-[#20C0F3]" 
+                      />
+                      <div className="mr-4 text-2xl w-10 h-10 flex items-center justify-center bg-[#20C0F3]/10 rounded-full">
+                        {type.icon}
+                      </div>
                       <div>
                         <Label htmlFor={type.id} className="text-lg font-medium">{type.name}</Label>
                         <p className="text-gray-500">{type.description}</p>
@@ -416,7 +378,7 @@ const BookingPage = () => {
               <Card>
                 <CardContent className="p-6">
                   <h3 className="font-medium flex items-center gap-2 mb-4">
-                    <CalendarIcon className="h-5 w-5 text-blue-500" />
+                    <CalendarIcon className="h-5 w-5 text-[#20C0F3]" />
                     <span>Select Date</span>
                   </h3>
                   <Calendar
@@ -425,6 +387,10 @@ const BookingPage = () => {
                     onSelect={setSelectedDate}
                     disabled={(date) => date < new Date()}
                     className="rounded-md border"
+                    classNames={{
+                      day_selected: "bg-[#20C0F3] text-white hover:bg-[#20C0F3] hover:text-white focus:bg-[#20C0F3] focus:text-white",
+                      day_today: "bg-gray-100 text-gray-900"
+                    }}
                   />
                 </CardContent>
               </Card>
@@ -432,7 +398,7 @@ const BookingPage = () => {
               <Card>
                 <CardContent className="p-6">
                   <h3 className="font-medium flex items-center gap-2 mb-4">
-                    <Clock className="h-5 w-5 text-blue-500" />
+                    <Clock className="h-5 w-5 text-[#20C0F3]" />
                     <span>Select Time</span>
                   </h3>
                   <div className="grid grid-cols-3 gap-2">
@@ -440,7 +406,11 @@ const BookingPage = () => {
                       <Button
                         key={time}
                         variant="outline"
-                        className={`${selectedTime === time ? "bg-blue-100 border-blue-500" : ""}`}
+                        className={`${
+                          selectedTime === time 
+                          ? "bg-[#20C0F3]/10 border-[#20C0F3] text-[#20C0F3]" 
+                          : "hover:border-[#20C0F3] hover:text-[#20C0F3]"
+                        }`}
                         onClick={() => setSelectedTime(time)}
                       >
                         {time}
@@ -452,8 +422,8 @@ const BookingPage = () => {
             </div>
             
             {selectedDate && selectedTime && (
-              <Card className="mt-6 bg-blue-50">
-                <CardContent className="p-4 flex items-center text-blue-700">
+              <Card className="mt-6 bg-[#20C0F3]/10 border-[#20C0F3]/20">
+                <CardContent className="p-4 flex items-center text-[#20C0F3]">
                   <CalendarClock className="h-5 w-5 mr-2" />
                   <span>Your appointment: {selectedDate && format(selectedDate, "MMMM d, yyyy")} at {selectedTime}</span>
                 </CardContent>
@@ -467,22 +437,23 @@ const BookingPage = () => {
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-center mb-8">Basic Information</h2>
             
-            <Card>
+            <Card className="border-[#20C0F3]/10 shadow-sm">
               <CardContent className="p-6 space-y-4">
                 <div className="grid md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Full Name*</Label>
+                    <Label htmlFor="name" className="text-gray-700">Full Name*</Label>
                     <Input 
                       id="name" 
                       name="name" 
                       value={formData.name} 
                       onChange={handleInputChange} 
                       required 
+                      className="border-gray-300 focus:border-[#20C0F3] focus:ring-[#20C0F3]/20"
                     />
                   </div>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email Address*</Label>
+                    <Label htmlFor="email" className="text-gray-700">Email Address*</Label>
                     <Input 
                       id="email" 
                       name="email" 
@@ -490,29 +461,33 @@ const BookingPage = () => {
                       value={formData.email} 
                       onChange={handleInputChange} 
                       required 
+                      className="border-gray-300 focus:border-[#20C0F3] focus:ring-[#20C0F3]/20"
                     />
                   </div>
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number</Label>
+                  <Label htmlFor="phone" className="text-gray-700">Phone Number</Label>
                   <Input 
                     id="phone" 
                     name="phone" 
+                    type="tel" 
                     value={formData.phone} 
-                    onChange={handleInputChange} 
+                    onChange={handleInputChange}
+                    className="border-gray-300 focus:border-[#20C0F3] focus:ring-[#20C0F3]/20"
                   />
                 </div>
                 
                 <div className="space-y-2">
-                  <Label htmlFor="concerns">Describe your concerns or what you'd like to discuss</Label>
+                  <Label htmlFor="concerns" className="text-gray-700">What would you like to discuss?</Label>
                   <Textarea 
                     id="concerns" 
                     name="concerns" 
                     value={formData.concerns} 
                     onChange={handleInputChange} 
-                    rows={4} 
-                    placeholder="Please share any specific topics or issues you'd like to address during the session..."
+                    placeholder="Please share any specific concerns or topics you'd like to discuss in your session..."
+                    rows={4}
+                    className="border-gray-300 focus:border-[#20C0F3] focus:ring-[#20C0F3]/20"
                   />
                 </div>
               </CardContent>
@@ -523,116 +498,122 @@ const BookingPage = () => {
       case 5:
         return (
           <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-center mb-8">Review Booking Details</h2>
+            <h2 className="text-2xl font-bold text-center mb-8">Review & Confirm</h2>
             
-            <Card>
-              <CardContent className="p-6 space-y-6">
-                <div className="grid gap-4">
-                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                    <span className="text-gray-600">Mood Mentor:</span>
-                    <span className="font-medium">{moodMentor?.name || "Selected Mood Mentor"}</span>
+            <Card className="border-[#20C0F3]/10 shadow-sm">
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center pb-4 border-b">
+                    <h3 className="font-medium text-lg text-[#20C0F3]">Appointment Details</h3>
                   </div>
                   
-                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                    <span className="text-gray-600">Specialty:</span>
-                    <span className="font-medium">{moodMentor?.specialty || selectedSpecialty}</span>
-                  </div>
-                  
-                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                    <span className="text-gray-600">Appointment Type:</span>
-                    <span className="font-medium">
-                      {appointmentTypes.find(t => t.id === selectedAppointmentType)?.name || selectedAppointmentType}
-                    </span>
-                  </div>
-                  
-                  <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                    <span className="text-gray-600">Date & Time:</span>
-                    <span className="font-medium">
-                      {selectedDate && format(selectedDate, "MMMM d, yyyy")} at {selectedTime}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6 space-y-4">
-                <div className="border-t border-b py-4 my-2">
-                  <h4 className="font-medium mb-3">Your Information:</h4>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Name:</span>
-                      <span className="font-medium">{formData.name}</span>
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm text-gray-500">Mood Mentor</p>
+                      <p className="font-medium">{moodMentor?.fullName || "Selected Mentor"}</p>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Email:</span>
-                      <span className="font-medium">{formData.email}</span>
+                    
+                    <div>
+                      <p className="text-sm text-gray-500">Specialty</p>
+                      <p className="font-medium">{selectedSpecialty}</p>
                     </div>
-                    {formData.phone && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Phone:</span>
-                        <span className="font-medium">{formData.phone}</span>
+                    
+                    <div>
+                      <p className="text-sm text-gray-500">Appointment Type</p>
+                      <p className="font-medium">{appointmentTypes.find(t => t.id === selectedAppointmentType)?.name || selectedAppointmentType}</p>
+                    </div>
+                    
+                    <div>
+                      <p className="text-sm text-gray-500">Date & Time</p>
+                      <p className="font-medium">{selectedDate && format(selectedDate, "MMMM d, yyyy")} at {selectedTime}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="pt-4 border-t">
+                    <p className="text-sm text-gray-500">Your Information</p>
+                    <div className="grid md:grid-cols-2 gap-4 mt-2">
+                      <div>
+                        <p className="text-xs text-gray-500">Name</p>
+                        <p>{formData.name}</p>
                       </div>
-                    )}
+                      
+                      <div>
+                        <p className="text-xs text-gray-500">Email</p>
+                        <p>{formData.email}</p>
+                      </div>
+                      
+                      {formData.phone && (
+                        <div>
+                          <p className="text-xs text-gray-500">Phone</p>
+                          <p>{formData.phone}</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
+                  
+                  {formData.concerns && (
+                    <div className="pt-4 border-t">
+                      <p className="text-sm text-gray-500">Discussion Topics</p>
+                      <p className="mt-1 text-sm">{formData.concerns}</p>
+                    </div>
+                  )}
                 </div>
-                
-                {formData.concerns && (
-                  <div className="space-y-2">
-                    <h4 className="font-medium">Notes:</h4>
-                    <p className="text-gray-700 bg-gray-50 p-3 rounded-md italic">"{formData.concerns}"</p>
-                  </div>
-                )}
               </CardContent>
             </Card>
-
-            <p className="text-sm text-gray-500 text-center mt-6">
-              By proceeding, you confirm your appointment with the mood mentor.
-            </p>
+            
+            <div className="bg-[#20C0F3]/10 p-4 rounded-lg text-[#20C0F3] text-sm">
+              <p>By confirming this appointment, you agree to our <Link to="/terms" className="text-[#20C0F3] font-medium underline">Terms of Service</Link> and <Link to="/privacy" className="text-[#20C0F3] font-medium underline">Privacy Policy</Link>.</p>
+            </div>
           </div>
         );
         
       case 6:
         return (
-          <div className="space-y-6">
-            <div className="text-center">
-              <div className="mb-4 flex justify-center">
-                <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
-                  <CheckCircle2 className="w-8 h-8 text-green-600" />
-                </div>
+          <div className="space-y-6 text-center">
+            <div className="flex justify-center">
+              <div className="w-20 h-20 bg-[#20C0F3]/20 rounded-full flex items-center justify-center">
+                <CheckCircle2 className="h-10 w-10 text-[#20C0F3]" />
               </div>
-              <h2 className="text-2xl font-bold mb-2">Appointment Confirmed!</h2>
-              <p className="text-gray-600 mb-8">
-                Your appointment has been successfully booked. An email confirmation has been sent to your inbox.
-              </p>
-              
-              <Card className="bg-blue-50 border-blue-200">
-                <CardContent className="p-6 space-y-3">
-                  <h3 className="font-medium text-lg text-blue-800">Appointment Details</h3>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Date:</span>
-                      <span className="font-medium">{selectedDate && format(selectedDate, "MMMM d, yyyy")}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Time:</span>
-                      <span className="font-medium">{selectedTime}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Type:</span>
-                      <span className="font-medium">
-                        {appointmentTypes.find(t => t.id === selectedAppointmentType)?.name || selectedAppointmentType}
-                      </span>
-                    </div>
+            </div>
+            
+            <h2 className="text-2xl font-bold">Appointment Confirmed!</h2>
+            <p className="text-gray-600">Your appointment has been successfully booked.</p>
+            
+            <Card className="mt-6 border-[#20C0F3]/20">
+              <CardContent className="p-6">
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm text-gray-500">Mood Mentor</p>
+                    <p className="font-medium">{moodMentor?.fullName || "Selected Mentor"}</p>
                   </div>
-                </CardContent>
-              </Card>
-              
-              <div className="mt-8">
-                <Button onClick={() => navigate("/")} variant="default" className="bg-[#007BFF] hover:bg-blue-600">
-                  Back to Home
-                </Button>
-              </div>
+                  
+                  <div>
+                    <p className="text-sm text-gray-500">Date & Time</p>
+                    <p className="font-medium">{selectedDate && format(selectedDate, "MMMM d, yyyy")} at {selectedTime}</p>
+                  </div>
+                  
+                  <div>
+                    <p className="text-sm text-gray-500">Appointment Type</p>
+                    <p className="font-medium">{appointmentTypes.find(t => t.id === selectedAppointmentType)?.name || selectedAppointmentType}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            
+            <div className="flex flex-col sm:flex-row gap-4 justify-center mt-6">
+              <Button 
+                onClick={() => navigate("/patient-dashboard/appointments")}
+                className="bg-[#20C0F3] hover:bg-[#20C0F3]/90"
+              >
+                View My Appointments
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => navigate("/patient-dashboard")}
+                className="border-[#20C0F3] text-[#20C0F3] hover:bg-[#20C0F3]/10"
+              >
+                Go to Dashboard
+              </Button>
             </div>
           </div>
         );
@@ -641,121 +622,100 @@ const BookingPage = () => {
         return null;
     }
   };
-  
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-brand-purple-light via-white to-brand-blue-light">
-        <div className="container mx-auto px-4">
-          {/* Page heading */}
-          <div className="text-center my-8 pt-8">
-            <h1 className="text-3xl md:text-4xl font-bold text-[#001A41] mb-3">Book Your Appointment</h1>
-            <p className="text-gray-600 max-w-2xl mx-auto">
-              Schedule a session with one of our mood mentors. Complete all steps to confirm your booking.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-  
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-brand-purple-light via-white to-brand-blue-light">
-      <div className="pt-20 pb-16">
-        <div className="container mx-auto px-4">
-          {/* Page heading */}
-          <div className="text-center my-8">
-            <h1 className="text-3xl md:text-4xl font-bold text-[#001A41] mb-3">Book Your Appointment</h1>
-            <p className="text-gray-600 max-w-2xl mx-auto">
-              Schedule a session with one of our mood mentors. Complete all steps to confirm your booking.
-            </p>
-          </div>
-          
-          {/* Progress Steps */}
-          <div className="overflow-x-auto pb-6">
-            <div className="max-w-3xl mx-auto px-2">
-              <div className="flex items-center">
-                {steps.map((step, index) => (
-                  <div key={step.id} className="flex items-center flex-1">
-                    <div className="flex flex-col items-center relative z-10">
-                      <div 
-                        className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center ${
-                          step.id === currentStep 
-                            ? "bg-[#0078FF] text-white" 
-                            : step.id < currentStep 
-                              ? "bg-green-500 text-white" 
-                              : "bg-gray-200 text-gray-500"
-                        }`}
-                      >
-                        {step.id < currentStep ? (
-                          <CheckCircle2 className="w-4 h-4 md:w-5 md:h-5" />
-                        ) : (
-                          <span className="text-xs md:text-sm">{step.id}</span>
-                        )}
-                      </div>
-                      <span 
-                        className={`mt-2 text-[10px] md:text-xs font-medium ${
-                          step.id === currentStep ? "text-[#0078FF]" : "text-gray-500"
-                        }`}
-                      >
-                        {step.name}
-                      </span>
-                    </div>
-                    
-                    {index < steps.length - 1 && (
-                      <div className="flex-1 mx-0.5 md:mx-2 relative">
-                        <div className="h-[2px] bg-gray-200 w-full absolute top-4 md:top-5"></div>
-                        <div 
-                          className={`h-[2px] bg-green-500 w-full absolute top-4 md:top-5 transition-all duration-300 ease-in-out`}
-                          style={{ 
-                            width: step.id < currentStep ? '100%' : '0%', 
-                            opacity: step.id < currentStep ? 1 : 0 
-                          }}
-                        ></div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          
-          <div className="max-w-3xl mx-auto mt-8">
-            {renderStepContent()}
-            
-            {currentStep < 6 && (
-              <div className="flex justify-between mt-10 mb-10">
-                <Button
-                  variant="outline"
-                  onClick={prevStep}
-                  disabled={currentStep === 1}
-                  className="gap-2"
+    <div className="min-h-screen bg-gray-50 pb-12">
+      <HeroSection 
+        title="Book Your Appointment" 
+        subtitle="Schedule a session with your selected mood mentor"
+      />
+      
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 -mt-12 relative z-10">
+        {/* Progress Steps - Updated with better styling */}
+        <div className="hidden sm:block mb-8 bg-white rounded-xl shadow-sm p-6">
+          <div className="flex items-center justify-between">
+            {steps.map((step, index) => (
+              <div 
+                key={step.id} 
+                className={`flex-1 flex flex-col items-center ${index < steps.length - 1 ? "relative" : ""}`}
+              >
+                <div 
+                  className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
+                    currentStep > step.id 
+                      ? "bg-[#20C0F3] text-white" 
+                      : currentStep === step.id 
+                      ? "bg-[#20C0F3] text-white ring-4 ring-[#20C0F3]/20" 
+                      : "bg-gray-100 text-gray-400 border border-gray-200"
+                  }`}
                 >
-                  <ChevronLeft className="w-4 h-4" />
-                  Back
-                </Button>
+                  {currentStep > step.id ? (
+                    <CheckCircle2 className="h-5 w-5" />
+                  ) : (
+                    step.id
+                  )}
+                </div>
+                <span 
+                  className={`mt-2 text-sm ${
+                    currentStep >= step.id ? "text-[#20C0F3] font-medium" : "text-gray-500"
+                  }`}
+                >
+                  {step.name}
+                </span>
                 
-                {currentStep === 5 ? (
-                  <Button 
-                    onClick={handleBookingSubmit} 
-                    className="gap-2 bg-[#007BFF] hover:bg-blue-600"
-                  >
-                    Confirm Booking
-                  </Button>
-                ) : (
-                  <Button 
-                    onClick={nextStep} 
-                    className="gap-2 bg-[#007BFF] hover:bg-blue-600"
-                  >
-                    Next
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
+                {index < steps.length - 1 && (
+                  <div className={`absolute h-0.5 w-full top-5 left-1/2 ${
+                    currentStep > step.id ? "bg-[#20C0F3]" : "bg-gray-200"
+                  }`}></div>
                 )}
               </div>
-            )}
+            ))}
           </div>
         </div>
+        
+        {/* Current Step Content */}
+        <Card className="mb-6 shadow-sm border-0">
+          <CardContent className="p-6 sm:p-8">
+            {renderStepContent()}
+          </CardContent>
+        </Card>
+        
+        {/* Navigation Buttons */}
+        {currentStep !== 6 && (
+          <div className="flex justify-between mt-6">
+            {currentStep > 1 ? (
+              <Button 
+                variant="outline" 
+                onClick={prevStep}
+                className="flex items-center border-[#20C0F3] text-[#20C0F3] hover:bg-[#20C0F3]/10"
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Back
+              </Button>
+            ) : (
+              <div></div>
+            )}
+            
+            {currentStep < steps.length - 1 ? (
+              <Button 
+                onClick={nextStep}
+                className="bg-[#20C0F3] hover:bg-[#20C0F3]/90"
+              >
+                Next
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            ) : currentStep === 5 ? (
+              <Button 
+                onClick={handleBookingSubmit}
+                className="bg-[#20C0F3] hover:bg-[#20C0F3]/90"
+              >
+                Confirm Booking
+                <CheckCircle2 className="h-4 w-4 ml-1" />
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
-
+      
       {/* Authentication Dialog */}
       <Dialog open={showAuthDialog} onOpenChange={setShowAuthDialog}>
         <DialogContent className="sm:max-w-md">
@@ -767,13 +727,13 @@ const BookingPage = () => {
           </DialogHeader>
           <div className="flex flex-col space-y-4 my-4">
             <p>
-              Your booking details have been saved. Please login or create an account to continue.
+              Please login or create an account to continue with your booking.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button variant="outline" onClick={redirectToLogin} className="flex-1">
+              <Button variant="outline" onClick={redirectToLogin} className="flex-1 border-[#20C0F3] text-[#20C0F3]">
                 Login
               </Button>
-              <Button onClick={redirectToSignup} className="flex-1 bg-[#007BFF] hover:bg-blue-600">
+              <Button onClick={redirectToSignup} className="flex-1 bg-[#20C0F3] hover:bg-[#20C0F3]/90">
                 Create Account
               </Button>
             </div>

@@ -101,8 +101,23 @@ export default function StressAssessmentModal({ open, onOpenChange }: StressAsse
     
     setIsSubmitting(true); // Set submitting true immediately
     try {
-      console.log("Attempting to save assessment:", assessment);
-      const { error } = await dataService.saveStressAssessment(assessment);
+      console.log("Submitting assessment with user ID:", user.id);
+      console.log("Assessment structure being sent:", JSON.stringify(assessment, null, 2));
+      
+      // Ensure the responses have proper serializable format
+      const preparedAssessment = {
+        ...assessment,
+        // Convert Date objects to ISO strings
+        createdAt: assessment.createdAt ? assessment.createdAt.toISOString() : new Date().toISOString(),
+        // Ensure responses are serializable (Date objects converted to strings)
+        responses: assessment.responses.map(r => ({
+          ...r,
+          timestamp: r.timestamp instanceof Date ? r.timestamp.toISOString() : r.timestamp
+        }))
+      };
+      
+      console.log("Prepared assessment for saving:", preparedAssessment);
+      const { error } = await dataService.saveStressAssessment(preparedAssessment);
       
       if (error) {
         console.error("handleSubmit: Error received from saveStressAssessment:", error);
@@ -110,6 +125,11 @@ export default function StressAssessmentModal({ open, onOpenChange }: StressAsse
         // Do not throw here, let finally handle setIsSubmitting
       } else {
         toast.success("Assessment saved successfully!");
+        console.log("Assessment saved successfully");
+        
+        // Dispatch custom event for dashboard to refresh
+        window.dispatchEvent(new CustomEvent('dashboard-reload-needed'));
+        
         if (isMountedRef.current) { // Check before calling onOpenChange if it might cause unmount
           onOpenChange(false); 
         }
@@ -125,8 +145,6 @@ export default function StressAssessmentModal({ open, onOpenChange }: StressAsse
         console.log("handleSubmit: isSubmitting set to false.");
       } else {
         console.warn("handleSubmit: finally block executed but component was unmounted. isSubmitting may not have been reset properly if onOpenChange was called before submission completed.");
-        // If it's already unmounted, setIsSubmitting might not have an effect or could cause a warning if called.
-        // However, the main scenario for unmount is onOpenChange(false) which we try to gate.
       }
     }
   };

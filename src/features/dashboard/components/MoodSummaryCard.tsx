@@ -186,7 +186,7 @@ export default function MoodSummaryCard() {
           <div className="space-y-2">
             <div className="flex items-center">
               {getMoodIcon()}
-              <span className="text-2xl font-bold ml-2">{averageMood}/10</span>
+              <span className="text-xl font-bold ml-2">{averageMood}/10</span>
             </div>
             <div className="flex items-center text-xs text-gray-500">
               <span className="mr-1">7-day trend:</span>

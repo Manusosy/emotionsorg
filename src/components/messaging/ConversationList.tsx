@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
@@ -74,16 +75,11 @@ export const ConversationList = ({
             onClick={() => onSelectConversation(conversation.id)}
           >
             <div className="flex items-start gap-3 w-full">
-              <Avatar className="h-10 w-10 flex-shrink-0">
-                <AvatarImage src={conversation.otherUser.avatarUrl} alt={conversation.otherUser.name} />
-                <AvatarFallback>
-                  {conversation.otherUser.name
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("")
-                    .toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
+              <FallbackAvatar 
+                src={conversation.otherUser.avatarUrl} 
+                name={conversation.otherUser.name}
+                className="h-10 w-10 flex-shrink-0"
+              />
               <div className="flex-1 text-left overflow-hidden">
                 <div className="flex justify-between items-center">
                   <span className="font-medium truncate">{conversation.otherUser.name}</span>

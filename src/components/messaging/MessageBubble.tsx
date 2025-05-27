@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CheckIcon, CheckCheck } from "lucide-react";
 
@@ -35,10 +36,11 @@ export const MessageBubble = ({
       )}
     >
       {!isCurrentUser && (
-        <Avatar className="h-8 w-8 flex-shrink-0 mt-1">
-          <AvatarImage src={avatarUrl} alt={senderName} />
-          <AvatarFallback>{initials}</AvatarFallback>
-        </Avatar>
+        <FallbackAvatar 
+          src={avatarUrl} 
+          name={senderName}
+          className="h-8 w-8 flex-shrink-0 mt-1"
+        />
       )}
       
       <div className="max-w-[75%]">
@@ -79,10 +81,11 @@ export const MessageBubble = ({
       </div>
 
       {isCurrentUser && (
-        <Avatar className="h-8 w-8 flex-shrink-0 mt-1">
-          <AvatarImage src={avatarUrl} alt={senderName} />
-          <AvatarFallback>{initials}</AvatarFallback>
-        </Avatar>
+        <FallbackAvatar 
+          src={avatarUrl} 
+          name={senderName}
+          className="h-8 w-8 flex-shrink-0 mt-1"
+        />
       )}
     </div>
   );

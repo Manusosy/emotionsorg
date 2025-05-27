@@ -2,11 +2,12 @@ import { authService, userService, dataService, apiService, messageService, pati
 import React, { useState, useEffect, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, subDays, isValid } from "date-fns";
 import { AuthContext } from "@/contexts/authContext";
+import { supabase } from "@/lib/supabase";
 // Supabase import removed
 import StressProgressChart from "../components/StressProgressChart";
 import ConsistencyHeatmap from "../components/ConsistencyHeatmap";
@@ -20,6 +21,35 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import { 
+  TrendingUp, 
+  Calendar, 
+  ChevronLeft, 
+  ChevronDown, 
+  Download, 
+  FileDown, 
+  Share,
+  Activity, 
+  Brain, 
+  HeartPulse,
+  CheckCircle,
+  AlertTriangle,
+  CalendarRange,
+  Sparkles,
+  Users,
+  FileText,
+  BarChart3
+} from "lucide-react";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // Custom error boundary component
 interface ErrorBoundaryProps {
@@ -88,7 +118,9 @@ export default function ReportsPage() {
     consistencyScore: 0,
     lastAssessmentDate: null as Date | null,
     lastMoodEntryDate: null as Date | null,
-    healthPercentage: 0
+    healthPercentage: 0,
+    isFirstTimeUser: true,
+    daysWithData: 0
   });
   const [checkInDates, setCheckInDates] = useState<Date[]>([]);
   const [firstCheckInDate, setFirstCheckInDate] = useState<Date | null>(null);
@@ -102,8 +134,8 @@ export default function ReportsPage() {
     
     setIsLoading(true);
     try {
-      // Check if we're in test mode (use session storage data)
-      const isTestMode = true; // For testing, always use test mode
+      // Always use test mode since the real endpoints might not exist yet
+      const isTestMode = true;
       
       let assessmentsData: Assessment[] = [];
       let moodData: MoodEntry[] = [];
@@ -206,39 +238,50 @@ export default function ReportsPage() {
           console.error("Error loading test data from sessionStorage:", error);
         }
       } else {
-        // Calculate date range
-        const endDate = new Date();
-        const startDate = subDays(endDate, parseInt(dateRange));
-        
-        // Fetch stress assessments using dataService
-        const { data: fetchedAssessments, error: assessmentsError } = await dataService.getStressAssessments(
-          user.id,
-          10 // Using a limit instead of date range
-        );
+        // This section won't run as isTestMode is set to true above
+        // It's kept here for future reference when the real endpoints are ready
+        try {
+          // Calculate date range
+          const endDate = new Date();
+          const startDate = subDays(endDate, parseInt(dateRange));
           
-        if (assessmentsError) throw assessmentsError;
-        assessmentsData = fetchedAssessments || [];
-        
-        // Filter by date range since we can't query by date directly in test mode
-        assessmentsData = assessmentsData.filter(a => {
-          const date = new Date(a.created_at);
-          return isValid(date) && date >= startDate && date <= endDate;
-        });
-        
-        // Fetch mood entries using dataService
-        const { data: fetchedMoodData, error: moodError } = await dataService.getMoodEntries(
-          user.id,
-          20 // Using a limit instead of date range
-        );
+          // Use direct Supabase queries instead of the service methods that don't exist yet
+          const { data: fetchedAssessments, error: assessmentsError } = await supabase
+            .from('stress_assessments')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(10);
+            
+          if (assessmentsError) throw assessmentsError;
+          assessmentsData = fetchedAssessments || [];
           
-        if (moodError) throw moodError;
-        moodData = fetchedMoodData || [];
-        
-        // Filter by date range
-        moodData = moodData.filter(m => {
-          const date = new Date(m.created_at);
-          return isValid(date) && date >= startDate && date <= endDate;
-        });
+          // Filter by date range since we can't query by date directly in test mode
+          assessmentsData = assessmentsData.filter(a => {
+            const date = new Date(a.created_at);
+            return isValid(date) && date >= startDate && date <= endDate;
+          });
+          
+          // Use direct Supabase queries for mood entries too
+          const { data: fetchedMoodData, error: moodError } = await supabase
+            .from('mood_entries')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false })
+            .limit(20);
+            
+          if (moodError) throw moodError;
+          moodData = fetchedMoodData || [];
+          
+          // Filter by date range
+          moodData = moodData.filter(m => {
+            const date = new Date(m.created_at);
+            return isValid(date) && date >= startDate && date <= endDate;
+          });
+        } catch (error) {
+          console.error("Error fetching real data:", error);
+          toast.error("Failed to load reports data");
+        }
       }
       
       // Set data
@@ -248,7 +291,8 @@ export default function ReportsPage() {
       // Calculate metrics
       calculateMetrics(assessmentsData, moodData);
     } catch (error) {
-      console.error("Error fetching report data:", error);
+      console.error("Error in fetchData:", error);
+      toast.error("Failed to load reports data");
     } finally {
       setIsLoading(false);
     }
@@ -560,9 +604,7 @@ export default function ReportsPage() {
   const exportToPdf = (section: 'summary' | 'stress' | 'mood' | 'trends') => {
     try {
       const doc = new jsPDF();
-      const userName = user?.user_metadata?.first_name && user?.user_metadata?.last_name
-        ? `${user.user_metadata.first_name} ${user.user_metadata.last_name}`
-        : "User";
+      const userName = user?.user_metadata?.name || "User";
       const dateRangeText = dateRange === "7" 
         ? "Past 7 days" 
         : dateRange === "30" 

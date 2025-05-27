@@ -75,7 +75,7 @@ interface MentorProfile {
 export default function ProfilePage() {
   const { user } = useAuth() as { user: AuthUser | null };
   const navigate = useNavigate();
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('personal');
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -262,14 +262,10 @@ export default function ProfilePage() {
     if (!user?.id) return;
     
     try {
-      setIsLoading(true);
       setHasUnsavedChanges(false); // Reset unsaved changes when fetching fresh data
-      
-      console.log("Fetching profile for user ID:", user.id);
       
       // Get server data
       const response = await moodMentorService.getMoodMentorById(user.id);
-      console.log("Profile fetch response:", response);
       
       // Get the country from user metadata for phone prefix
       const countryName = user.user_metadata?.country ? 
@@ -300,20 +296,41 @@ export default function ProfilePage() {
         specialty: user.user_metadata?.specialty || '',
       };
       
+      // First get the current profile state to ensure we don't lose any data
+      const currentProfile = { ...profile };
+      
       if (response.success && response.data) {
         // The response is already in camelCase format from our service
         const profileData = response.data;
         
-        // Merge with any missing data from user metadata
+        // Merge with any missing data from user metadata and current profile
+        // Prioritize existing data in the following order: 
+        // 1. Current profile data (if it exists and isn't default)
+        // 2. Server profile data
+        // 3. User metadata
         const completeProfile = {
           ...profileData,
-          fullName: profileData.fullName || userMetadata.fullName,
+          fullName: currentProfile.fullName || profileData.fullName || userMetadata.fullName,
           email: profileData.email || userMetadata.email,
-          gender: profileData.gender || userMetadata.gender as any,
-          location: profileData.location || userMetadata.location,
-          avatarUrl: profileData.avatarUrl || userMetadata.avatarUrl,
-          phoneNumber: profileData.phoneNumber || userMetadata.phoneNumber,
-          specialty: profileData.specialty || userMetadata.specialty,
+          gender: currentProfile.gender !== defaultProfile.gender ? currentProfile.gender : 
+                 (profileData.gender || userMetadata.gender as any),
+          location: currentProfile.location || profileData.location || userMetadata.location,
+          avatarUrl: currentProfile.avatarUrl || profileData.avatarUrl || userMetadata.avatarUrl,
+          phoneNumber: currentProfile.phoneNumber || profileData.phoneNumber || userMetadata.phoneNumber,
+          specialty: currentProfile.specialty || profileData.specialty || userMetadata.specialty,
+          bio: currentProfile.bio || profileData.bio || '',
+          languages: currentProfile.languages?.length ? currentProfile.languages : 
+                    (profileData.languages?.length ? profileData.languages : []),
+          education: currentProfile.education?.length ? currentProfile.education : 
+                    (profileData.education?.length ? profileData.education : 
+                     [{ degree: '', institution: '', year: '' }]),
+          experience: currentProfile.experience?.length ? currentProfile.experience : 
+                     (profileData.experience?.length ? profileData.experience : 
+                      [{ title: '', place: '', duration: '' }]),
+          therapyTypes: currentProfile.therapyTypes?.length ? currentProfile.therapyTypes : 
+                       (profileData.therapyTypes?.length ? profileData.therapyTypes : []),
+          specialties: currentProfile.specialties?.length ? currentProfile.specialties : 
+                      (profileData.specialties?.length ? profileData.specialties : []),
         };
         
         setProfile(completeProfile);
@@ -324,45 +341,33 @@ export default function ProfilePage() {
         }
         
       } else {
-        console.log("No profile found, creating new profile from user metadata");
-        // Create new profile from user metadata
-        setProfile({
+        // Create new profile from user metadata and current profile
+        const newProfile = {
           ...defaultProfile,
+          ...currentProfile, // Keep any existing data
           userId: user.id,
-          fullName: userMetadata.fullName,
+          fullName: currentProfile.fullName || userMetadata.fullName,
           email: userMetadata.email,
-          gender: userMetadata.gender,
-          location: userMetadata.location,
-          avatarUrl: userMetadata.avatarUrl,
-          phoneNumber: userMetadata.phoneNumber,
-          specialty: userMetadata.specialty,
-          nameSlug: userMetadata.fullName
+          gender: currentProfile.gender !== defaultProfile.gender ? currentProfile.gender : userMetadata.gender,
+          location: currentProfile.location || userMetadata.location,
+          avatarUrl: currentProfile.avatarUrl || userMetadata.avatarUrl,
+          phoneNumber: currentProfile.phoneNumber || userMetadata.phoneNumber,
+          specialty: currentProfile.specialty || userMetadata.specialty,
+          nameSlug: currentProfile.nameSlug || userMetadata.fullName
             .toLowerCase()
             .replace(/\s+/g, '-')
             .replace(/[^a-z0-9-]/g, ''),
-        });
+        };
         
-        if (userMetadata.avatarUrl) {
-          setAvatarPreview(userMetadata.avatarUrl);
+        setProfile(newProfile);
+        
+        if (newProfile.avatarUrl) {
+          setAvatarPreview(newProfile.avatarUrl);
         }
       }
     } catch (error) {
       console.error('Error fetching profile data:', error);
       toast.error('Failed to load profile data');
-      
-      // Even if there's an error, try to set up a basic profile with user metadata
-      if (user) {
-        const basicProfile = {
-          ...defaultProfile,
-          userId: user.id,
-          fullName: user.user_metadata?.name || user.user_metadata?.full_name || user.email?.split('@')[0] || 'Mood Mentor',
-          email: user.email || '',
-        };
-        setProfile(basicProfile);
-      }
-    } finally {
-      // Always set loading to false to prevent infinite loading state
-      setIsLoading(false);
     }
   };
 
@@ -847,83 +852,10 @@ export default function ProfilePage() {
     return errorMessage;
   };
 
-  // Add a debug function to check user ID and profile relationship
-  const debugProfileIdRelationship = async () => {
-    if (!user?.id) {
-      toast.error('No user ID available');
-      return;
-    }
-
-    try {
-      toast.info('Checking profile ID relationship...');
-      console.log('Auth user ID:', user.id);
-
-      // First check by user_id
-      const { data: userData, error: userError } = await supabase
-        .from('mood_mentor_profiles')
-        .select('id, user_id, full_name, created_at')
-        .eq('user_id', user.id);
-
-      if (userError) {
-        console.error('Error querying by user_id:', userError);
-      }
-
-      if (userData && userData.length > 0) {
-        console.log('Found profile(s) by user_id:', userData);
-        toast.success(`Found ${userData.length} profile(s) by user ID`);
-      } else {
-        console.log('No profiles found by user_id');
-        toast.warning('No profiles found by user ID');
-        
-        // Try to find any profile that might match this user
-        const { data: nameData, error: nameError } = await supabase
-          .from('mood_mentor_profiles')
-          .select('id, user_id, full_name, created_at')
-          .ilike('full_name', `%${user.user_metadata?.full_name || user.user_metadata?.name || ''}%`);
-          
-        if (nameError) {
-          console.error('Error querying by name:', nameError);
-        }
-        
-        if (nameData && nameData.length > 0) {
-          console.log('Found potential matching profile(s) by name:', nameData);
-          toast.info(`Found ${nameData.length} potential profile(s) by name`);
-          
-          // Offer to fix the relationship
-          if (window.confirm(`Found a profile with ID ${nameData[0].id} that might belong to you. Would you like to link it to your account?`)) {
-            const { error: updateError } = await supabase
-              .from('mood_mentor_profiles')
-              .update({ user_id: user.id })
-              .eq('id', nameData[0].id);
-              
-            if (updateError) {
-              console.error('Error updating profile:', updateError);
-              toast.error('Failed to update profile relationship');
-            } else {
-              toast.success('Successfully linked profile to your account');
-              // Refresh the profile data
-              fetchProfileData();
-            }
-          }
-        } else {
-          toast.error('No matching profiles found');
-        }
-      }
-    } catch (error) {
-      console.error('Debug error:', error);
-      toast.error('Error checking profile relationship');
-    }
-  };
-
   // Use a useEffect to fetch profile data when component mounts
   useEffect(() => {
-    if (user?.id) {
-      fetchProfileData();
-    } else {
-      // If no user, set loading to false to prevent infinite loading
-      setIsLoading(false);
-    }
-  }, [user?.id]); // Only depend on user.id, not the entire user object
+    fetchProfileData();
+  }, [user]);
 
   // Toggle edit mode with confirmation
   const toggleEditMode = () => {
@@ -965,20 +897,20 @@ export default function ProfilePage() {
             <p className="text-sm text-muted-foreground">
               Manage your profile information and visibility
             </p>
-            </div>
+          </div>
           <div className="flex items-center gap-2">
             {isEditMode ? (
               <>
                 <Button 
                   onClick={toggleEditMode}
                   variant="outline" 
-                  disabled={isLoading || isSaving}
+                  disabled={isSaving}
                 >
                   Cancel
                 </Button>
                 <Button 
                   onClick={handleSaveProfile} 
-                  disabled={isLoading || isSaving || !isFormValid()}
+                  disabled={isSaving || !isFormValid()}
                 >
                   {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   Save Changes
@@ -988,7 +920,7 @@ export default function ProfilePage() {
               <>
                 <Button 
                   onClick={toggleEditMode} 
-                  disabled={isLoading || isSaving}
+                  disabled={isSaving}
                 >
                   Edit Profile
                 </Button>
@@ -998,11 +930,6 @@ export default function ProfilePage() {
         </div>
         
         <Card className="mt-6">
-          {isLoading && (
-            <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-10">
-              <Loader2 className="h-10 w-10 animate-spin text-primary" />
-            </div>
-          )}
           <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="grid w-full md:w-auto grid-cols-3">
               <TabsTrigger value="personal">Personal Info</TabsTrigger>
@@ -1044,7 +971,7 @@ export default function ProfilePage() {
                         accept="image/*"
                         className="hidden"
                               onChange={handleAvatarChange}
-                      />
+                            />
                           </label>
                     </div>
                       )}
@@ -1082,10 +1009,7 @@ export default function ProfilePage() {
                     <Input
                       id="fullName"
                       name="fullName"
-                        value={profile.fullName}
-                      onChange={handleInputChange}
-                        disabled={!isEditMode || isLoading}
-                      placeholder="Your full name"
+                                                  value={profile.fullName}                          onChange={handleInputChange}                          disabled={!isEditMode}                          placeholder="Your full name"
                     />
                   </div>
                   <div className="space-y-2">
@@ -1180,10 +1104,10 @@ export default function ProfilePage() {
                                   }`}>
                                     {profile.languages?.includes(language) && (
                                       <Check className="h-3 w-3 text-white" />
-                    )}
-                  </div>
+                        )}
+                      </div>
                                   <span>{language}</span>
-                </div>
+                    </div>
                               ))}
                         </div>
                           </DropdownMenuContent>
@@ -1328,7 +1252,7 @@ export default function ProfilePage() {
                                 >
                                   Remove
                                 </Button>
-                            )}
+                          )}
                           </div>
                     ))}
                   </div>
@@ -1396,7 +1320,7 @@ export default function ProfilePage() {
                                 >
                                   Remove
                                 </Button>
-                            )}
+                          )}
                           </div>
                       ))}
                     </div>
@@ -1491,7 +1415,7 @@ export default function ProfilePage() {
                         >
                           Inactive
                         </button>
-                      </div>
+                    </div>
                     </div>
                   </div>
                   
@@ -1528,87 +1452,78 @@ export default function ProfilePage() {
                         >
                           No
                         </button>
+                    </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between border p-4 rounded-lg">
+                        <div className="space-y-0.5">
+                          <div className="text-sm font-medium">Hourly Rate</div>
+                          <div className="text-sm text-muted-foreground">
+                            The fee you charge per hour (USD)
+                    </div>
+                        </div>
+                        <div className="w-24">
+                          <Input
+                            type="number"
+                            name="hourlyRate"
+                            value={profile.hourlyRate}
+                            onChange={handleInputChange}
+                            disabled={!isEditMode || isLoading || profile.isFree}
+                            min="0"
+                            max="500"
+                            className="text-right"
+                          />
+                        </div>
                       </div>
                     </div>
                     
-                    <div className="flex items-center justify-between border p-4 rounded-lg">
-                      <div className="space-y-0.5">
-                        <div className="text-sm font-medium">Hourly Rate</div>
-                        <div className="text-sm text-muted-foreground">
-                          The fee you charge per hour (USD)
+                    {/* Privacy */}
+                    <div className="space-y-2">
+                      <h3 className="text-lg font-medium">Privacy Settings</h3>
+                      <div className="text-sm text-muted-foreground mb-2">
+                        Control what information is visible on your public profile
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="show-email"
+                            className="h-4 w-4 rounded border-gray-300"
+                            checked={true}
+                            disabled={true}
+                          />
+                          <label htmlFor="show-email" className="text-sm font-medium">
+                            Show name on public profile (required)
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id="show-phone"
+                            className="h-4 w-4 rounded border-gray-300"
+                            checked={false}
+                            disabled={true}
+                          />
+                          <label htmlFor="show-phone" className="text-sm font-medium">
+                            Show phone number on public profile (controlled by admin)
+                          </label>
                         </div>
                       </div>
-                      <div className="w-24">
-                        <Input
-                          type="number"
-                          name="hourlyRate"
-                          value={profile.hourlyRate}
-                          onChange={handleInputChange}
-                          disabled={!isEditMode || isLoading || profile.isFree}
-                          min="0"
-                          max="500"
-                          className="text-right"
-                        />
-                      </div>
                     </div>
-                  </div>
-                  
-                  {/* Privacy */}
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-medium">Privacy Settings</h3>
-                    <div className="text-sm text-muted-foreground mb-2">
-                      Control what information is visible on your public profile
-                    </div>
+                    
+                    {/* Account Management */}
                     <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id="show-email"
-                          className="h-4 w-4 rounded border-gray-300"
-                          checked={true}
-                          disabled={true}
-                        />
-                        <label htmlFor="show-email" className="text-sm font-medium">
-                          Show name on public profile (required)
-                        </label>
+                      <h3 className="text-lg font-medium">Account Management</h3>
+                      <div className="text-sm text-muted-foreground mb-2">
+                        Manage your account on the platform
                       </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          id="show-phone"
-                          className="h-4 w-4 rounded border-gray-300"
-                          checked={false}
-                          disabled={true}
-                        />
-                        <label htmlFor="show-phone" className="text-sm font-medium">
-                          Show phone number on public profile (controlled by admin)
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Account Management */}
-                  <div className="space-y-2">
-                    <h3 className="text-lg font-medium">Account Management</h3>
-                    <div className="text-sm text-muted-foreground mb-2">
-                      Manage your account on the platform
-                    </div>
-                    <div className="flex flex-col gap-2">
                       <Button variant="destructive" disabled={true} className="w-auto">
                         Request Account Deletion
                       </Button>
-                      <Button 
-                        variant="outline" 
-                        onClick={debugProfileIdRelationship} 
-                        className="w-auto"
-                      >
-                        Fix Profile Data
-                      </Button>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        Note: Account deletion requests are processed by administrators. Please contact support for immediate assistance.
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Note: Account deletion requests are processed by administrators. Please contact support for immediate assistance.
-                    </div>
-                  </div>
                 </div>
               </CardContent>
             </TabsContent>

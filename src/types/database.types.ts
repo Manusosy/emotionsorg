@@ -27,24 +27,30 @@ export interface UserProfile {
 export interface Appointment {
   id: string;
   patient_id: string;
-  mood_mentor_id: string;
+  mentor_id: string;
+  title: string;
+  description?: string;
   date: string;
   start_time: string;
   end_time: string;
-  status: 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
+  status: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
   meeting_link?: string;
+  meeting_type: 'video' | 'audio' | 'chat';
   notes?: string;
   created_at: string;
   updated_at: string;
+  cancellation_reason?: string;
+  cancelled_by?: string;
+  rating?: number;
+  feedback?: string;
 }
 
 export interface Message {
   id: string;
-  conversation_id: string;
   sender_id: string;
   receiver_id: string;
   content: string;
-  read: boolean;
+  is_read: boolean;
   created_at: string;
 }
 
@@ -53,10 +59,8 @@ export interface JournalEntry {
   user_id: string;
   title: string;
   content: string;
-  mood?: string;
   mood_score?: number;
   tags?: string[];
-  is_private: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -207,6 +211,68 @@ export type Database = {
           updated_at?: string
         }
       }
+      appointments: {
+        Row: {
+          id: string
+          patient_id: string
+          mentor_id: string
+          title: string
+          description: string | null
+          date: string
+          start_time: string
+          end_time: string
+          status: string
+          meeting_link: string | null
+          meeting_type: string
+          notes: string | null
+          created_at: string
+          updated_at: string
+          cancellation_reason: string | null
+          cancelled_by: string | null
+          rating: number | null
+          feedback: string | null
+        }
+        Insert: {
+          id?: string
+          patient_id: string
+          mentor_id: string
+          title: string
+          description?: string | null
+          date: string
+          start_time: string
+          end_time: string
+          status: string
+          meeting_link?: string | null
+          meeting_type: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          cancellation_reason?: string | null
+          cancelled_by?: string | null
+          rating?: number | null
+          feedback?: string | null
+        }
+        Update: {
+          id?: string
+          patient_id?: string
+          mentor_id?: string
+          title?: string
+          description?: string | null
+          date?: string
+          start_time?: string
+          end_time?: string
+          status?: string
+          meeting_link?: string | null
+          meeting_type?: string
+          notes?: string | null
+          created_at?: string
+          updated_at?: string
+          cancellation_reason?: string | null
+          cancelled_by?: string | null
+          rating?: number | null
+          feedback?: string | null
+        }
+      }
       mood_entries: {
         Row: {
           id: string
@@ -246,6 +312,58 @@ export type Database = {
           activities?: string[] | null
           created_at?: string
           updated_at?: string
+        }
+      }
+    }
+    Views: {
+      patient_appointments_view: {
+        Row: {
+          id: string
+          patient_id: string
+          mentor_id: string
+          title: string
+          description: string | null
+          date: string
+          start_time: string
+          end_time: string
+          status: string
+          meeting_link: string | null
+          meeting_type: string
+          notes: string | null
+          created_at: string
+          updated_at: string
+          cancellation_reason: string | null
+          cancelled_by: string | null
+          rating: number | null
+          feedback: string | null
+          mentor_name: string
+          mentor_specialty: string
+          mentor_avatar_url: string | null
+        }
+      }
+      mentor_appointments_view: {
+        Row: {
+          id: string
+          patient_id: string
+          mentor_id: string
+          title: string
+          description: string | null
+          date: string
+          start_time: string
+          end_time: string
+          status: string
+          meeting_link: string | null
+          meeting_type: string
+          notes: string | null
+          created_at: string
+          updated_at: string
+          cancellation_reason: string | null
+          cancelled_by: string | null
+          rating: number | null
+          feedback: string | null
+          patient_name: string
+          patient_email: string
+          patient_avatar_url: string | null
         }
       }
     }

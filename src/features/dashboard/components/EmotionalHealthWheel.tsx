@@ -126,7 +126,7 @@ export default function EmotionalHealthWheel({
         {/* Status Text and View Details Button - Conditionally Rendered */}
         {hasAssessments && statusText && (
           <div className="text-center mt-2 mb-4">
-            <p className={`text-xl font-medium ${getStatusTextColor()}`}>
+            <p className={`text-lg font-medium ${getStatusTextColor()}`}>
               {statusText}
             </p>
             <p className="text-sm text-slate-600 mt-1">Your assessment result</p>

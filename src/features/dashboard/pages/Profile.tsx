@@ -26,16 +26,19 @@ import {
   Key
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { AuthContext } from "@/contexts/authContext";
 import { format } from "date-fns";
-import { UserProfile } from "../../../types/database.types";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner";
+import { PatientProfile } from "@/services/patient/patient.interface";
+import { UserWithMetadata } from "@/services/auth/auth.service";
 
 export default function Profile() {
   const navigate = useNavigate();
-  const { user } = useContext(AuthContext);
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const { user } = useContext(AuthContext) as { user: UserWithMetadata | null };
+  const [profile, setProfile] = useState<PatientProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("personal");
 
@@ -48,28 +51,51 @@ export default function Profile() {
           return;
         }
 
-        // Create profile from user metadata
-        const userProfile: UserProfile = {
-          id: user.id,
-          patient_id: user?.patient_id || 'EMHA01P',
-          first_name: user?.first_name || '',
-          last_name: user?.last_name || '',
-          email: user.email || '',
-          phone_number: user?.phone_number || '',
-          date_of_birth: user?.date_of_birth || '',
-          gender: user?.gender || '',
-          country: user?.country || '',
-          address: user?.address || '',
-          city: user?.city || '',
-          state: user?.state || '',
-          pincode: user?.pincode || '',
-          avatar_url: user?.avatar_url || '',
-          created_at: user.created_at || new Date().toISOString()
-        };
-
-        setProfile(userProfile);
+        // Use the patient service to fetch the profile
+        const response = await patientService.getPatientById(user.id);
+        
+        if (response.success && response.data) {
+          // Use the profile data from the service
+          setProfile(response.data);
+        } else {
+          // If no profile exists yet, create a default one from user metadata
+          // Get user metadata with type assertion to access properties safely
+          const metadata = user.user_metadata as any || {};
+          
+          // Create a default profile
+          const defaultProfile: PatientProfile = {
+            id: '',
+            userId: user.id,
+            fullName: metadata.name || user.email?.split('@')[0] || 'Patient',
+            email: user.email || '',
+            location: metadata.country || '',
+            gender: metadata.gender || '',
+            avatarUrl: metadata.avatarUrl || '',
+            phoneNumber: '',
+            createdAt: user.created_at || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          
+          // Save this default profile to the database
+          const saveResult = await patientService.updatePatientProfile(defaultProfile);
+          
+          if (saveResult.success && saveResult.data) {
+            setProfile(saveResult.data);
+          } else if (saveResult.error) {
+            // Only show error if there was an actual error from the service
+            console.error('Error saving profile:', saveResult.error);
+            toast.error("Failed to save profile data");
+            // Still use the default profile for display
+            setProfile(defaultProfile);
+          } else {
+            // No error but no data either - just use the default
+            setProfile(defaultProfile);
+          }
+        }
       } catch (error: any) {
         console.error('Error fetching profile:', error);
+        // Only show user-facing error for unexpected exceptions
+        toast.error("Error loading profile data");
       } finally {
         setIsLoading(false);
       }
@@ -127,31 +153,30 @@ export default function Profile() {
             <Card className="overflow-hidden border-none shadow-md rounded-xl">
               <div className="bg-gradient-to-r from-[#20C0F3]/90 to-[#20C0F3]/70 h-32 relative">
                 <div className="absolute -bottom-16 left-8">
-                  <Avatar className="h-32 w-32 border-4 border-white shadow-md">
-                    <AvatarImage src={profile.avatar_url} />
-                    <AvatarFallback className="bg-[#20C0F3] text-white text-2xl">
-                      {profile.first_name?.[0]}{profile.last_name?.[0]}
-                    </AvatarFallback>
-                  </Avatar>
+                  <FallbackAvatar
+                    src={profile.avatarUrl}
+                    name={profile.fullName}
+                    className="h-32 w-32 border-4 border-white shadow-md"
+                  />
                 </div>
               </div>
               <CardContent className="pt-20 pb-6 px-8">
                 <div className="flex flex-col md:flex-row md:justify-between md:items-end">
                   <div>
                     <h2 className="text-2xl font-bold">
-                      {profile.first_name} {profile.last_name}
+                      {profile.fullName}
                     </h2>
                     <div className="flex items-center gap-2 mt-1">
                       <Badge variant="outline" className="bg-[#20C0F3]/10 border-[#20C0F3]/20 text-[#20C0F3] font-medium">
                         <BadgeHelp className="h-3.5 w-3.5 mr-1" />
-                        {profile.patient_id}
+                        {profile.nameSlug || 'Patient'}
                       </Badge>
                     </div>
                   </div>
                   <div className="mt-4 md:mt-0">
                     <p className="text-sm text-muted-foreground flex items-center">
                       <Clock className="h-4 w-4 mr-1" />
-                      Member since {format(new Date(profile.created_at), 'MMMM yyyy')}
+                      Member since {format(new Date(profile.createdAt), 'MMMM yyyy')}
                     </p>
                   </div>
                 </div>
@@ -167,19 +192,19 @@ export default function Profile() {
                     </div>
                   </div>
                   
-                  {profile.phone_number && (
+                  {profile.phoneNumber && (
                     <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
                       <div className="bg-[#20C0F3]/10 p-2 rounded-full">
                         <Phone className="h-5 w-5 text-[#20C0F3]" />
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Phone</p>
-                        <p className="font-medium">{profile.phone_number}</p>
+                        <p className="font-medium">{profile.phoneNumber}</p>
                       </div>
                     </div>
                   )}
                   
-                  {profile.date_of_birth && (
+                  {profile.dateOfBirth && (
                     <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
                       <div className="bg-[#20C0F3]/10 p-2 rounded-full">
                         <Calendar className="h-5 w-5 text-[#20C0F3]" />
@@ -187,7 +212,7 @@ export default function Profile() {
                       <div>
                         <p className="text-sm text-muted-foreground">Date of Birth</p>
                         <p className="font-medium">
-                          {format(new Date(profile.date_of_birth), 'PP')}
+                          {format(new Date(profile.dateOfBirth), 'PP')}
                         </p>
                       </div>
                     </div>
@@ -205,14 +230,14 @@ export default function Profile() {
                     </div>
                   )}
                   
-                  {profile.country && (
+                  {profile.location && (
                     <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors">
                       <div className="bg-[#20C0F3]/10 p-2 rounded-full">
                         <MapPin className="h-5 w-5 text-[#20C0F3]" />
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Country</p>
-                        <p className="font-medium">{profile.country}</p>
+                        <p className="font-medium">{profile.location}</p>
                       </div>
                     </div>
                   )}
@@ -248,48 +273,48 @@ export default function Profile() {
                     <div className="flex justify-between items-center">
                       <CardTitle className="flex items-center">
                         <User className="h-5 w-5 mr-2 text-[#20C0F3]" />
-                        Personal Information
+                        Personal Details
                       </CardTitle>
-                      <Button 
+                      <Button
+                        variant="outline" 
                         size="sm"
-                        variant="ghost" 
                         onClick={() => navigate('/patient-dashboard/settings')}
-                        className="text-[#20C0F3]"
+                        className="text-sm"
                       >
-                        <Pencil className="h-4 w-4 mr-1" />
+                        <Pencil className="h-3.5 w-3.5 mr-1" />
                         Edit
                       </Button>
                     </div>
                   </CardHeader>
-                  <CardContent className="py-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-y-6 gap-x-12">
+                  <CardContent className="p-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div>
-                        <h3 className="text-sm font-medium text-slate-500">Full Name</h3>
-                        <p className="mt-1">{profile.first_name} {profile.last_name}</p>
+                        <p className="text-sm text-muted-foreground">Full Name</p>
+                        <p className="font-medium">{profile.fullName}</p>
                       </div>
                       <div>
-                        <h3 className="text-sm font-medium text-slate-500">Email</h3>
-                        <p className="mt-1">{profile.email}</p>
+                        <p className="text-sm text-muted-foreground">Email</p>
+                        <p className="font-medium">{profile.email}</p>
                       </div>
                       <div>
-                        <h3 className="text-sm font-medium text-slate-500">Phone</h3>
-                        <p className="mt-1">{profile.phone_number || "Not provided"}</p>
+                        <p className="text-sm text-muted-foreground">Phone</p>
+                        <p className="font-medium">{profile.phoneNumber || 'Not specified'}</p>
                       </div>
                       <div>
-                        <h3 className="text-sm font-medium text-slate-500">Date of Birth</h3>
-                        <p className="mt-1">
-                          {profile.date_of_birth 
-                            ? format(new Date(profile.date_of_birth), 'PPP') 
-                            : "Not provided"}
+                        <p className="text-sm text-muted-foreground">Date of Birth</p>
+                        <p className="font-medium">
+                          {profile.dateOfBirth 
+                            ? format(new Date(profile.dateOfBirth), 'PP') 
+                            : 'Not specified'}
                         </p>
                       </div>
                       <div>
-                        <h3 className="text-sm font-medium text-slate-500">Gender</h3>
-                        <p className="mt-1 capitalize">{profile.gender || "Not provided"}</p>
+                        <p className="text-sm text-muted-foreground">Gender</p>
+                        <p className="font-medium capitalize">{profile.gender || 'Not specified'}</p>
                       </div>
                       <div>
-                        <h3 className="text-sm font-medium text-slate-500">Country</h3>
-                        <p className="mt-1">{profile.country || "Not provided"}</p>
+                        <p className="text-sm text-muted-foreground">Country</p>
+                        <p className="font-medium">{profile.location || 'Not specified'}</p>
                       </div>
                     </div>
                   </CardContent>
@@ -380,7 +405,7 @@ export default function Profile() {
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">Member Since</p>
-                          <p className="font-medium">{format(new Date(profile.created_at), 'PPP')}</p>
+                          <p className="font-medium">{format(new Date(profile.createdAt), 'PPP')}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50">
@@ -398,7 +423,7 @@ export default function Profile() {
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">Patient ID</p>
-                          <p className="font-medium">{profile.patient_id}</p>
+                          <p className="font-medium">{profile.nameSlug || 'Patient'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50">
@@ -516,8 +541,14 @@ export default function Profile() {
             </Tabs>
           </div>
         ) : (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Profile not found</p>
+          <div className="p-8 text-center">
+            <p className="text-muted-foreground">Profile data could not be loaded.</p>
+            <Button 
+              onClick={() => navigate('/patient-dashboard/settings')}
+              className="mt-4"
+            >
+              Set Up Profile
+            </Button>
           </div>
         )}
       </div>

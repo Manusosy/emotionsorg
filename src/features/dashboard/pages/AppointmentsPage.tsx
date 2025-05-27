@@ -1,4 +1,4 @@
-import { useEffect, useState, useContext } from "react";
+import { useEffect, useState, useContext, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
@@ -61,6 +61,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
+import { appointmentService } from "@/services";
 
 // Define the Appointment type
 interface Appointment {
@@ -108,34 +110,6 @@ interface DateFilter {
   startDate: Date;
   endDate: Date;
 }
-
-// Mock data for mentors since the original data doesn't include complete info
-const mentorProfiles = [
-  {
-    id: "ment-123",
-    name: "Dr. Edalin",
-    specialty: "Mental Health Support",
-    avatar: "/assets/doctor-1.jpg",
-    email: "edalin@example.com",
-    phone: "+1 504 368 6874"
-  },
-  {
-    id: "ment-456",
-    name: "Dr. Shanta",
-    specialty: "Anxiety & Depression",
-    avatar: "/assets/doctor-2.jpg",
-    email: "shanta@example.com",
-    phone: "+1 832 891 8403"
-  },
-  {
-    id: "ment-789",
-    name: "Dr. John",
-    specialty: "Trauma Recovery",
-    avatar: "/assets/doctor-3.jpg",
-    email: "john@example.com",
-    phone: "+1 749 104 6291"
-  }
-];
 
 export default function AppointmentsPage() {
   const navigate = useNavigate();
@@ -227,77 +201,87 @@ export default function AppointmentsPage() {
         navigate('/signin');
         return;
       }
-
-      setLoading(true);
       
-      // Get the patient profile first
-      const { data: patientProfile, error: profileError } = await supabase
-        .from('patient_profiles')
-        .select('id')
-        .eq('id', user.id)
-        .single();
-
-      if (profileError) {
-        console.error('Error fetching patient profile:', profileError);
-        toast.error('Error loading appointments');
-        return;
+      setLoading(true);
+      console.log(`Fetching appointments for user ${user.id}, tab: ${activeTab}`);
+      
+      // Get current date in YYYY-MM-DD format
+      const today = new Date();
+      const todayFormatted = format(today, 'yyyy-MM-dd');
+      
+      // Determine status filter based on active tab
+      let statusFilter: string | undefined;
+      if (activeTab === 'upcoming') {
+        statusFilter = 'pending,scheduled';
+      } else if (activeTab === 'cancelled') {
+        statusFilter = 'cancelled';
+      } else if (activeTab === 'completed') {
+        statusFilter = 'completed';
       }
-
-      // Fetch appointments with mentor details
-      const { data, error } = await supabase
-        .from('appointments')
-        .select(`
-          *,
-          mentor:mentor_id (
-            id,
-            full_name,
-            email,
-            title,
-            specialty,
-            profile_image_url
-          )
-        `)
-        .eq('patient_id', patientProfile.id)
-        .order('appointment_date', { ascending: true });
-
+      
+      // Fetch appointments from the database
+      const { data: appointmentsData, error } = await supabase
+        .from('patient_appointments_view')
+        .select('*')
+        .eq('patient_id', user.id)
+        .in('status', statusFilter ? statusFilter.split(',') : []);
+      
       if (error) {
-        console.error('Error fetching appointments:', error);
-        toast.error('Error loading appointments');
+        console.error("Error fetching appointments:", error);
+        toast.error("Failed to load appointments");
+        setLoading(false);
         return;
       }
-
-      // Transform the data to match the expected format
-      const transformedAppointments = data.map(apt => ({
-        id: apt.id,
-        date: apt.appointment_date,
-        time: apt.appointment_time,
-        type: apt.appointment_type,
-        status: apt.status,
-        mentor: apt.mentor ? {
-          id: apt.mentor.id,
-          name: apt.mentor.full_name,
-          specialty: apt.mentor.specialty || 'General Mental Health',
-          avatar: apt.mentor.profile_image_url || '/assets/default-avatar.png',
-          email: apt.mentor.email,
-          phone: apt.mentor.phone || ''
-        } : undefined,
-        concerns: apt.concerns,
-        notes: apt.notes
+      
+      console.log("Appointments data:", appointmentsData);
+      
+      // Map the appointments to the expected format
+      const formattedAppointments = appointmentsData.map(appt => ({
+        id: appt.id,
+        date: appt.date,
+        time: appt.start_time,
+        type: appt.meeting_type as 'video' | 'audio' | 'chat',
+        status: appt.status as 'pending' | 'confirmed' | 'cancelled' | 'completed',
+        concerns: appt.description,
+        notes: appt.notes,
+        duration: '1 hour',
+        mentor: {
+          id: appt.mentor_id, // This is the auth.users ID
+          name: appt.mentor_name || 'Unknown Mentor',
+          specialty: appt.mentor_specialty || 'Specialist',
+          avatar: appt.mentor_avatar_url || '',
+          email: '',
+          phone: ''
+        }
       }));
-
-      // Update appointment counts
-      const counts = {
-        upcoming: data.filter(a => a.status === 'pending' || a.status === 'confirmed').length,
-        cancelled: data.filter(a => a.status === 'cancelled').length,
-        completed: data.filter(a => a.status === 'completed').length
-      };
-
-      setAppointments(transformedAppointments);
-      setCounts(counts);
+      
+      // Sort appointments by date and time
+      formattedAppointments.sort((a, b) => {
+        const dateA = new Date(`${a.date}T${a.time}`);
+        const dateB = new Date(`${b.date}T${b.time}`);
+        return dateA.getTime() - dateB.getTime();
+      });
+      
+      console.log("Formatted appointments:", formattedAppointments);
+      
+      // Update appointments state
+      setAppointments(formattedAppointments);
+      
+      // Update counts
+      const upcomingCount = appointmentsData.filter(a => a.status === 'pending' || a.status === 'scheduled').length;
+      const cancelledCount = appointmentsData.filter(a => a.status === 'cancelled').length;
+      const completedCount = appointmentsData.filter(a => a.status === 'completed').length;
+      
+      setCounts({
+        upcoming: upcomingCount,
+        cancelled: cancelledCount,
+        completed: completedCount
+      });
+      
+      setLoading(false);
     } catch (error) {
-      console.error('Error in fetchAppointments:', error);
-      toast.error('Failed to load appointments');
-    } finally {
+      console.error("Error in fetchAppointments:", error);
+      toast.error("An error occurred while loading appointments");
       setLoading(false);
     }
   };
@@ -307,83 +291,53 @@ export default function AppointmentsPage() {
       setLoadingMoodMentors(true);
       
       // Use mood mentor service to get available mentors
-      const result = await supabase.from('mood_mentors').select().eq('availability_status', 'Available').limit(5);
+      const { data: mentorsData, error } = await supabase
+        .from('mood_mentor_profiles')
+        .select('*')
+        .eq('availability_status', 'available')
+        .limit(5);
       
-      if (result.data && result.data.length > 0) {
-        const mappedMentors: MoodMentorProfile[] = result.data.map(mentor => ({
+      if (error) {
+        console.error("Error fetching mood mentors:", error);
+        setMoodMentors([]);
+        return;
+      }
+      
+      if (mentorsData && mentorsData.length > 0) {
+        const mappedMentors: MoodMentorProfile[] = mentorsData.map(mentor => ({
           id: mentor.id,
-          name: mentor.name || mentor.full_name || 'Mood Mentor',
+          name: mentor.full_name || 'Mood Mentor',
           specialty: mentor.specialty || 'Mental Health Support',
-          avatar: mentor.avatar_url || mentor.avatar || mentor.image || '/default-avatar.png',
-          rating: mentor.rating || 4.7,
-          reviews: mentor.reviews || mentor.totalRatings || 10,
-          available: true,
-          email: mentor.email || 'contact@emotionsapp.com',
-          phone: mentor.phone_number || mentor.phone || '+250 788 123 456',
-          bio: mentor.bio || mentor.about || 'Experienced mental health professional',
+          avatar: mentor.avatar_url || '/default-avatar.png',
+          rating: mentor.rating || 4.5,
+          reviews: mentor.review_count || 0,
+          available: mentor.availability_status === 'available',
+          email: mentor.email || '',
+          phone: mentor.phone_number || '',
+          bio: mentor.bio || '',
           education: typeof mentor.education === 'string' ? mentor.education : 
             (mentor.education && mentor.education[0]?.degree) ? 
-            `${mentor.education[0].degree} from ${mentor.education[0].university}` : 
+            `${mentor.education[0].degree} from ${mentor.education[0].institution}` : 
             'Mental Health Professional'
         }));
         
         setMoodMentors(mappedMentors);
       } else {
-        // Fallback to mock data
-        console.log("No mood mentors found, using mock data");
-        const mockMentors: MoodMentorProfile[] = [
-          {
-            id: "mm-1",
-            name: "Dr. Sarah Johnson",
-            specialty: "Anxiety & Depression",
-            avatar: "/assets/mentor-1.jpg",
-            rating: 4.9,
-            reviews: 127,
-            available: true,
-            email: "sarah.johnson@example.com",
-            phone: "+1 (555) 123-4567",
-            bio: "Specialized in anxiety and depression treatment with over 10 years of experience.",
-            education: "PhD in Clinical Psychology, Stanford University"
-          },
-          {
-            id: "mm-2",
-            name: "Dr. Michael Chen",
-            specialty: "Trauma Recovery",
-            avatar: "/assets/mentor-2.jpg",
-            rating: 4.8,
-            reviews: 93,
-            available: true,
-            email: "michael.chen@example.com",
-            phone: "+1 (555) 987-6543",
-            bio: "Helping people overcome trauma and build resilience through evidence-based approaches.",
-            education: "PsyD in Clinical Psychology, Columbia University"
-          },
-          {
-            id: "mm-3",
-            name: "Dr. Olivia Martinez",
-            specialty: "Relationship Counseling",
-            avatar: "/assets/mentor-3.jpg",
-            rating: 4.7,
-            reviews: 156,
-            available: false,
-            email: "olivia.martinez@example.com",
-            phone: "+1 (555) 456-7890",
-            bio: "Specializes in relationship counseling and interpersonal communication.",
-            education: "PhD in Counseling Psychology, UCLA"
-          }
-        ];
-        
-        setMoodMentors(mockMentors);
+        // No mock data fallback - just set empty array
+        console.log("No mood mentors found");
+        setMoodMentors([]);
       }
     } catch (error) {
       console.error("Error fetching mood mentors:", error);
+      setMoodMentors([]);
     } finally {
       setLoadingMoodMentors(false);
     }
   };
 
   const getAppointmentIdCode = (id: string) => {
-    return `#Apt${id.substring(0, 4)}`;
+    // Format the appointment ID to be more user-friendly
+    return `#Apt${id.slice(-5)}`;
   };
 
   const handleApplyDateFilter = (filter: DateFilter) => {
@@ -414,31 +368,37 @@ export default function AppointmentsPage() {
 
   const handleCancelAppointment = async (appointmentId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('appointments')
-        .update({ 
-          status: 'cancelled', 
-          cancellation_reason: cancellationReason || 'Cancelled by patient' 
-        })
-        .eq('id', appointmentId)
-        .select();
+      if (!user) {
+        toast.error("You must be logged in to cancel appointments");
+        return;
+      }
       
-      if (error) {
-        throw error;
+      toast.loading("Cancelling appointment...");
+      
+      // Use the appointment service to cancel the appointment
+      const result = await appointmentService.cancelAppointment(appointmentId, cancellationReason);
+      
+      if (result.error) {
+        console.error("Error cancelling appointment:", result.error);
+        toast.dismiss();
+        toast.error("Failed to cancel appointment: " + result.error);
+        return;
       }
 
+      toast.dismiss();
       toast.success("Appointment cancelled successfully");
       fetchAppointments(); // Refresh appointments after cancellation
     } catch (error) {
+      console.error("Error cancelling appointment:", error);
+      toast.dismiss();
       toast.error("An error occurred while cancelling the appointment");
-      console.error("Error:", error);
     } finally {
       setCancelAppointmentId(null);
       setCancellationReason(''); // Reset the reason
     }
   };
 
-  // Replace the renderAppointmentList function with a more modern design
+  // Replace the renderAppointmentList function with a more modern table design
   const renderAppointmentList = () => {
     if (loading) {
       return (
@@ -478,166 +438,193 @@ export default function AppointmentsPage() {
       );
     }
 
+    // Format the appointment ID to be more user-friendly
+    const formatAppointmentId = (id: string) => {
+      return `#Apt${id.slice(-5)}`;
+    };
+
+    // Determine status badge styling
+    const getBadgeClasses = (status: string) => {
+      if (!status) return "bg-slate-100 text-slate-700 hover:bg-slate-200";
+      
+      switch(status.toLowerCase()) {
+        case 'pending':
+        case 'scheduled':
+        case 'confirmed':
+          return "bg-indigo-100 text-indigo-700 hover:bg-indigo-200";
+        case 'completed':
+          return "bg-purple-100 text-purple-700 hover:bg-purple-200";
+        case 'cancelled':
+          return "bg-red-100 text-red-700 hover:bg-red-200";
+        default:
+          return "bg-slate-100 text-slate-700 hover:bg-slate-200";
+      }
+    };
+
+    // Determine badge dot color
+    const getDotColor = (status: string) => {
+      if (!status) return "bg-slate-500";
+      
+      switch(status.toLowerCase()) {
+        case 'pending':
+        case 'scheduled':
+        case 'confirmed':
+          return "bg-indigo-500";
+        case 'completed':
+          return "bg-purple-500";
+        case 'cancelled':
+          return "bg-red-500";
+        default:
+          return "bg-slate-500";
+      }
+    };
+
+    // Format the status for display
+    const getDisplayStatus = (status: string) => {
+      if (!status) return "Unknown";
+      
+      if (status.toLowerCase() === 'pending' || status.toLowerCase() === 'scheduled') {
+        return "Upcoming";
+      }
+      
+      return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+    };
+
     return (
-      <div className="space-y-6">
-        {appointments.map((appointment) => (
-          <div 
-            key={appointment.id} 
-            className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden transition-all hover:shadow-md"
-          >
-            <div className={cn(
-              "border-l-4 h-full", 
-              activeTab === "upcoming" ? "border-blue-600" : 
-              activeTab === "completed" ? "border-green-600" : "border-orange-600"
-            )}>
-              <div className="p-6">
-                <div className="flex flex-col md:flex-row gap-5">
-                  {/* Left section: Mentor info */}
-                  <div className="flex gap-4 items-center">
-                    <Avatar className="h-16 w-16 rounded-full border-2 border-blue-100">
-                      <AvatarImage src={appointment.mentor?.avatar} />
-                      <AvatarFallback className="bg-blue-100 text-blue-700 text-lg font-semibold">
-                        {appointment.mentor?.name.charAt(0)}
-                      </AvatarFallback>
-                    </Avatar>
-
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge 
-                          className={cn(
-                            "font-normal rounded-full text-xs",
-                            activeTab === "upcoming" ? "bg-blue-50 text-blue-700" : 
-                            activeTab === "completed" ? "bg-green-50 text-green-700" : 
-                            "bg-orange-50 text-orange-700"
+      <>
+        <Card className="shadow-sm overflow-hidden mt-6">
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr style={{ backgroundColor: '#20C0F3' }} className="rounded-t-lg">
+                    <th className="text-left text-sm font-medium text-white p-4 first:rounded-tl-lg">ID</th>
+                    <th className="text-left text-sm font-medium text-white p-4">Mood Mentor</th>
+                    <th className="text-left text-sm font-medium text-white p-4">Date & Time</th>
+                    <th className="text-left text-sm font-medium text-white p-4">Type</th>
+                    <th className="text-left text-sm font-medium text-white p-4">Status</th>
+                    <th className="text-right text-sm font-medium text-white p-4 last:rounded-tr-lg">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {appointments.map((appointment) => (
+                    <tr key={appointment.id} className="hover:bg-blue-50/30 transition-colors">
+                      <td className="p-4">
+                        <span className="text-blue-600 font-medium">{formatAppointmentId(appointment.id)}</span>
+                      </td>
+                      <td className="p-4">
+                        <div className="flex items-center gap-3">
+                          <FallbackAvatar
+                            src={appointment.mentor?.avatar}
+                            name={appointment.mentor?.name || "Mentor"}
+                            className="h-10 w-10"
+                          />
+                          <div>
+                            <div className="font-medium text-gray-800">{appointment.mentor?.name}</div>
+                            <div className="text-xs text-slate-500">{appointment.mentor?.specialty}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <div className="text-sm text-gray-700">
+                          <div className="flex items-center">
+                            <CalendarIcon className="h-3.5 w-3.5 mr-1.5 text-blue-500" />
+                            {format(new Date(appointment.date), "dd MMM yyyy")}
+                          </div>
+                          <div className="flex items-center mt-1">
+                            <Clock className="h-3.5 w-3.5 mr-1.5 text-blue-500" />
+                            {appointment.time}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4">
+                        <span className="inline-flex items-center text-sm text-gray-700">
+                          {appointment.type === "video" && <Video className="h-3.5 w-3.5 mr-1.5 text-blue-500" />}
+                          {appointment.type === "audio" && <Phone className="h-3.5 w-3.5 mr-1.5 text-blue-500" />}
+                          {appointment.type === "chat" && <MessageSquare className="h-3.5 w-3.5 mr-1.5 text-blue-500" />}
+                          {appointment.type.charAt(0).toUpperCase() + appointment.type.slice(1)}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <Badge className={`${getBadgeClasses(appointment.status)} font-medium px-3 py-1 rounded-full`}>
+                          <span className="flex items-center">
+                            <span className={`h-1.5 w-1.5 rounded-full ${getDotColor(appointment.status)} mr-1.5`}></span>
+                            {getDisplayStatus(appointment.status)}
+                          </span>
+                        </Badge>
+                      </td>
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {activeTab === "upcoming" && (
+                            <>
+                              <Button 
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-3 rounded-full"
+                                onClick={() => navigate(`/messages/${appointment.mentor?.id}`)}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
+                                Chat
+                              </Button>
+                              <Button 
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-3 rounded-full text-red-500 border-red-200 hover:bg-red-50"
+                                onClick={() => setCancelAppointmentId(appointment.id)}
+                              >
+                                <X className="h-3.5 w-3.5 mr-1.5" />
+                                Cancel
+                              </Button>
+                              <Button 
+                                size="sm"
+                                className="h-8 px-3 bg-blue-600 hover:bg-blue-700 rounded-full"
+                                onClick={() => navigate(`/session/${appointment.id}`)}
+                              >
+                                <Video className="h-3.5 w-3.5 mr-1.5" />
+                                Join
+                              </Button>
+                            </>
                           )}
-                        >
-                          {getAppointmentIdCode(appointment.id)}
-                        </Badge>
-                      </div>
-                      <h3 className="font-semibold text-lg text-gray-900">
-                        {appointment.mentor?.name}
-                      </h3>
-                      <p className="text-sm text-slate-500 mt-0.5">{appointment.mentor?.specialty}</p>
-                    </div>
-                  </div>
-
-                  {/* Right section: Appointment details */}
-                  <div className="flex flex-col sm:flex-row gap-5 mt-4 md:mt-0 md:ml-auto">
-                    {/* Date and time */}
-                    <div className="flex flex-col">
-                      <p className="text-xs uppercase text-gray-500 font-medium mb-1">Date & Time</p>
-                      <div className="flex items-center text-gray-800 font-medium">
-                        <CalendarIcon className="h-4 w-4 text-blue-500 mr-2" />
-                        <p>{format(new Date(appointment.date), "dd MMM yyyy")}</p>
-                      </div>
-                      <div className="flex items-center text-gray-800 mt-1">
-                        <Clock className="h-4 w-4 text-blue-500 mr-2" />
-                        <p>{appointment.time}</p>
-                      </div>
-                    </div>
-
-                    {/* Type */}
-                    <div className="flex flex-col sm:ml-6">
-                      <p className="text-xs uppercase text-gray-500 font-medium mb-1">Session Type</p>
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-blue-50 text-blue-700 hover:bg-blue-100 font-normal py-1">
-                          {appointment.type === "video" ? (
-                            <div className="flex items-center">
-                              <Video className="h-3 w-3 mr-1.5" />
-                              <span>Video Call</span>
-                            </div>
-                          ) : (
-                            <div className="flex items-center">
-                              <Phone className="h-3 w-3 mr-1.5" />
-                              <span>Audio Call</span>
-                            </div>
+                          {activeTab === "cancelled" && (
+                            <Button 
+                              size="sm"
+                              className="h-8 px-3 bg-blue-600 hover:bg-blue-700 rounded-full"
+                              onClick={() => navigate("/booking")}
+                            >
+                              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                              Reschedule
+                            </Button>
                           )}
-                        </Badge>
-                      </div>
-                      <div className="mt-1">
-                        <Badge variant="outline" className="text-gray-600 font-normal">
-                          {appointment.duration || "30 min"}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    {/* Contact */}
-                    <div className="flex flex-col sm:ml-6">
-                      <p className="text-xs uppercase text-gray-500 font-medium mb-1">Contact</p>
-                      <div className="flex items-center gap-2 text-gray-600">
-                        <Mail className="h-4 w-4 text-blue-500" />
-                        <p className="text-sm">{appointment.mentor?.email}</p>
-                      </div>
-                      <div className="flex items-center gap-2 text-gray-600 mt-1">
-                        <PhoneIcon className="h-4 w-4 text-blue-500" />
-                        <p className="text-sm">{appointment.mentor?.phone}</p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap gap-3 justify-end">
-                  {activeTab === "upcoming" && (
-                    <>
-                      <Button 
-                        variant="outline"
-                        className="rounded-full"
-                        onClick={() => navigate(`/messages/${appointment.mentor?.id}`)}
-                      >
-                        <MessageSquare className="h-4 w-4 mr-2" />
-                        Chat Now
-                      </Button>
-                      <Button 
-                        variant="outline"
-                        className="rounded-full text-red-500 border-red-200 hover:bg-red-50"
-                        onClick={() => setCancelAppointmentId(appointment.id)}
-                      >
-                        <X className="h-4 w-4 mr-2" />
-                        Cancel
-                      </Button>
-                      <Button 
-                        className="bg-blue-600 hover:bg-blue-700 rounded-full"
-                        onClick={() => navigate(`/session/${appointment.id}`)}
-                      >
-                        <Video className="h-4 w-4 mr-2" />
-                        Attend Session
-                      </Button>
-                    </>
-                  )}
-                  {activeTab === "cancelled" && (
-                    <Button 
-                      className="bg-blue-600 hover:bg-blue-700 rounded-full"
-                      onClick={() => navigate("/booking")}
-                    >
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Reschedule
-                    </Button>
-                  )}
-                  {activeTab === "completed" && (
-                    <>
-                      <Button 
-                        variant="outline"
-                        className="rounded-full"
-                        onClick={() => navigate(`/feedback/${appointment.id}`)}
-                      >
-                        <MessageSquare className="h-4 w-4 mr-2" />
-                        Leave Feedback
-                      </Button>
-                      <Button 
-                        className="bg-blue-600 hover:bg-blue-700 rounded-full"
-                        onClick={() => navigate(`/booking?mentor=${appointment.mentor?.id}`)}
-                      >
-                        <CalendarPlus className="h-4 h-4 mr-2" />
-                        Book Again
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
+                          {activeTab === "completed" && (
+                            <>
+                              <Button 
+                                variant="outline"
+                                size="sm"
+                                className="h-8 px-3 rounded-full"
+                                onClick={() => navigate(`/feedback/${appointment.id}`)}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
+                                Feedback
+                              </Button>
+                              <Button 
+                                size="sm"
+                                className="h-8 px-3 bg-blue-600 hover:bg-blue-700 rounded-full"
+                                onClick={() => navigate(`/booking?mentor=${appointment.mentor?.id}`)}
+                              >
+                                <CalendarPlus className="h-3.5 w-3.5 mr-1.5" />
+                                Book Again
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </div>
-        ))}
+          </CardContent>
+        </Card>
         
         {/* Add a button to book new appointments */}
         <div className="flex justify-center mt-8">
@@ -649,7 +636,7 @@ export default function AppointmentsPage() {
             Book New Appointment
           </Button>
         </div>
-      </div>
+      </>
     );
   };
 
@@ -689,12 +676,13 @@ export default function AppointmentsPage() {
               !mentor.available ? 'opacity-70' : ''
             }`}
           >
-            <div className="p-4">
-              <div className="flex items-start gap-4">
-                <Avatar className="h-12 w-12 border">
-                  <AvatarImage src={mentor.avatar} alt={mentor.name} />
-                  <AvatarFallback>{mentor.name.substring(0, 2)}</AvatarFallback>
-                </Avatar>
+            <CardContent className="p-0">
+              <div className="flex items-start p-4">
+                <FallbackAvatar
+                  src={mentor.avatar}
+                  name={mentor.name}
+                  className="h-12 w-12 border"
+                />
                 
                 <div className="flex-1">
                   <div className="flex justify-between">
@@ -743,7 +731,7 @@ export default function AppointmentsPage() {
                   {mentor.available ? 'Book Session' : 'Currently Unavailable'}
                 </Button>
               </div>
-            </div>
+            </CardContent>
           </Card>
         ))}
       </div>

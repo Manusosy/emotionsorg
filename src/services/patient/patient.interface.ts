@@ -4,30 +4,43 @@
  */
 
 import { UserProfile } from '../user/user.interface';
+import { Appointment as AppointmentType } from '../appointment/appointment.interface';
 
 export interface PatientProfile {
   id: string;
-  first_name: string;
-  last_name: string;
+  userId: string;
+  fullName: string;
   email: string;
-  phone_number?: string;
-  date_of_birth?: string;
-  country?: string;
+  bio?: string;
+  avatarUrl?: string;
+  phoneNumber?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  location?: string;
+  address?: string;
   city?: string;
   state?: string;
-  avatar_url?: string;
-  created_at: string;
+  pincode?: string;
+  nameSlug?: string;
+  emergencyContact?: string;
+  healthConditions?: string[];
+  isProfileComplete?: boolean;
+  isActive?: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface Appointment {
+export interface UserActivity {
   id: string;
-  patientId: string;
-  moodMentorId: string;
+  activityType: 'login' | 'profile_update' | 'assessment' | 'appointment' | 'journal' | 'message' | 'session';
+  description: string;
+  deviceInfo?: string;
   timestamp: string;
-  status: 'scheduled' | 'completed' | 'cancelled';
-  meetingLink?: string;
-  notes?: string;
+  metadata?: Record<string, any>;
 }
+
+// Use the shared Appointment type
+export type Appointment = AppointmentType;
 
 export interface AppointmentReport {
   id: string;
@@ -95,10 +108,37 @@ export interface IPatientService {
   subscribeToPatientUpdates(callback: () => void): (() => void) | undefined;
 
   /**
+   * Get a patient by ID
+   */
+  getPatientById(id: string): Promise<{
+    success: boolean;
+    data: PatientProfile | null;
+    error: string | null;
+  }>;
+
+  /**
+   * Update patient profile
+   */
+  updatePatientProfile(profile: Partial<PatientProfile>): Promise<{
+    success: boolean;
+    data: PatientProfile | null;
+    error: string | null;
+  }>;
+
+  /**
+   * Upload profile image
+   */
+  uploadProfileImage(patientId: string, file: File): Promise<{
+    success: boolean;
+    url: string | null;
+    error: string | null;
+  }>;
+
+  /**
    * Get a patient's appointments
    */
   getAppointments(patientId: string, options?: {
-    status?: 'scheduled' | 'completed' | 'cancelled';
+    status?: 'pending' | 'scheduled' | 'completed' | 'cancelled' | 'rescheduled';
     limit?: number;
     startDate?: string;
     endDate?: string;
@@ -123,7 +163,7 @@ export interface IPatientService {
   /**
    * Create an appointment
    */
-  createAppointment(appointment: Omit<Appointment, 'id'>): Promise<Appointment>;
+  createAppointment(appointment: Omit<Appointment, 'id' | 'status' | 'created_at' | 'updated_at' | 'cancellation_reason' | 'cancelled_by' | 'rating' | 'feedback'>): Promise<Appointment>;
   
   /**
    * Update an appointment
@@ -133,7 +173,7 @@ export interface IPatientService {
   /**
    * Cancel an appointment
    */
-  cancelAppointment(id: string): Promise<boolean>;
+  cancelAppointment(id: string, reason?: string): Promise<boolean>;
   
   /**
    * Get a patient's metrics
@@ -184,4 +224,18 @@ export interface IPatientService {
    * Update patient metrics
    */
   updateMetrics(patientId: string, metricsUpdate: UserMetricsUpdate): Promise<boolean>;
+
+  /**
+   * Get user activity
+   */
+  getUserActivity(userId: string, limit?: number): Promise<{
+    success: boolean;
+    data: UserActivity[];
+    error: string | null;
+  }>;
+
+  /**
+   * Record user activity
+   */
+  recordUserActivity(activity: Omit<UserActivity, 'id'>): Promise<boolean>;
 } 

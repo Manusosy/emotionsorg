@@ -22,9 +22,11 @@ import {
   Filter,
   Search,
   MoreVertical,
+  FileText,
+  Edit,
 } from "lucide-react";
 // Supabase import removed
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { toast } from "sonner";
 import {
   Select,
@@ -42,8 +44,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { format } from "date-fns";
+import { format, addDays, startOfMonth, endOfMonth } from "date-fns";
 import { AuthContext } from "@/contexts/authContext";
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 interface AppointmentDisplay {
   id: string;
@@ -63,27 +67,39 @@ interface AppointmentDisplay {
 
 export default function AppointmentsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useContext(AuthContext);
   const [appointments, setAppointments] = useState<AppointmentDisplay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
-
+  
+  // Parse URL parameters for date filtering
+  useEffect(() => {
+    const queryParams = new URLSearchParams(location.search);
+    const dateParam = queryParams.get('date');
+    
+    if (dateParam) {
+      // Set custom date filter
+      setDateFilter('custom');
+      
+      // Store the specific date in a ref or state if needed
+      // This is handled directly in the fetchAppointments function
+    }
+  }, [location.search]);
+  
   useEffect(() => {
     fetchAppointments();
-  }, [user, statusFilter, dateFilter]);
+  }, [user, statusFilter, dateFilter, location.search]);
 
   const fetchAppointments = async () => {
     try {
       setIsLoading(true);
       let query = supabase
-        .from('appointments')
-        .select(`
-          *,
-          patient_profiles:patient_id(*)
-        `)
-        .eq('mood_mentor_id', user?.id)
+        .from('mentor_appointments_view')
+        .select('*')
+        .eq('mentor_id', user?.id)
         .order('date', { ascending: true });
 
       // Apply status filter
@@ -93,19 +109,28 @@ export default function AppointmentsPage() {
 
       // Apply date filter
       const today = new Date();
+      const queryParams = new URLSearchParams(location.search);
+      const dateParam = queryParams.get('date');
+      
       switch (dateFilter) {
         case "today":
           query = query.eq('date', format(today, 'yyyy-MM-dd'));
           break;
         case "week":
           const weekStart = format(today, 'yyyy-MM-dd');
-          const weekEnd = format(new Date(today.setDate(today.getDate() + 7)), 'yyyy-MM-dd');
+          const weekEnd = format(addDays(today, 7), 'yyyy-MM-dd');
           query = query.gte('date', weekStart).lte('date', weekEnd);
           break;
         case "month":
-          const monthStart = format(today, 'yyyy-MM-01');
-          const monthEnd = format(new Date(today.getFullYear(), today.getMonth() + 1, 0), 'yyyy-MM-dd');
+          const monthStart = format(startOfMonth(today), 'yyyy-MM-dd');
+          const monthEnd = format(endOfMonth(today), 'yyyy-MM-dd');
           query = query.gte('date', monthStart).lte('date', monthEnd);
+          break;
+        case "custom":
+          // Handle specific date from URL parameter
+          if (dateParam) {
+            query = query.eq('date', dateParam);
+          }
           break;
       }
 
@@ -114,15 +139,22 @@ export default function AppointmentsPage() {
       if (error) throw error;
       
       const transformedData = (data || []).map(appointment => ({
-        ...appointment,
+        id: appointment.id,
+        patient_id: appointment.patient_id,
+        date: appointment.date,
+        time: `${appointment.start_time} - ${appointment.end_time}`,
+        type: appointment.meeting_type,
+        status: appointment.status,
+        notes: appointment.notes,
         patient: {
-          name: appointment.patient_profiles?.full_name || appointment.client_name || "Patient",
-          avatar: appointment.patient_profiles?.avatar_url || "",
-          email: appointment.patient_profiles?.email,
-          phone: appointment.patient_profiles?.phone,
+          name: appointment.patient_name || "Unknown Patient",
+          avatar: appointment.patient_avatar_url || "",
+          email: appointment.patient_email || "",
+          phone: appointment.patient_phone || ""
         }
       }));
       
+      console.log("Transformed appointment data:", transformedData);
       setAppointments(transformedData);
     } catch (error: any) {
       console.error('Error fetching appointments:', error);
@@ -149,6 +181,61 @@ export default function AppointmentsPage() {
 
   const handleJoinSession = (appointmentId: string) => {
     window.location.href = `/mood-mentor-dashboard/session/${appointmentId}`;
+  };
+
+  const handleExportAppointment = (appointment: AppointmentDisplay) => {
+    try {
+      const doc = new jsPDF();
+
+      // Add title
+      doc.setFontSize(18);
+      doc.setTextColor(0, 0, 150);
+      doc.text('Appointment Details', 14, 20);
+
+      // Add appointment info
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      
+      // Format appointment ID
+      const appointmentId = appointment.id.slice(-5);
+      
+      // Appointment details
+      doc.text(`ID: #Apt${appointmentId}`, 14, 35);
+      doc.text(`Patient: ${appointment.patient.name}`, 14, 42);
+      doc.text(`Date: ${appointment.date}`, 14, 49);
+      doc.text(`Time: ${appointment.time}`, 14, 56);
+      doc.text(`Type: ${appointment.type}`, 14, 63);
+      doc.text(`Status: ${appointment.status}`, 14, 70);
+      
+      if (appointment.patient.email) {
+        doc.text(`Email: ${appointment.patient.email}`, 14, 77);
+      }
+      
+      if (appointment.patient.phone) {
+        doc.text(`Phone: ${appointment.patient.phone}`, 14, 84);
+      }
+      
+      // Add notes if available
+      if (appointment.notes) {
+        doc.text('Notes:', 14, 91);
+        
+        // Handle long notes with wrapping
+        const splitNotes = doc.splitTextToSize(appointment.notes, 180);
+        doc.text(splitNotes, 14, 98);
+      }
+      
+      // Add footer
+      doc.setFontSize(10);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 285);
+      
+      // Save the PDF
+      doc.save(`appointment-${appointmentId}.pdf`);
+      toast.success('Appointment details exported to PDF');
+    } catch (error) {
+      console.error('Error exporting appointment:', error);
+      toast.error('Failed to export appointment details');
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -190,6 +277,22 @@ export default function AppointmentsPage() {
       appointment.id.toLowerCase().includes(searchLower)
     );
   });
+
+  // Add this function to check if an appointment is active (within 15 minutes of start time)
+  const isAppointmentActive = (appointmentDate: string, appointmentTime: string) => {
+    const now = new Date();
+    const [hours, minutes] = appointmentTime.split(':').map(Number);
+    
+    // Create appointment start time
+    const appointmentStart = new Date(appointmentDate);
+    appointmentStart.setHours(hours, minutes);
+    
+    // Calculate time difference in minutes
+    const timeDiffMinutes = (appointmentStart.getTime() - now.getTime()) / (1000 * 60);
+    
+    // Return true if the appointment is within 15 minutes (before or after)
+    return timeDiffMinutes <= 15 && timeDiffMinutes >= -60; // Allow joining 15 min before and up to 60 min after start
+  };
 
   return (
     <DashboardLayout>
@@ -238,6 +341,11 @@ export default function AppointmentsPage() {
                       <SelectItem value="today">Today</SelectItem>
                       <SelectItem value="week">This Week</SelectItem>
                       <SelectItem value="month">This Month</SelectItem>
+                      {new URLSearchParams(location.search).get('date') && (
+                        <SelectItem value="custom">
+                          {new Date(new URLSearchParams(location.search).get('date')!).toLocaleDateString()}
+                        </SelectItem>
+                      )}
                     </SelectGroup>
                   </SelectContent>
                 </Select>
@@ -312,13 +420,25 @@ export default function AppointmentsPage() {
                           <div className="flex items-center justify-end space-x-2">
                             {appointment.status === "upcoming" && (
                               <>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleJoinSession(appointment.id)}
-                                  className="bg-[#0078FF] text-white hover:bg-blue-700"
-                                >
-                                  Join Session
-                                </Button>
+                                {isAppointmentActive(appointment.date, appointment.time.split(' - ')[0]) ? (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleJoinSession(appointment.id)}
+                                    className="bg-[#0078FF] text-white hover:bg-blue-700"
+                                  >
+                                    <Video className="w-3 h-3 mr-1" /> Join Session
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    disabled
+                                    variant="outline"
+                                    className="text-gray-400 border-gray-200"
+                                    title="This session will be available 15 minutes before the scheduled time"
+                                  >
+                                    <Clock className="w-3 h-3 mr-1" /> Not Active Yet
+                                  </Button>
+                                )}
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" size="icon">
@@ -332,9 +452,40 @@ export default function AppointmentsPage() {
                                     <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "cancelled")}>
                                       <X className="w-4 h-4 mr-2" /> Cancel Appointment
                                     </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleExportAppointment(appointment)}>
+                                      <FileText className="w-4 h-4 mr-2" /> Export Details
+                                    </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
                               </>
+                            )}
+                            {appointment.status === "cancelled" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleExportAppointment(appointment)}
+                              >
+                                <FileText className="w-3 h-3 mr-1" /> Export
+                              </Button>
+                            )}
+                            {appointment.status === "completed" && (
+                              <div className="flex space-x-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleExportAppointment(appointment)}
+                                >
+                                  <FileText className="w-3 h-3 mr-1" /> Export
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-purple-600 border-purple-200 hover:bg-purple-50"
+                                  onClick={() => navigate(`/mood-mentor-dashboard/notes/${appointment.id}`)}
+                                >
+                                  <Edit className="w-3 h-3 mr-1" /> Notes
+                                </Button>
+                              </div>
                             )}
                           </div>
                         </TableCell>

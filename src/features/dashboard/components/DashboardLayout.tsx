@@ -56,6 +56,7 @@ import {
   LayoutDashboard
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -306,6 +307,9 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  
+  // Add state for profile avatar URL
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
 
   // User role checks for conditional rendering
   const isMentor = user?.user_metadata?.role === 'mood_mentor';
@@ -319,6 +323,68 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   useEffect(() => {
     setCurrentPath(location.pathname);
   }, [location]);
+  
+  // Add debugging for user avatar URLs and fetch profile avatar
+  useEffect(() => {
+    if (user) {
+      console.log('User metadata:', user.user_metadata);
+      console.log('Avatar URLs available:', {
+        avatarUrl: user.user_metadata?.avatarUrl,
+        avatar_url: user.user_metadata?.avatar_url,
+        profileImage: user.user_metadata?.profileImage,
+        profile_image: user.user_metadata?.profile_image,
+        profile_image_url: user.user_metadata?.profile_image_url,
+      });
+      
+      // Get the URL from patient profile if it exists
+      const fetchPatientProfile = async () => {
+        try {
+          const { data: patientProfile, error } = await supabase
+            .from('patient_profiles')
+            .select('avatar_url')
+            .eq('user_id', user.id)
+            .single();
+            
+          if (patientProfile && patientProfile.avatar_url) {
+            console.log('Patient profile avatar_url:', patientProfile.avatar_url);
+            setProfileAvatarUrl(patientProfile.avatar_url);
+            
+            // Log detailed information about this URL
+            console.log('Using avatar URL from patient_profiles:', {
+              url: patientProfile.avatar_url,
+              complete: patientProfile.avatar_url.startsWith('http') 
+                ? patientProfile.avatar_url 
+                : `https://hibeorkevqjgnkinaafy.supabase.co${patientProfile.avatar_url.startsWith('/') ? '' : '/'}${patientProfile.avatar_url}`
+            });
+            
+            // If URL is not complete (doesn't start with http), try to complete it
+            if (!patientProfile.avatar_url.startsWith('http')) {
+              const completeUrl = `https://hibeorkevqjgnkinaafy.supabase.co${patientProfile.avatar_url.startsWith('/') ? '' : '/'}${patientProfile.avatar_url}`;
+              setProfileAvatarUrl(completeUrl);
+              console.log('Converted to complete URL:', completeUrl);
+            }
+          } else {
+            // Try to get URL from settings
+            const { data: settingsData, error: settingsError } = await supabase
+              .from('settings')
+              .select('value')
+              .eq('user_id', user.id)
+              .eq('key', 'avatar_url')
+              .single();
+              
+            if (settingsData && settingsData.value) {
+              console.log('Found avatar URL in settings:', settingsData.value);
+              setProfileAvatarUrl(settingsData.value);
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching patient profile for avatar check:', err);
+        }
+      };
+      
+      fetchPatientProfile();
+    }
+  }, [user]);
   
   // Handle outside clicks for search
   useEffect(() => {
@@ -912,15 +978,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage
-                          src={user?.user_metadata?.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.user_metadata?.name || "User")}`}
-                          alt={user?.user_metadata?.name || "User"}
-                        />
-                        <AvatarFallback>
-                          {user?.user_metadata?.name?.charAt(0) || "U"}
-                        </AvatarFallback>
-                      </Avatar>
+                      <FallbackAvatar
+                        src={profileAvatarUrl || user?.user_metadata?.avatar_url || user?.user_metadata?.avatarUrl || user?.user_metadata?.profile_image_url || "https://hibeorkevqjgnkinaafy.supabase.co/storage/v1/object/public/avatars/profile.jpg"}
+                        name={user?.user_metadata?.name || user?.user_metadata?.full_name || "User"}
+                        className="h-8 w-8"
+                      />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-56" align="end" forceMount>
