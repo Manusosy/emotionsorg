@@ -214,7 +214,7 @@ export interface IMoodMentorService {
   /**
    * Add a patient to a support group
    */
-  addPatientToGroup(): Promise<boolean>;
+  addPatientToGroup(patientId: string, groupId: string): Promise<boolean>;
   
   /**
    * Get a specific mood mentor by name slug

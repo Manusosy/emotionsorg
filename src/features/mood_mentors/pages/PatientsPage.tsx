@@ -18,6 +18,8 @@ import {
   Eye,
   MoreVertical,
   MapPin,
+  MessageCircle,
+  UserPlus2,
 } from "lucide-react";
 import { AuthContext } from "@/contexts/authContext";
 import { toast } from "sonner";
@@ -46,6 +48,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/lib/supabase";
 
 interface PatientProfile {
   id: string;
@@ -71,6 +75,7 @@ interface SupportGroup {
 
 export default function PatientsPage() {
   const { user } = useContext(AuthContext);
+  const navigate = useNavigate();
   const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [supportGroups, setSupportGroups] = useState<SupportGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -116,16 +121,31 @@ export default function PatientsPage() {
         return;
       }
 
-      // Fetch patients using the patient service
-      const patientData = await patientService.getAllPatients();
-      
-      if (patientData && patientData.length > 0) {
-        console.log(`Found ${patientData.length} patients`);
-        setPatients(patientData);
-      } else {
-        console.log('No patients found');
+      // Option 1: Fetch from patient_profiles table directly using Supabase
+      const { data, error } = await supabase
+        .from('patient_profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching patients from database:', error);
+        toast.error("Failed to fetch patients");
         setPatients([]);
-        toast.info("No patients found");
+      } else if (data && data.length > 0) {
+        console.log(`Found ${data.length} patients`);
+        setPatients(data);
+      } else {
+        // Option 2: Fall back to the patient service if no results
+        const patientData = await patientService.getAllPatients();
+        
+        if (patientData && patientData.length > 0) {
+          console.log(`Found ${patientData.length} patients from service`);
+          setPatients(patientData);
+        } else {
+          console.log('No patients found');
+          setPatients([]);
+          toast.info("No patients found");
+        }
       }
     } catch (error) {
       console.error('Error fetching patients:', error);
@@ -143,14 +163,25 @@ export default function PatientsPage() {
         return;
       }
       
-      // Fetch support groups using the mood mentor service
-      const groups = await moodMentorService.getSupportGroups(user.id);
+      // Fetch support groups directly from database
+      const { data, error } = await supabase
+        .from('support_groups')
+        .select('*')
+        .eq('mood_mentor_id', user.id)
+        .order('created_at', { ascending: false });
       
-      if (groups && groups.length > 0) {
-        setSupportGroups(groups);
+      if (error) {
+        console.error('Error fetching support groups:', error);
+        toast.error("Failed to fetch support groups");
+        setSupportGroups([]);
+        return;
+      }
+      
+      if (data && data.length > 0) {
+        setSupportGroups(data);
         // Set the first group as selected by default
-        if (groups.length > 0 && !selectedGroup) {
-          setSelectedGroup(groups[0].id);
+        if (data.length > 0 && !selectedGroup) {
+          setSelectedGroup(data[0].id);
         }
       } else {
         setSupportGroups([]);
@@ -169,11 +200,54 @@ export default function PatientsPage() {
         return;
       }
       
-      await moodMentorService.addPatientToGroup(patientId, groupId);
+      // Add patient to the group directly using Supabase
+      const { error } = await supabase
+        .from('group_members')
+        .insert({
+          group_id: groupId,
+          user_id: patientId,
+          added_by: user?.id,
+          status: 'active',
+          created_at: new Date().toISOString()
+        });
+      
+      if (error) {
+        console.error('Error adding patient to group:', error);
+        toast.error("Failed to add patient to group");
+        return;
+      }
+      
       toast.success("Patient added to group successfully");
     } catch (error) {
       console.error('Error adding patient to group:', error);
       toast.error("Failed to add patient to group");
+    }
+  };
+
+  const handleMessagePatient = async (patientId: string) => {
+    try {
+      if (!user?.id || !patientId) {
+        toast.error("Cannot start conversation");
+        return;
+      }
+      
+      // Get or create a conversation with this patient
+      const { data: conversationId, error } = await messageService.getOrCreateConversation(
+        patientId,
+        user.id
+      );
+      
+      if (error) {
+        console.error('Error creating conversation:', error);
+        toast.error("Failed to start conversation");
+        return;
+      }
+      
+      // Navigate to the conversation
+      navigate(`/mood-mentor-dashboard/messages/${patientId}`);
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      toast.error("Failed to start conversation");
     }
   };
 
@@ -324,25 +398,49 @@ export default function PatientsPage() {
                     <TableCell>{patient.email}</TableCell>
                     <TableCell>{patient.created_at ? format(new Date(patient.created_at), 'MMM d, yyyy') : 'N/A'}</TableCell>
                     <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
+                      <div className="flex items-center justify-end space-x-2">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          className="flex items-center"
+                          onClick={() => handleMessagePatient(patient.id)}
+                        >
+                          <MessageCircle className="mr-2 h-4 w-4" />
+                          Message
+                        </Button>
+                        
+                        {supportGroups.length > 0 && (
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            className="flex items-center"
+                            onClick={() => selectedGroup ? addToGroup(patient.id, selectedGroup) : toast.error("Please select a group first")}
+                          >
+                            <UserPlus2 className="mr-2 h-4 w-4" />
+                            Add to Group
                           </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => viewProfile(patient)}>
-                            <Eye className="mr-2 h-4 w-4" />
-                            View Profile
-                          </DropdownMenuItem>
-                          {supportGroups.length > 0 && selectedGroup && (
-                            <DropdownMenuItem onClick={() => addToGroup(patient.id, selectedGroup)}>
-                              <Users className="mr-2 h-4 w-4" />
-                              Add to Group
+                        )}
+                        
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => viewProfile(patient)}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              View Profile
                             </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                            {supportGroups.length > 0 && selectedGroup && (
+                              <DropdownMenuItem onClick={() => addToGroup(patient.id, selectedGroup)}>
+                                <Users className="mr-2 h-4 w-4" />
+                                Add to Group
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}

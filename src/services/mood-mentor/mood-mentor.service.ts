@@ -627,9 +627,23 @@ export class MoodMentorService implements IMoodMentorService {
     return [];
   }
 
-  async addPatientToGroup(): Promise<boolean> {
-    // Placeholder for now - implement when needed
-    return true;
+  async addPatientToGroup(patientId: string, groupId: string): Promise<boolean> {
+    try {
+      const { error } = await supabase
+        .from('group_members')
+        .insert({
+          group_id: groupId,
+          user_id: patientId,
+          status: 'active',
+          created_at: new Date().toISOString()
+        });
+      
+      if (error) throw error;
+      return true;
+    } catch (error: any) {
+      console.error('Error adding patient to group:', error);
+      return false;
+    }
   }
 
   async getMoodMentorBySlug(nameSlug: string): Promise<{
