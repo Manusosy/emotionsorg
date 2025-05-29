@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   BookOpen,
   Calendar,
@@ -16,73 +15,140 @@ import {
   Search,
   Star,
   Goal,
-  PenTool
+  PenTool,
+  Loader2
 } from "lucide-react";
 import { useAuth } from "@/contexts/authContext";
-import { dataService, userService } from "@/services";
+import { supabase } from "@/lib/supabase";
 
 interface JournalEntry {
   id: string;
   title: string;
   content: string;
-  mood?: string | number;
+  mood?: string;
+  mood_type?: string;
   tags?: string[];
-  created_at?: string;
+  created_at: string;
   updated_at?: string;
-  user_id?: string;
+  user_id: string;
   is_shared?: boolean;
   share_code?: string;
+  tomorrows_intention?: string;
 }
 
 export default function JournalPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   
-  // All state declarations at the top
   const [journalEntries, setJournalEntries] = useState<JournalEntry[]>([]);
   const [filteredEntries, setFilteredEntries] = useState<JournalEntry[]>([]);
+  const [favoriteEntries, setFavoriteEntries] = useState<JournalEntry[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('entries');
-  const [isMentor, setIsMentor] = useState(false);
+  const [journalStats, setJournalStats] = useState<any>(null);
 
-  // Check user role and fetch entries
+  // Fetch journal entries and favorites
   useEffect(() => {
-    const checkUserAndFetchEntries = async () => {
+    const fetchJournalData = async () => {
       if (!user?.id) return;
       
+      setIsLoading(true);
+      
       try {
-        setIsLoading(true);
+        // Fetch journal entries
+        const { data: entriesData, error: entriesError } = await supabase
+          .from('journal_entries')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
         
-        // Check if user is a mood mentor
-        const profileResponse = await userService.getProfile(user.id);
-        
-        if (profileResponse.error) throw profileResponse.error;
-        
-        if (profileResponse.data?.role === 'mood_mentor') {
-          setIsMentor(true);
-          toast.error("Mood mentors do not have access to the journaling feature");
-          navigate('/mood-mentor-dashboard');
-          return;
+        if (entriesError) {
+          console.error('Error fetching journal entries:', entriesError);
+          toast.error('Failed to load journal entries');
+        } else {
+          setJournalEntries(entriesData || []);
+          setFilteredEntries(entriesData || []);
         }
-
-        // If not a mentor, fetch entries
-        const response = await dataService.getJournalEntries(user.id);
         
-        if (response.error) throw response.error;
+        // Fetch favorites
+        const { data: favoritesData, error: favoritesError } = await supabase
+          .from('journal_favorites')
+          .select('journal_entry_id')
+          .eq('user_id', user.id);
+          
+        if (favoritesError) {
+          console.error('Error fetching favorites:', favoritesError);
+        } else if (favoritesData && favoritesData.length > 0) {
+          const favoriteIds = favoritesData.map(fav => fav.journal_entry_id);
+          
+          // Fetch the actual favorite entries
+          const { data: favoriteEntries, error: favEntriesError } = await supabase
+            .from('journal_entries')
+            .select('*')
+            .in('id', favoriteIds)
+            .order('created_at', { ascending: false });
+          
+          if (favEntriesError) {
+            console.error('Error fetching favorite entries:', favEntriesError);
+          } else {
+            setFavoriteEntries(favoriteEntries || []);
+          }
+        }
         
-        setJournalEntries(response.data || []);
-        setFilteredEntries(response.data || []);
+        // Calculate basic stats
+        if (entriesData && entriesData.length > 0) {
+          const now = new Date();
+          const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+          const startOfWeek = new Date(now);
+          startOfWeek.setDate(now.getDate() - now.getDay());
+          
+          const entriesThisMonth = entriesData.filter(
+            entry => new Date(entry.created_at) >= startOfMonth
+          ).length;
+          
+          const entriesThisWeek = entriesData.filter(
+            entry => new Date(entry.created_at) >= startOfWeek
+          ).length;
+          
+          // Find most common mood
+          const moodCounts: Record<string, number> = {};
+          entriesData.forEach(entry => {
+            if (entry.mood) {
+              moodCounts[entry.mood] = (moodCounts[entry.mood] || 0) + 1;
+            }
+          });
+          
+          let mostCommonMood: string | null = null;
+          let maxCount = 0;
+          
+          Object.entries(moodCounts).forEach(([mood, count]) => {
+            if (count > maxCount) {
+              mostCommonMood = mood;
+              maxCount = count;
+            }
+          });
+          
+          const statsData = {
+            total_entries: entriesData.length,
+            entries_this_month: entriesThisMonth,
+            entries_this_week: entriesThisWeek,
+            most_common_mood: mostCommonMood,
+            avg_entries_per_week: entriesData.length / 4 // Simple approximation
+          };
+          
+          setJournalStats(statsData);
+        }
       } catch (error) {
-        console.error('Error:', error);
-        toast.error("Failed to load journal entries");
+        console.error('Error fetching journal data:', error);
+        toast.error('Something went wrong. Please try again later.');
       } finally {
         setIsLoading(false);
       }
     };
-
-    checkUserAndFetchEntries();
-  }, [user, navigate]);
+    
+    fetchJournalData();
+  }, [user]);
   
   // Filter entries when search term changes
   useEffect(() => {
@@ -107,8 +173,7 @@ export default function JournalPage() {
     return textOnly.length > 100 ? textOnly.substring(0, 100) + "..." : textOnly;
   };
   
-  const formatDate = (dateStr: string | undefined) => {
-    if (!dateStr) return "Invalid date";
+  const formatDate = (dateStr: string) => {
     try {
       return format(new Date(dateStr), "MMM d, yyyy");
     } catch (e) {
@@ -150,13 +215,92 @@ export default function JournalPage() {
   };
 
   const handleViewEntryClick = (entryId: string) => {
-    navigate(`/journal/${entryId}`);
+    navigate(`/dashboard/journal/${entryId}`);
   };
 
-  // If user is a mentor, don't render the journal interface
-  if (isMentor) {
-    return null;
-  }
+  const toggleFavorite = async (entryId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent navigating to entry detail
+
+    if (!user?.id) {
+      toast.error("You must be logged in to favorite entries");
+      return;
+    }
+
+    try {
+      // Check if entry is already a favorite
+      const { data: existingFavorite, error: checkError } = await supabase
+        .from('journal_favorites')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('journal_entry_id', entryId)
+        .maybeSingle();
+        
+      if (checkError) {
+        console.error('Error checking favorite status:', checkError);
+        toast.error('Failed to update favorite status');
+        return;
+      }
+      
+      if (existingFavorite) {
+        // Remove from favorites
+        const { error: removeError } = await supabase
+          .from('journal_favorites')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('journal_entry_id', entryId);
+          
+        if (removeError) {
+          console.error('Error removing favorite:', removeError);
+          toast.error('Failed to remove from favorites');
+          return;
+        }
+        
+        // Update UI
+        setFavoriteEntries(favoriteEntries.filter(entry => entry.id !== entryId));
+        toast.success('Removed from favorites');
+      } else {
+        // Add to favorites
+        const { error: addError } = await supabase
+          .from('journal_favorites')
+          .insert({
+            user_id: user.id,
+            journal_entry_id: entryId
+          });
+          
+        if (addError) {
+          console.error('Error adding favorite:', addError);
+          toast.error('Failed to add to favorites');
+          return;
+        }
+        
+        // Find the entry to add to favorites
+        const entryToAdd = journalEntries.find(entry => entry.id === entryId);
+        if (entryToAdd) {
+          setFavoriteEntries([entryToAdd, ...favoriteEntries]);
+        }
+        
+        toast.success('Added to favorites');
+      }
+      
+      // Update the UI to reflect the change
+      setJournalEntries(journalEntries.map(entry => {
+        if (entry.id === entryId) {
+          const isFavorite = favoriteEntries.some(fav => fav.id === entryId);
+          return { ...entry, is_favorite: !isFavorite };
+        }
+        return entry;
+      }));
+      
+    } catch (error) {
+      console.error('Error toggling favorite:', error);
+      toast.error('Failed to update favorite status');
+    }
+  };
+
+  // Check if an entry is a favorite
+  const isEntryFavorite = (entryId: string) => {
+    return favoriteEntries.some(entry => entry.id === entryId);
+  };
 
   return (
     <DashboardLayout>
@@ -196,15 +340,9 @@ export default function JournalPage() {
           {/* All Entries Tab */}
           <TabsContent value="entries" className="space-y-4">
             {isLoading ? (
-              // Loading skeleton
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[1, 2, 3].map((n) => (
-                  <Card key={n} className="p-4">
-                    <Skeleton className="h-6 w-3/4 mb-4" />
-                    <Skeleton className="h-4 w-full mb-2" />
-                    <Skeleton className="h-4 w-2/3" />
-                  </Card>
-                ))}
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span className="ml-2 text-sm text-muted-foreground">Loading entries...</span>
               </div>
             ) : filteredEntries.length === 0 ? (
               <Card className="p-6 text-center">
@@ -226,10 +364,15 @@ export default function JournalPage() {
                   >
                     <CardHeader>
                       <div className="flex justify-between items-start mb-2">
-                        <CardTitle className="text-lg">{entry.title}</CardTitle>
-                        {entry.is_shared && (
-                          <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                        )}
+                        <CardTitle className="text-lg">{entry.title || "Untitled Entry"}</CardTitle>
+                        <button 
+                          onClick={(e) => toggleFavorite(entry.id, e)}
+                          className="focus:outline-none"
+                        >
+                          <Star 
+                            className={`h-4 w-4 ${isEntryFavorite(entry.id) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} 
+                          />
+                        </button>
                       </div>
                       <CardDescription className="flex items-center gap-2">
                         <Calendar className="h-4 w-4" />
@@ -242,7 +385,7 @@ export default function JournalPage() {
                       </p>
                       <div className="flex flex-wrap gap-2">
                         {entry.mood && (
-                          <Badge variant="secondary" className={getMoodColor(entry.mood.toString())}>
+                          <Badge variant="secondary" className={getMoodColor(entry.mood)}>
                             {entry.mood}
                           </Badge>
                         )}
@@ -261,28 +404,144 @@ export default function JournalPage() {
           
           {/* Favorites Tab */}
           <TabsContent value="favorites">
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <Star className="h-12 w-12 text-slate-300 mb-3" />
-                  <h3 className="text-lg font-medium mb-1">Favorite Entries</h3>
-                  <p className="text-slate-500">Coming soon! You'll be able to mark and filter your favorite entries.</p>
-                </div>
-              </CardContent>
-            </Card>
+            {isLoading ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span className="ml-2 text-sm text-muted-foreground">Loading favorites...</span>
+              </div>
+            ) : favoriteEntries.length === 0 ? (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <Star className="h-12 w-12 text-slate-300 mb-3" />
+                    <h3 className="text-lg font-medium mb-1">No Favorite Entries</h3>
+                    <p className="text-slate-500">Click the star icon on any journal entry to add it to your favorites.</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {favoriteEntries.map(entry => (
+                  <Card 
+                    key={entry.id} 
+                    className="hover:shadow-md transition cursor-pointer"
+                    onClick={() => handleViewEntryClick(entry.id)}
+                  >
+                    <CardHeader>
+                      <div className="flex justify-between items-start mb-2">
+                        <CardTitle className="text-lg">{entry.title || "Untitled Entry"}</CardTitle>
+                        <button 
+                          onClick={(e) => toggleFavorite(entry.id, e)}
+                          className="focus:outline-none"
+                        >
+                          <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                        </button>
+                      </div>
+                      <CardDescription className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4" />
+                        {formatDate(entry.created_at)}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-sm text-slate-600 mb-3">
+                        {formatPreview(entry.content)}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {entry.mood && (
+                          <Badge variant="secondary" className={getMoodColor(entry.mood)}>
+                            {entry.mood}
+                          </Badge>
+                        )}
+                        {entry.tags?.map(tag => (
+                          <Badge key={tag} variant="outline">
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </TabsContent>
           
           {/* Insights Tab */}
           <TabsContent value="insights">
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex flex-col items-center justify-center text-center">
-                  <Goal className="h-12 w-12 text-slate-300 mb-3" />
-                  <h3 className="text-lg font-medium mb-1">Journal Insights</h3>
-                  <p className="text-slate-500">Coming soon! Get insights about your journaling patterns and emotional trends.</p>
-                </div>
-              </CardContent>
-            </Card>
+            {isLoading ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span className="ml-2 text-sm text-muted-foreground">Loading insights...</span>
+              </div>
+            ) : !journalStats || journalEntries.length === 0 ? (
+              <Card>
+                <CardContent className="p-6">
+                  <div className="flex flex-col items-center justify-center text-center">
+                    <Goal className="h-12 w-12 text-slate-300 mb-3" />
+                    <h3 className="text-lg font-medium mb-1">No Journal Insights Yet</h3>
+                    <p className="text-slate-500">Start journaling to see insights about your emotional patterns and journaling habits.</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Journal Activity</CardTitle>
+                    <CardDescription>Your journaling patterns</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600">Total entries</span>
+                        <span className="font-semibold">{journalStats.total_entries}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600">This month</span>
+                        <span className="font-semibold">{journalStats.entries_this_month}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600">This week</span>
+                        <span className="font-semibold">{journalStats.entries_this_week}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600">Average entries per week</span>
+                        <span className="font-semibold">{journalStats.avg_entries_per_week.toFixed(1)}</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Mood Patterns</CardTitle>
+                    <CardDescription>Your emotional trends</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-slate-600">Most common mood</span>
+                        <Badge variant="secondary" className={getMoodColor(journalStats.most_common_mood)}>
+                          {journalStats.most_common_mood || "None recorded"}
+                        </Badge>
+                      </div>
+                      
+                      <div className="pt-4">
+                        <h4 className="text-sm font-medium mb-3">Recent moods</h4>
+                        <div className="flex flex-wrap gap-2">
+                          {journalEntries.slice(0, 5).map(entry => (
+                            entry.mood && (
+                              <Badge key={entry.id} variant="secondary" className={getMoodColor(entry.mood)}>
+                                {entry.mood}
+                              </Badge>
+                            )
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </div>

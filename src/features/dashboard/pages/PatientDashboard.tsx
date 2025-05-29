@@ -138,6 +138,21 @@ export default function PatientDashboard() {
                     user?.email?.split('@')[0] || 
                     'User';
 
+  // Ensure user is a patient
+  useEffect(() => {
+    if (user) {
+      const userRole = user.user_metadata?.role;
+      if (userRole !== 'patient') {
+        console.error('User with role', userRole, 'attempted to access patient dashboard');
+        toast.error('You do not have permission to access this dashboard');
+        navigate('/mood-mentor-dashboard');
+      }
+    } else {
+      // No user, redirect to login
+      navigate('/patient-signin');
+    }
+  }, [user, navigate]);
+
   // Add code to skip any loading states
   const skipLoadingStates = () => {
     setReportsLoading(false);
@@ -283,7 +298,7 @@ export default function PatientDashboard() {
             .select('*')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false })
-            .limit(5),
+            .limit(6),
             
           // Fetch stress assessments (non-critical)
           supabase
@@ -479,7 +494,7 @@ export default function PatientDashboard() {
   };
 
   const handleJournalClick = () => {
-    navigate('/patient-dashboard/journal');
+    navigate('/dashboard/journal');
   };
 
   const handleSettingsClick = () => {
@@ -1113,7 +1128,7 @@ export default function PatientDashboard() {
               variant="outline" 
               size="sm" 
               className="text-blue-600"
-              onClick={() => navigate('/patient-dashboard/journal')}
+              onClick={() => navigate('/dashboard/journal')}
             >
               View All
             </Button>
@@ -1127,7 +1142,7 @@ export default function PatientDashboard() {
                   <p className="text-slate-500 mb-3">No journal entries yet</p>
                   <Button 
                     size="sm" 
-                    onClick={() => navigate('/patient-dashboard/journal/new')}
+                    onClick={() => navigate('/journal')}
                   >
                     Create Your First Entry
                   </Button>
@@ -1139,7 +1154,7 @@ export default function PatientDashboard() {
                 <Card 
                   key={entry.id} 
                   className="hover:border-blue-200 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/patient-dashboard/journal/${entry.id}`)}
+                  onClick={() => navigate(`/dashboard/journal/${entry.id}`)}
                 >
                   <CardContent className="p-5">
                     <div className="flex items-center justify-between mb-3">

@@ -182,10 +182,18 @@ export default function PatientSignup() {
   const handleGoogleSignup = async () => {
     try {
       setIsLoading(true);
+      // Get the current domain (works for both localhost and production)
+      const domain = window.location.origin;
+      
+      // Explicitly set userType=patient and isSignUp=true to ensure proper role assignment
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?userType=patient&isSignUp=true`
+          redirectTo: `${domain}/auth/callback?userType=patient&isSignUp=true`,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          }
         }
       });
       

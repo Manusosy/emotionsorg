@@ -1,9 +1,7 @@
-import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import FallbackAvatar from "@/components/ui/fallback-avatar";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { CheckIcon, CheckCheck } from "lucide-react";
+import React from 'react';
+import { format } from 'date-fns';
+import { Check, CheckCheck } from 'lucide-react';
+import FallbackAvatar from '@/components/ui/fallback-avatar';
 
 interface MessageBubbleProps {
   content: string;
@@ -14,79 +12,52 @@ interface MessageBubbleProps {
   read?: boolean;
 }
 
-export const MessageBubble = ({
+export function MessageBubble({
   content,
   timestamp,
   isCurrentUser,
   avatarUrl,
   senderName,
-  read
-}: MessageBubbleProps) => {
-  const initials = senderName
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .toUpperCase();
-
+  read = false,
+}: MessageBubbleProps) {
   return (
     <div
-      className={cn(
-        "flex w-full gap-2 mb-4",
-        isCurrentUser ? "justify-end" : "justify-start"
-      )}
+      className={`flex items-start gap-2 ${
+        isCurrentUser ? 'flex-row-reverse' : 'flex-row'
+      }`}
     >
-      {!isCurrentUser && (
-        <FallbackAvatar 
-          src={avatarUrl} 
-          name={senderName}
-          className="h-8 w-8 flex-shrink-0 mt-1"
-        />
-      )}
-      
-      <div className="max-w-[75%]">
+      <FallbackAvatar
+        src={avatarUrl}
+        name={senderName}
+        className="h-8 w-8 flex-shrink-0"
+      />
+      <div
+        className={`flex flex-col ${
+          isCurrentUser ? 'items-end' : 'items-start'
+        }`}
+      >
         <div
-          className={cn(
-            "rounded-lg p-3",
+          className={`px-3 py-2 rounded-lg max-w-[80%] ${
             isCurrentUser
-              ? "bg-primary text-primary-foreground rounded-tr-none"
-              : "bg-muted text-foreground rounded-tl-none"
-          )}
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-muted text-muted-foreground'
+          }`}
         >
-          <p className="whitespace-pre-wrap break-words">{content}</p>
+          <p className="text-sm">{content}</p>
         </div>
-        
-        <div className={cn(
-          "flex items-center gap-1 mt-1 text-xs",
-          isCurrentUser ? "justify-end" : "justify-start",
-          "text-muted-foreground"
-        )}>
-          {format(new Date(timestamp), "h:mm a")}
+        <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
+          <span>{format(new Date(timestamp), 'h:mm a')}</span>
           {isCurrentUser && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger>
-                  {read ? (
-                    <CheckCheck className="h-3 w-3 text-blue-500" />
-                  ) : (
-                    <CheckIcon className="h-3 w-3" />
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {read ? "Read" : "Delivered"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <span className="ml-1">
+              {read ? (
+                <CheckCheck className="h-3 w-3 text-blue-500" />
+              ) : (
+                <Check className="h-3 w-3" />
+              )}
+            </span>
           )}
         </div>
       </div>
-
-      {isCurrentUser && (
-        <FallbackAvatar 
-          src={avatarUrl} 
-          name={senderName}
-          className="h-8 w-8 flex-shrink-0 mt-1"
-        />
-      )}
     </div>
   );
-}; 
+} 

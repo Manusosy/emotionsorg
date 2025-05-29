@@ -9,6 +9,10 @@ import type { IMoodMentorService } from './mood-mentor/mood-mentor.interface';
 import { PatientService } from './patient/patient.service';
 import type { IPatientService } from './patient/patient.interface';
 
+// Import the messaging service
+import { MessagingService } from './messaging/messaging.interface';
+import SupabaseMessagingService from './messaging/messaging.service';
+
 // Export implemented services
 export { authService } from './auth/auth.service';
 export { appointmentService } from './appointments/appointment.service';
@@ -55,6 +59,7 @@ export interface AppointmentService {
     startDate?: string;
     endDate?: string; 
   }) => Promise<any[]>;
+  startAppointmentChat: (appointmentId: string) => Promise<ServiceResponse<string>>;
 }
 
 export interface UserService {
@@ -331,4 +336,7 @@ export const dataService: DataService = {
   }
 };
 
-export const apiService: ApiService = {}; 
+export const apiService: ApiService = {};
+
+// Export the messaging service
+export const messagingService: MessagingService = new SupabaseMessagingService(); 

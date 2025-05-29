@@ -140,10 +140,18 @@ export default function SignIn({ userType }: SignInProps) {
   const handleGoogleSignIn = async () => {
     try {
       setIsLoading(true);
+      // Get the current domain (works for both localhost and production)
+      const domain = window.location.origin;
+      
+      // Explicitly set userType and isSignUp=false to ensure proper role checking
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/auth/callback?userType=${userType}`
+          redirectTo: `${domain}/auth/callback?userType=${userType}&isSignUp=false`,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'consent',
+          }
         }
       });
       

@@ -313,11 +313,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
 
   // User role checks for conditional rendering
   const isMentor = user?.user_metadata?.role === 'mood_mentor';
-  const isPatient = user?.user_metadata?.role === 'patient' || !isMentor;
+  const isPatient = user?.user_metadata?.role === 'patient';
 
   // Get navigation based on role
   const userNavigation = isMentor ? moodMentorNavigation : patientNavigation;
-  const searchableItems = patientSearchableItems; // Could be extended for mentor
+  const searchableItems = isMentor ? mentorSearchableItems : patientSearchableItems;
 
   // Update current path when location changes
   useEffect(() => {

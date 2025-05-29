@@ -167,6 +167,21 @@ export default function MoodMentorDashboard() {
   const startDay = getDay(startOfMonth(currentDate));
   const calendarDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
   
+  // Ensure user is a mood mentor
+  useEffect(() => {
+    if (user) {
+      const userRole = user.user_metadata?.role;
+      if (userRole !== 'mood_mentor') {
+        console.error('User with role', userRole, 'attempted to access mood mentor dashboard');
+        toast.error('You do not have permission to access this dashboard');
+        navigate('/patient-dashboard');
+      }
+    } else {
+      // No user, redirect to login
+      navigate('/mentor-signin');
+    }
+  }, [user, navigate]);
+  
   // Fetch calendar appointments using Supabase
   useEffect(() => {
     const fetchCalendarAppointments = async () => {

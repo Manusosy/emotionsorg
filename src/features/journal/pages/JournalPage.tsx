@@ -24,12 +24,9 @@ import {
 import { useAuth } from "@/contexts/authContext";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { MoodType } from "@/types/mood";
 
 const AUTOSAVE_DELAY = 2000; // 2 seconds
-
-// Replace or remove the Database reference if not needed
-// If you have an actual Database type import it, otherwise define the mood type directly
-type MoodType = 'Happy' | 'Calm' | 'Sad' | 'Angry' | 'Worried' | null;
 
 // Title suggestions for the typing animation
 const TITLE_SUGGESTIONS = [
@@ -64,9 +61,11 @@ interface JournalEntry {
   user_id: string;
   title: string;
   content: string;
-  mood: MoodType;
+  mood: string;
   is_private: boolean;
+  is_shared: boolean;
   tags: string[];
+  tomorrows_intention: string;
   created_at: string;
   updated_at: string;
 }
@@ -79,7 +78,7 @@ const JournalEditor = ({
   onSaveAttempt?: () => boolean 
 }) => {
   const [title, setTitle] = useState("");
-  const [selectedMood, setSelectedMood] = useState<MoodType | null>(null);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [tomorrowsIntention, setTomorrowsIntention] = useState("");
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -87,6 +86,9 @@ const JournalEditor = ({
   const [showMoodReminder, setShowMoodReminder] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  
   const formattedDate = () => {
     const date = new Date();
     const day = date.getDate();
@@ -264,9 +266,7 @@ const JournalEditor = ({
     setIsSaving(true);
 
     try {
-      const { user: userData } = useContext(AuthContext);
-      
-      if (!userData) {
+      if (!user) {
         toast({
           title: "Authentication Error",
           description: "You must be logged in to save journal entries. Please sign in.",
@@ -276,21 +276,24 @@ const JournalEditor = ({
       }
 
       // Create journal entry data
-      const entryData: JournalEntry = {
-        user_id: userData.id,
+      const entryData = {
+        user_id: user.id,
         title: title.trim() || "Untitled Entry",
         content: content,
-        mood: selectedMood,
-        is_private: false,
+        mood: selectedMood || 'neutral',
+        is_private: true,
+        is_shared: false,
         tags: [],
+        tomorrows_intention: tomorrowsIntention,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
       
       try {
-        const { error } = await supabase
+        const { data, error } = await supabase
           .from('journal_entries')
-          .insert(entryData);
+          .insert(entryData)
+          .select();
 
         if (error) throw error;
         
@@ -309,7 +312,7 @@ const JournalEditor = ({
               <Button 
                 variant="outline" 
                 size="sm" 
-                onClick={() => window.location.href = '/patient-dashboard/journal'}
+                onClick={() => navigate('/dashboard/journal')}
               >
                 Go to Dashboard
               </Button>
@@ -334,7 +337,12 @@ const JournalEditor = ({
     } finally {
       setIsSaving(false);
     }
-  }, [editor, title, selectedMood, toast, onSaveAttempt]);
+  }, [editor, title, selectedMood, tomorrowsIntention, toast, onSaveAttempt, user, navigate]);
+
+  // Handle mood selection
+  const handleMoodSelect = (mood: string) => {
+    setSelectedMood(mood);
+  };
 
   // Autosave functionality
   useEffect(() => {
@@ -345,7 +353,7 @@ const JournalEditor = ({
 
     const timeoutId = setTimeout(saveEntry, AUTOSAVE_DELAY);
     return () => clearTimeout(timeoutId);
-  }, [editor, title, selectedMood, saveEntry]);
+  }, [editor, title, selectedMood, tomorrowsIntention, saveEntry]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -416,7 +424,7 @@ const JournalEditor = ({
                 </div>
               </div>
               
-              <JournalToolbar editor={editor} onMoodSelect={setSelectedMood} selectedMood={selectedMood} />
+              <JournalToolbar editor={editor} onMoodSelect={handleMoodSelect} selectedMood={selectedMood} />
               
               {showMoodReminder && (
                 <div className="my-2 p-3 rounded-md bg-amber-50 border border-amber-200 flex items-center gap-2 text-sm text-amber-700">

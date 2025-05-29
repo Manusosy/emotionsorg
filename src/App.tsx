@@ -55,16 +55,17 @@ import MoodMentorAvailabilityPage from "@/features/mood_mentors/pages/Availabili
 import './styles/App.css';
 import { Spinner } from "@/components/ui/spinner";
 import JournalEntryPage from "@/features/journal/pages/JournalEntryPage";
-import NewJournalEntryPage from "@/features/journal/pages/NewJournalEntryPage";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import HelpCenterPage from "@/features/dashboard/pages/HelpCenterPage";
 import MessagesPage from "@/features/dashboard/pages/MessagesPage";
 import MoodMentorMessagesPage from "@/features/mood_mentors/pages/MessagesPage";
 import ScrollToTop from "@/components/layout/ScrollToTop";
-import JournalEditPage from "@/features/journal/pages/JournalEditPage";
 import AuthCallbackPage from "@/app/auth/callback/page";
 import MoodMentorProfile from "@/features/mood_mentors/pages/MoodMentorProfile";
+import ChatPage from "@/features/chat/pages/ChatPage";
+import NewConversation from "@/features/chat/components/NewConversation";
+import { useAuth } from "@/contexts/authContext";
 
 // Type definition for UserRole
 type UserRole = 'patient' | 'mood_mentor';
@@ -105,6 +106,29 @@ const DashboardErrorFallback = ({ dashboardType }: { dashboardType: 'patient' | 
 
 // Protected route wrapper using ErrorBoundary for stability
 const ProtectedErrorBoundary = ({ children, dashboardPath = '/' }: { children: React.ReactNode, dashboardPath?: string }) => {
+  const { user } = useAuth();
+  const userRole = user?.user_metadata?.role;
+  const navigate = useNavigate();
+  
+  // Ensure user is accessing the correct dashboard based on their role
+  useEffect(() => {
+    if (user && dashboardPath) {
+      const isMentorPath = dashboardPath.includes('mood-mentor-dashboard');
+      const isPatientPath = dashboardPath.includes('patient-dashboard');
+      const isMentor = userRole === 'mood_mentor';
+      const isPatient = userRole === 'patient';
+      
+      // If user is on the wrong dashboard type, redirect them
+      if ((isMentor && isPatientPath) || (isPatient && isMentorPath)) {
+        const correctPath = isMentor ? '/mood-mentor-dashboard' : '/patient-dashboard';
+        console.log(`Redirecting user from ${dashboardPath} to ${correctPath} based on role ${userRole}`);
+        
+        // Use navigate for a smoother transition
+        navigate(correctPath, { replace: true });
+      }
+    }
+  }, [user, userRole, dashboardPath, navigate]);
+  
   return (
     <ErrorBoundary dashboardPath={dashboardPath}>
       {children}
@@ -115,7 +139,7 @@ const ProtectedErrorBoundary = ({ children, dashboardPath = '/' }: { children: R
 const AppContent = () => {
   const [showHeaderFooter, setShowHeaderFooter] = useState(true);
   const location = useLocation();
-  const { user, isAuthenticated } = useContext(AuthContext);
+  const { user, isAuthenticated } = useAuth();
   const userRole = user?.user_metadata?.role;
 
   useEffect(() => {
@@ -168,6 +192,7 @@ const AppContent = () => {
               <Route path="/reset-password" element={<ResetPassword />} />
               
               <Route path="/journal" element={<JournalPage />} />
+              <Route path="/journal/:entryId" element={<JournalEntryPage />} />
               <Route path="/mood-mentors" element={<MoodMentors />} />
               <Route path="/mood-mentor/:name" element={<MoodMentorProfile />} />
               <Route path="/booking" element={<BookingPage />} />
@@ -246,19 +271,36 @@ const AppContent = () => {
                   <DashboardJournalPage />
                 </ProtectedErrorBoundary>
               } />
-              <Route path="/patient-dashboard/journal/new" element={
+              <Route path="/dashboard/journal" element={
                 <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
-                  <NewJournalEntryPage />
+                  <DashboardJournalPage />
                 </ProtectedErrorBoundary>
               } />
-              <Route path="/patient-dashboard/journal/:id" element={
+              <Route path="/patient-dashboard/journal/:entryId" element={
                 <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
                   <JournalEntryPage />
                 </ProtectedErrorBoundary>
               } />
-              <Route path="/patient-dashboard/journal/:id/edit" element={
+              <Route path="/dashboard/journal/:entryId" element={
+                <ProtectedErrorBoundary dashboardPath="/dashboard">
+                  <JournalEntryPage />
+                </ProtectedErrorBoundary>
+              } />
+              
+              {/* Chat Routes */}
+              <Route path="/chat" element={
                 <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
-                  <JournalEditPage />
+                  <ChatPage />
+                </ProtectedErrorBoundary>
+              } />
+              <Route path="/chat/:conversationId" element={
+                <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
+                  <ChatPage />
+                </ProtectedErrorBoundary>
+              } />
+              <Route path="/chat/new" element={
+                <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
+                  <NewConversation />
                 </ProtectedErrorBoundary>
               } />
               

@@ -48,6 +48,8 @@ import { format, addDays, startOfMonth, endOfMonth } from "date-fns";
 import { AuthContext } from "@/contexts/authContext";
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
+import { ChatButton } from "@/components/messaging/ChatButton";
+import { useAuth } from "@/contexts/authContext";
 
 interface AppointmentDisplay {
   id: string;
@@ -68,7 +70,7 @@ interface AppointmentDisplay {
 export default function AppointmentsPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useContext(AuthContext);
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState<AppointmentDisplay[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -486,6 +488,13 @@ export default function AppointmentsPage() {
                                   <Edit className="w-3 h-3 mr-1" /> Notes
                                 </Button>
                               </div>
+                            )}
+                            {appointment.type === 'chat' && (
+                              <ChatButton
+                                appointmentId={appointment.id}
+                                variant="outline"
+                                size="sm"
+                              />
                             )}
                           </div>
                         </TableCell>

@@ -63,6 +63,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { appointmentService } from "@/services";
+import { ChatButton } from "@/components/messaging/ChatButton";
+import { useAuth } from "@/contexts/authContext";
 
 // Define the Appointment type
 interface Appointment {
@@ -113,7 +115,7 @@ interface DateFilter {
 
 export default function AppointmentsPage() {
   const navigate = useNavigate();
-  const { user } = useContext(AuthContext);
+  const { user } = useAuth();
   const [appointments, setAppointments] = useState<AppointmentWithMentor[]>([]);
   const [moodMentors, setMoodMentors] = useState<MoodMentorProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -398,6 +400,25 @@ export default function AppointmentsPage() {
     }
   };
 
+  const handleStartChat = async (appointmentId: string) => {
+    try {
+      const { data: conversationId, error } = await appointmentService.startAppointmentChat(appointmentId);
+      
+      if (error) {
+        toast.error("Failed to start chat session");
+        console.error(error);
+        return;
+      }
+      
+      if (conversationId) {
+        navigate(`/chat/${conversationId}`);
+      }
+    } catch (err) {
+      console.error("Error starting chat:", err);
+      toast.error("An error occurred while starting the chat");
+    }
+  };
+
   // Replace the renderAppointmentList function with a more modern table design
   const renderAppointmentList = () => {
     if (loading) {
@@ -583,6 +604,14 @@ export default function AppointmentsPage() {
                                 <Video className="h-3.5 w-3.5 mr-1.5" />
                                 Join
                               </Button>
+                              {appointment.type === 'chat' && (
+                                <ChatButton 
+                                  appointmentId={appointment.id} 
+                                  variant="outline" 
+                                  size="sm" 
+                                  className="ml-2"
+                                />
+                              )}
                             </>
                           )}
                           {activeTab === "cancelled" && (

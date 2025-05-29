@@ -1,10 +1,16 @@
 import { Editor } from "@tiptap/react";
 import { Toggle } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
-import { Bold, Italic, List, ListOrdered, Strikethrough, Underline } from "lucide-react";
-import { MoodSelector } from "@/components/ui/mood-selector";
-import type { MoodType } from "@/types/mood";
 import { 
+  Bold, 
+  Italic, 
+  List, 
+  ListOrdered, 
+  Strikethrough, 
+  Underline,
+  Heading2,
+  Undo,
+  Redo,
   Highlighter,
   ChevronDown,
   SmilePlus
@@ -28,7 +34,7 @@ const highlightColors = [
 ];
 
 // Mood options with emojis and descriptive labels
-const moodOptions: Array<{mood: MoodType, emoji: string, label: string, color: string}> = [
+const moodOptions: Array<{mood: string, emoji: string, label: string, color: string}> = [
   { 
     mood: 'Happy', 
     emoji: '😊', 
@@ -63,8 +69,8 @@ const moodOptions: Array<{mood: MoodType, emoji: string, label: string, color: s
 
 interface JournalToolbarProps {
   editor: Editor | null;
-  onMoodSelect?: (mood: MoodType) => void;
-  selectedMood?: MoodType;
+  onMoodSelect?: (mood: string) => void;
+  selectedMood?: string | null;
 }
 
 export default function JournalToolbar({ 

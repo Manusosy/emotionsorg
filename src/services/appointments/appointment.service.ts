@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase';
 import { AppointmentService, AppointmentData, ServiceResponse } from '../index';
 import { tables } from '@/lib/supabase';
 import { Appointment } from '@/types/database.types';
+import { messagingService } from '@/services';
 
 class SupabaseAppointmentService implements AppointmentService {
   async bookAppointment(data: AppointmentData): Promise<ServiceResponse<any>> {
@@ -39,7 +40,7 @@ class SupabaseAppointmentService implements AppointmentService {
       
       console.log('Appointment booked successfully:', result);
       return { data: result };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error booking appointment:', error);
       return { error: error.message || 'Failed to book appointment' };
     }
@@ -59,7 +60,7 @@ class SupabaseAppointmentService implements AppointmentService {
 
       if (error) throw error;
       return { data };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching appointments:', error);
       return { error: error.message };
     }
@@ -85,7 +86,7 @@ class SupabaseAppointmentService implements AppointmentService {
 
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error cancelling appointment:', error);
       return { error: error.message };
     }
@@ -111,7 +112,7 @@ class SupabaseAppointmentService implements AppointmentService {
 
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error rescheduling appointment:', error);
       return { error: error.message };
     }
@@ -135,7 +136,7 @@ class SupabaseAppointmentService implements AppointmentService {
 
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error completing appointment:', error);
       return { error: error.message };
     }
@@ -163,7 +164,7 @@ class SupabaseAppointmentService implements AppointmentService {
 
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error rating appointment:', error);
       return { error: error.message };
     }
@@ -278,6 +279,37 @@ class SupabaseAppointmentService implements AppointmentService {
   // Helper method to create a meeting link
   createMeetingLink(patientId: string, mentorId: string): string {
     return `https://meet.emotionsapp.com/${patientId}/${mentorId}`;
+  }
+
+  async startAppointmentChat(appointmentId: string): Promise<ServiceResponse<string>> {
+    try {
+      // Get the appointment details
+      const { data: appointment, error: appointmentError } = await supabase
+        .from(tables.appointments)
+        .select('patient_id, mentor_id')
+        .eq('id', appointmentId)
+        .single();
+      
+      if (appointmentError) throw appointmentError;
+      
+      if (!appointment) {
+        return { error: 'Appointment not found' };
+      }
+      
+      // Get or create a conversation for this appointment
+      const { data: conversationId, error } = await messagingService.getOrCreateConversation(
+        appointment.patient_id,
+        appointment.mentor_id,
+        appointmentId
+      );
+      
+      if (error) throw error;
+      
+      return { data: conversationId };
+    } catch (error: any) {
+      console.error('Error starting appointment chat:', error);
+      return { error: error.message || 'Failed to start appointment chat' };
+    }
   }
 }
 
