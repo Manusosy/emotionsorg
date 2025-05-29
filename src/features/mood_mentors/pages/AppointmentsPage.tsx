@@ -24,6 +24,7 @@ import {
   MoreVertical,
   FileText,
   Edit,
+  Phone,
 } from "lucide-react";
 // Supabase import removed
 import { useNavigate, useLocation } from "react-router-dom";
@@ -191,8 +192,21 @@ export default function AppointmentsPage() {
     }
   };
 
-  const handleJoinSession = (appointmentId: string) => {
-    navigate(`/mood-mentor-dashboard/session/${appointmentId}`);
+  const handleJoinSession = (appointment: AppointmentDisplay) => {
+    // Route based on appointment type
+    switch (appointment.type.toLowerCase()) {
+      case 'video':
+        navigate(`/mood-mentor-dashboard/session/${appointment.id}`);
+        break;
+      case 'chat':
+        navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`);
+        break;
+      case 'audio':
+        navigate(`/mood-mentor-dashboard/session/${appointment.id}?mode=audio`);
+        break;
+      default:
+        navigate(`/mood-mentor-dashboard/session/${appointment.id}`);
+    }
   };
 
   const handleExportAppointment = (appointment: AppointmentDisplay) => {
@@ -447,15 +461,26 @@ export default function AppointmentsPage() {
                                 {isAppointmentActive(appointment.date, appointment.time.split(' - ')[0]) ? (
                                   <Button
                                     size="sm"
-                                    onClick={() => handleJoinSession(appointment.id)}
+                                    onClick={() => handleJoinSession(appointment)}
                                     className="bg-green-600 hover:bg-green-700 text-white"
                                   >
-                                    <Video className="w-3 h-3 mr-1" /> Join Now
+                                    {appointment.type.toLowerCase() === 'video' && (
+                                      <><Video className="w-3 h-3 mr-1" /> Join Video</>
+                                    )}
+                                    {appointment.type.toLowerCase() === 'chat' && (
+                                      <><MessageSquare className="w-3 h-3 mr-1" /> Open Chat</>
+                                    )}
+                                    {appointment.type.toLowerCase() === 'audio' && (
+                                      <><Phone className="w-3 h-3 mr-1" /> Join Audio</>
+                                    )}
+                                    {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
+                                      <><Clock className="w-3 h-3 mr-1" /> Join Now</>
+                                    )}
                                   </Button>
                                 ) : (
                                   <Button
                                     size="sm"
-                                    onClick={() => handleJoinSession(appointment.id)}
+                                    onClick={() => handleJoinSession(appointment)}
                                     variant="outline"
                                     className="border-blue-200 text-blue-600 hover:bg-blue-50"
                                   >
@@ -469,8 +494,19 @@ export default function AppointmentsPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleJoinSession(appointment.id)}>
-                                      <Video className="w-4 h-4 mr-2" /> View Session
+                                    <DropdownMenuItem onClick={() => handleJoinSession(appointment)}>
+                                      {appointment.type.toLowerCase() === 'video' && (
+                                        <><Video className="w-4 h-4 mr-2" /> View Video Session</>
+                                      )}
+                                      {appointment.type.toLowerCase() === 'chat' && (
+                                        <><MessageSquare className="w-4 h-4 mr-2" /> Open Chat</>
+                                      )}
+                                      {appointment.type.toLowerCase() === 'audio' && (
+                                        <><Phone className="w-4 h-4 mr-2" /> View Audio Session</>
+                                      )}
+                                      {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
+                                        <><FileText className="w-4 h-4 mr-2" /> View Session</>
+                                      )}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
                                       <Check className="w-4 h-4 mr-2" /> Mark as Completed
@@ -491,10 +527,21 @@ export default function AppointmentsPage() {
                               <>
                                 <Button
                                   size="sm"
-                                  onClick={() => handleJoinSession(appointment.id)}
+                                  onClick={() => handleJoinSession(appointment)}
                                   className="bg-green-600 hover:bg-green-700 text-white"
                                 >
-                                  <Video className="w-3 h-3 mr-1" /> Continue Session
+                                  {appointment.type.toLowerCase() === 'video' && (
+                                    <><Video className="w-3 h-3 mr-1" /> Continue Video</>
+                                  )}
+                                  {appointment.type.toLowerCase() === 'chat' && (
+                                    <><MessageSquare className="w-3 h-3 mr-1" /> Continue Chat</>
+                                  )}
+                                  {appointment.type.toLowerCase() === 'audio' && (
+                                    <><Phone className="w-3 h-3 mr-1" /> Continue Audio</>
+                                  )}
+                                  {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
+                                    <><Video className="w-3 h-3 mr-1" /> Continue Session</>
+                                  )}
                                 </Button>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
@@ -520,7 +567,7 @@ export default function AppointmentsPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleJoinSession(appointment.id)}
+                                  onClick={() => handleJoinSession(appointment)}
                                 >
                                   <FileText className="w-3 h-3 mr-1" /> View Details
                                 </Button>
@@ -548,7 +595,7 @@ export default function AppointmentsPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => handleJoinSession(appointment.id)}
+                                  onClick={() => handleJoinSession(appointment)}
                                 >
                                   <FileText className="w-3 h-3 mr-1" /> View Details
                                 </Button>

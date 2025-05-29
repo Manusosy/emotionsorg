@@ -47,6 +47,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
+import AppointmentDetailDialog from '../components/AppointmentDetailDialog';
 
 // Add interface for dashboard Activities since we don't have a real activity service
 interface Activity {
@@ -114,7 +115,7 @@ interface DashboardProfile {
 }
 
 export default function MoodMentorDashboard() {
-  const { user } = useContext(AuthContext);
+  const { user } = useContext(AuthContext) || {};
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(true);
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -122,6 +123,8 @@ export default function MoodMentorDashboard() {
   const [showWelcomeDialog, setShowWelcomeDialog] = useState(false);
   const [profile, setProfile] = useState<DashboardProfile | null>(null);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   
   // Initial stat cards with zero values - will be populated from database
   const [stats, setStats] = useState<StatCard[]>([
@@ -807,6 +810,12 @@ export default function MoodMentorDashboard() {
     }
   }, [user]);
 
+  // Add handler to open appointment details
+  const handleViewAppointmentDetails = (appointmentId: string) => {
+    setSelectedAppointmentId(appointmentId);
+    setDetailDialogOpen(true);
+  };
+
   return (
     <DashboardLayout>
       {/* Welcome Dialog for new users */}
@@ -931,7 +940,8 @@ export default function MoodMentorDashboard() {
                     {appointments.map((appointment) => (
                       <div
                         key={appointment.id}
-                        className="flex flex-col p-4 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
+                        className="flex flex-col p-4 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+                        onClick={() => handleViewAppointmentDetails(appointment.id)}
                       >
                         <div className="flex items-center">
                           <Avatar className="h-10 w-10 mr-4">
@@ -962,12 +972,15 @@ export default function MoodMentorDashboard() {
                         </div>
                         
                         {/* Action buttons */}
-                        <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-gray-100">
+                        <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
                           <Button 
                             variant="outline" 
                             size="sm" 
                             className="h-8 px-3 rounded-full"
-                            onClick={() => navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`);
+                            }}
                           >
                             <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
                             Message
@@ -979,15 +992,22 @@ export default function MoodMentorDashboard() {
                                 variant="outline"
                                 size="sm" 
                                 className="h-8 px-3 rounded-full"
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <MoreVertical className="h-3.5 w-3.5" />
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
+                              <DropdownMenuItem onClick={(e) => {
+                                e.stopPropagation();
+                                handleStatusChange(appointment.id, "completed");
+                              }}>
                                 <Check className="w-4 h-4 mr-2" /> Mark as Completed
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "cancelled")}>
+                              <DropdownMenuItem onClick={(e) => {
+                                e.stopPropagation();
+                                handleStatusChange(appointment.id, "cancelled");
+                              }}>
                                 <X className="w-4 h-4 mr-2" /> Cancel Appointment
                               </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -1000,7 +1020,10 @@ export default function MoodMentorDashboard() {
                               ? 'bg-green-600 hover:bg-green-700'
                               : 'bg-blue-600 hover:bg-blue-700'
                             }`}
-                            onClick={() => navigate(`/mood-mentor-dashboard/session/${appointment.id}`)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/mood-mentor-dashboard/session/${appointment.id}`);
+                            }}
                             disabled={!isAppointmentStartingSoon(appointment.time, appointment.date)}
                           >
                             <Video className="h-3.5 w-3.5 mr-1.5" />
@@ -1230,6 +1253,65 @@ export default function MoodMentorDashboard() {
         {/* Profile status card */}
         <ProfileStatusCard />
       </div>
+      
+      {/* Add the appointment detail dialog */}
+      {selectedAppointmentId && (
+        <AppointmentDetailDialog
+          appointmentId={selectedAppointmentId}
+          isOpen={detailDialogOpen}
+          onClose={() => {
+            setDetailDialogOpen(false);
+            // Fetch appointments again after dialog is closed
+            const fetchAppointmentsAgain = async () => {
+              if (!user) return;
+              
+              setIsLoading(true);
+              try {
+                const todayFormatted = format(new Date(), 'yyyy-MM-dd');
+                
+                const { data: appointmentsData, error } = await supabase
+                  .from('mentor_appointments_view')
+                  .select('*')
+                  .eq('mentor_id', user.id)
+                  .in('status', ['pending', 'scheduled'])
+                  .gte('date', todayFormatted)
+                  .order('date', { ascending: true });
+                  
+                if (error) {
+                  console.error('Error fetching appointments:', error);
+                  setAppointments([]);
+                  return;
+                }
+                
+                if (!appointmentsData || appointmentsData.length === 0) {
+                  setAppointments([]);
+                } else {
+                  const formattedAppointments = appointmentsData.map(apt => ({
+                    id: apt.id,
+                    patient_id: apt.patient_id,
+                    patient_name: apt.patient_name || 'Unknown Patient',
+                    date: apt.date,
+                    time: apt.start_time,
+                    type: apt.meeting_type as 'video' | 'in-person' | 'chat',
+                    status: apt.status === 'scheduled' ? 'upcoming' as const : 'completed' as const,
+                    patient_email: apt.patient_email,
+                    patient_avatar_url: apt.patient_avatar_url
+                  }));
+                  
+                  setAppointments(formattedAppointments);
+                  fetchDashboardStats();
+                }
+              } catch (error) {
+                console.error('Error refreshing appointments:', error);
+              } finally {
+                setIsLoading(false);
+              }
+            };
+            
+            fetchAppointmentsAgain();
+          }}
+        />
+      )}
     </DashboardLayout>
   );
 } 

@@ -92,27 +92,29 @@ const BookingPage = () => {
     const fetchMoodMentorDetails = async (id: string) => {
       try {
         setLoading(true);
-        // Fetch mood mentor data using the service
-        const response = await moodMentorService.getMoodMentorById(id);
+        console.log("Fetching mood mentor details for ID:", id);
         
-        if (!response || !response.success || !response.data) {
-          console.error("Error fetching mood mentor details:", response?.error || "No data returned");
-          toast.error("Could not load mood mentor details. Please try again later.");
-          navigate("/find-mentors"); // Redirect to find mentors page if mentor not found
+        const result = await moodMentorService.getMoodMentorById(id);
+        
+        if (result.error || !result.data) {
+          console.error("Error fetching mood mentor:", result.error || "No data returned");
+          toast.error("Could not load mood mentor details");
+          setLoading(false);
           return;
         }
         
-        setMoodMentor(response.data);
-        if (response.data.specialty) {
-          setSelectedSpecialty(response.data.specialty.split(" ")[0]);
-        }
+        console.log("Fetched mood mentor details:", JSON.stringify(result.data, null, 2));
+        console.log("Mood mentor userId:", result.data.userId);
         
-        setLoading(false);
+        setMoodMentor(result.data);
+        if (result.data.specialty) {
+          setSelectedSpecialty(result.data.specialty.split(" ")[0]);
+        }
       } catch (error) {
-        console.error("Error fetching mood mentor details:", error);
-        toast.error("An error occurred while loading mentor details");
+        console.error("Error in fetchMoodMentorDetails:", error);
+        toast.error("Failed to load mood mentor information");
+      } finally {
         setLoading(false);
-        navigate("/find-mentors"); // Redirect to find mentors page on error
       }
     };
     
@@ -196,26 +198,34 @@ const BookingPage = () => {
         return;
       }
       
-      // Use the userId from the mood mentor object which references auth.users
-      const mentorUserId = moodMentor.userId;
-      
-      if (!mentorUserId) {
-        console.error("Mentor user ID is missing", moodMentor);
+      // Verify that we have a valid userId
+      if (!moodMentor.userId) {
+        console.error("Mentor user ID is missing from moodMentor object:", moodMentor);
         toast.error("Could not find mentor user ID");
         return;
       }
       
+      // Verify the mentor ID format - it should be a UUID
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(moodMentor.userId)) {
+        console.error("Invalid mentor ID format, not a UUID:", moodMentor.userId);
+        toast.error("Invalid mentor ID format");
+        return;
+      }
+      
+      console.log("Using mentor user ID for booking:", moodMentor.userId);
+      
       // Create the booking entry using the correct field names
       const bookingData = {
         patient_id: user.id,
-        mentor_id: mentorUserId, // Use the userId which references auth.users
+        mentor_id: moodMentor.userId, // Use the userId which references auth.users
         title: `Session with ${moodMentor?.fullName || "Mood Mentor"}`,
         description: formData.concerns || "No specific concerns mentioned",
         date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : new Date().toISOString().split('T')[0],
         start_time: startTime,
         end_time: endTime,
         meeting_type: selectedAppointmentType as 'video' | 'audio' | 'chat',
-        meeting_link: `https://meet.emotionsapp.com/${user.id}/${mentorUserId}`,
+        meeting_link: `https://meet.emotionsapp.com/${user.id}/${moodMentor.userId}`,
         notes: formData.concerns || "No notes provided"
       };
       
@@ -745,6 +755,7 @@ const BookingPage = () => {
 };
 
 export default BookingPage;
+
 
 
 

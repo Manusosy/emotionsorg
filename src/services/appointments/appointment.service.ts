@@ -135,27 +135,74 @@ class SupabaseAppointmentService implements AppointmentService {
     }
   }
   
-  async completeAppointment(appointmentId: string, notes?: string): Promise<ServiceResponse<void>> {
+  async completeAppointment(appointmentId: string): Promise<ServiceResponse<any>> {
     try {
-      const updateData: any = { 
-        status: 'completed',
-        updated_at: new Date().toISOString()
-      };
+      // First, get the appointment details to verify it exists
+      const { data: appointment, error: fetchError } = await supabase
+        .from(tables.appointments)
+        .select('id, mentor_id, patient_id, status')
+        .eq('id', appointmentId)
+        .single();
       
-      if (notes) {
-        updateData.notes = notes;
+      if (fetchError) {
+        console.error('Error fetching appointment for completion:', fetchError);
+        return { error: 'Could not find the appointment' };
       }
       
-      const { error } = await supabase
+      if (!appointment) {
+        return { error: 'Appointment not found' };
+      }
+      
+      // Check if user is the mentor for this appointment
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        return { error: 'User not authenticated' };
+      }
+      
+      if (appointment.mentor_id !== user.id) {
+        return { error: 'You are not authorized to complete this appointment' };
+      }
+      
+      // Only allow completion if current status is scheduled, pending, or in-progress
+      if (!['scheduled', 'pending', 'in-progress'].includes(appointment.status)) {
+        return { error: `Cannot complete appointment with status: ${appointment.status}` };
+      }
+      
+      // Update the appointment status to completed
+      const { error: updateError } = await supabase
         .from(tables.appointments)
-        .update(updateData)
+        .update({ 
+          status: 'completed',
+          updated_at: new Date().toISOString()
+        })
         .eq('id', appointmentId);
-
-      if (error) throw error;
-      return {};
+        
+      if (updateError) {
+        console.error('Error updating appointment status:', updateError);
+        return { error: 'Failed to complete the appointment: ' + updateError.message };
+      }
+      
+      // Notify the patient that their appointment was completed (optional)
+      try {
+        // Create activity for the patient
+        await supabase
+          .from('activities')
+          .insert({
+            user_id: appointment.patient_id,
+            activity_type: 'appointment',
+            title: 'Your appointment was completed',
+            description: 'Your mentor has marked your appointment as completed.',
+            created_at: new Date().toISOString()
+          });
+      } catch (notifyError) {
+        console.warn('Error creating activity notification:', notifyError);
+        // Continue anyway as this is not critical
+      }
+      
+      return { data: { message: 'Appointment completed successfully' } };
     } catch (error: any) {
       console.error('Error completing appointment:', error);
-      return { error: error.message };
+      return { error: error.message || 'Failed to complete appointment' };
     }
   }
   
@@ -326,6 +373,102 @@ class SupabaseAppointmentService implements AppointmentService {
     } catch (error: any) {
       console.error('Error starting appointment chat:', error);
       return { error: error.message || 'Failed to start appointment chat' };
+    }
+  }
+
+  async startAppointmentSession(appointmentId: string): Promise<ServiceResponse<any>> {
+    try {
+      // First, get the appointment details
+      const { data: appointment, error: fetchError } = await supabase
+        .from(tables.appointments)
+        .select(`
+          id,
+          patient_id,
+          mentor_id,
+          date,
+          start_time,
+          end_time,
+          status,
+          meeting_link,
+          meeting_type
+        `)
+        .eq('id', appointmentId)
+        .single();
+      
+      if (fetchError) {
+        console.error('Error fetching appointment for session:', fetchError);
+        return { error: 'Could not find the appointment' };
+      }
+      
+      if (!appointment) {
+        return { error: 'Appointment not found' };
+      }
+      
+      // Check if user is the mentor or patient
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        return { error: 'User not authenticated' };
+      }
+      
+      const isUserMentor = appointment.mentor_id === user.id;
+      const isUserPatient = appointment.patient_id === user.id;
+      
+      if (!isUserMentor && !isUserPatient) {
+        return { error: 'You are not authorized to start this appointment' };
+      }
+      
+      // Check if the appointment is at an appropriate time to start
+      const now = new Date();
+      const appointmentDate = new Date(appointment.date);
+      const [hours, minutes] = appointment.start_time.split(':').map(Number);
+      appointmentDate.setHours(hours, minutes, 0, 0);
+      
+      // Calculate time difference in minutes
+      const diffInMinutes = (appointmentDate.getTime() - now.getTime()) / (1000 * 60);
+      
+      // Mentor can start session 5 minutes early, patient only right on time
+      const canStartEarly = isUserMentor && diffInMinutes <= 15 && diffInMinutes >= -60; // Allow mentor to start up to 5 min early and join up to 60 min late
+      const isOnTime = diffInMinutes <= 5 && diffInMinutes >= -60; // Allow users to join up to 60 min late
+      
+      if (!canStartEarly && !isOnTime) {
+        if (diffInMinutes > 15) {
+          return { error: `This appointment starts in ${Math.ceil(diffInMinutes)} minutes. You can join 5 minutes before the scheduled time.` };
+        } else if (diffInMinutes < -60) {
+          return { error: 'This appointment has already ended.' };
+        }
+      }
+      
+      // Update appointment status to 'in-progress' if it's currently 'scheduled' or 'pending'
+      if (appointment.status === 'scheduled' || appointment.status === 'pending') {
+        const { error: updateError } = await supabase
+          .from(tables.appointments)
+          .update({ 
+            status: 'in-progress',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', appointmentId);
+          
+        if (updateError) {
+          console.error('Error updating appointment status:', updateError);
+          // Continue anyway as this is not critical
+        }
+      }
+      
+      // Return session details
+      return { 
+        data: {
+          appointmentId: appointment.id,
+          meetingLink: appointment.meeting_link || `https://meet.emotionsapp.com/${appointment.patient_id}/${appointment.mentor_id}`,
+          meetingType: appointment.meeting_type,
+          participantRole: isUserMentor ? 'mentor' : 'patient',
+          appointmentDate: appointment.date,
+          startTime: appointment.start_time,
+          endTime: appointment.end_time
+        }
+      };
+    } catch (error: any) {
+      console.error('Error starting appointment session:', error);
+      return { error: error.message || 'Failed to start appointment session' };
     }
   }
 }

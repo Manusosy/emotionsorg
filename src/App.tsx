@@ -66,6 +66,7 @@ import MoodMentorProfile from "@/features/mood_mentors/pages/MoodMentorProfile";
 import ChatPage from "@/features/chat/pages/ChatPage";
 import NewConversation from "@/features/chat/components/NewConversation";
 import { useAuth } from "@/contexts/authContext";
+import AppointmentSessionPage from "@/features/mood_mentors/pages/AppointmentSessionPage";
 
 // Type definition for UserRole
 type UserRole = 'patient' | 'mood_mentor';
@@ -313,6 +314,11 @@ const AppContent = () => {
               <Route path="/mood-mentor-dashboard/appointments" element={
                 <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
                   <MoodMentorAppointmentsPage />
+                </ProtectedErrorBoundary>
+              } />
+              <Route path="/mood-mentor-dashboard/session/:appointmentId" element={
+                <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
+                  <AppointmentSessionPage />
                 </ProtectedErrorBoundary>
               } />
               <Route path="/mood-mentor-dashboard/patients" element={
