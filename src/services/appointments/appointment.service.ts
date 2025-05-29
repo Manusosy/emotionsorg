@@ -9,6 +9,23 @@ class SupabaseAppointmentService implements AppointmentService {
     try {
       console.log('Booking appointment with data:', JSON.stringify(data, null, 2));
       
+      // Verify the mentor_id exists in mood_mentor_profiles table instead of auth.users
+      const { data: mentorProfile, error: mentorCheckError } = await supabase
+        .from('mood_mentor_profiles')
+        .select('id, user_id')
+        .eq('user_id', data.mentor_id)
+        .maybeSingle();
+        
+      if (mentorCheckError) {
+        console.error('Error checking mentor profile:', mentorCheckError);
+        return { error: 'Error verifying mentor profile: ' + mentorCheckError.message };
+      }
+      
+      if (!mentorProfile) {
+        console.error('Mentor profile not found for user_id:', data.mentor_id);
+        return { error: 'Mentor profile not found. The user may not be registered as a mood mentor.' };
+      }
+      
       // Use the correct field names that match the database schema
       const appointmentData = {
         patient_id: data.patient_id,
