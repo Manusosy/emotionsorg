@@ -215,7 +215,7 @@ export default function JournalPage() {
   };
 
   const handleViewEntryClick = (entryId: string) => {
-    navigate(`/dashboard/journal/${entryId}`);
+    navigate(`/patient-dashboard/journal/${entryId}`);
   };
 
   const toggleFavorite = async (entryId: string, event: React.MouseEvent) => {

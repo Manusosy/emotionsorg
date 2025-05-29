@@ -194,7 +194,7 @@ export default function JournalEntryPage() {
           description: "Journal entry deleted successfully",
         });
 
-        navigate("/dashboard/journal");
+        navigate("/patient-dashboard/journal");
       } catch (err: any) {
         console.error("Error deleting journal entry:", err);
         toast({
@@ -330,7 +330,7 @@ export default function JournalEntryPage() {
               <p>{error}</p>
             </CardContent>
             <CardFooter>
-              <Button onClick={() => navigate("/dashboard/journal")}>
+              <Button onClick={() => navigate("/patient-dashboard/journal")}>
                 <ChevronLeft className="mr-2 h-4 w-4" />
                 Back to Journal
               </Button>
@@ -355,7 +355,7 @@ export default function JournalEntryPage() {
               <p>The journal entry you're looking for doesn't exist or you don't have permission to view it.</p>
             </CardContent>
             <CardFooter>
-              <Button onClick={() => navigate("/dashboard/journal")}>
+              <Button onClick={() => navigate("/patient-dashboard/journal")}>
                 <ChevronLeft className="mr-2 h-4 w-4" />
                 Back to Journal
               </Button>
@@ -414,7 +414,7 @@ export default function JournalEntryPage() {
     <DashboardLayout>
       <div className="container mx-auto py-8">
         <div className="flex items-center justify-between mb-6">
-          <Button variant="outline" onClick={() => navigate("/dashboard/journal")}>
+          <Button variant="outline" onClick={() => navigate("/patient-dashboard/journal")}>
             <ChevronLeft className="mr-2 h-4 w-4" />
             Back to Journal
           </Button>
