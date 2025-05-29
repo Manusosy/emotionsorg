@@ -266,31 +266,40 @@ export class MoodMentorService implements IMoodMentorService {
       // Convert the profile to snake_case for the database
       const snakeCaseProfile = convertObjectToSnakeCase(cleanProfile);
 
-      // Check if record exists
-      const { data: existingProfile, error: lookupError } = await supabase
-        .from('mood_mentor_profiles')
-        .select('id')
-        .eq('user_id', userId)
-        .maybeSingle();
-        
-      if (lookupError) {
-        console.error('Error checking for existing profile:', lookupError);
+      // Try to get the current user to verify they are authenticated
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        console.error('Auth error when updating profile:', authError);
         return {
           success: false,
           data: null,
-          error: 'Failed to check for existing profile',
-          details: {
-            message: lookupError.message,
-            code: lookupError.code,
-            hint: lookupError.hint,
-            details: lookupError.details
-          }
+          error: 'Authentication required to update profile',
+          details: authError
         };
+      }
+
+      // Try to determine if the profile exists by checking if it's the current user's profile
+      let profileExists = false;
+      try {
+        const { data: existingProfile, error: lookupError } = await supabase
+          .from('mood_mentor_profiles')
+          .select('id')
+          .eq('user_id', userId)
+          .maybeSingle();
+          
+        if (!lookupError && existingProfile) {
+          profileExists = true;
+        }
+      } catch (error) {
+        // If there's an error checking, we'll assume the profile doesn't exist
+        console.warn('Error checking for existing profile, will attempt to create new:', error);
+        profileExists = false;
       }
 
       let result;
       
-      if (existingProfile) {
+      if (profileExists) {
+        console.log('Updating existing profile for user:', userId);
         // Update existing profile - remove id field on update to avoid UUID errors
         const updateData = { ...snakeCaseProfile };
         delete updateData.id; // Ensure we don't try to update the primary key
@@ -302,12 +311,29 @@ export class MoodMentorService implements IMoodMentorService {
           .select()
           .single();
       } else {
+        console.log('Creating new profile for user:', userId);
         // Insert new profile - let the database generate the id
         delete snakeCaseProfile.id; // Remove any id field to let DB generate UUID
         
+        // Ensure required fields are present for a new profile
+        const newProfileData = {
+          ...snakeCaseProfile,
+          user_id: userId,
+          full_name: snakeCaseProfile.full_name || authData.user.user_metadata?.name || 'Mood Mentor',
+          email: snakeCaseProfile.email || authData.user.email || '',
+          bio: snakeCaseProfile.bio || '',
+          specialty: snakeCaseProfile.specialty || 'Mental Health Support',
+          languages: snakeCaseProfile.languages || ['English'],
+          gender: snakeCaseProfile.gender || 'Prefer not to say',
+          location: snakeCaseProfile.location || 'Available Online',
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
         result = await supabase
           .from('mood_mentor_profiles')
-          .insert(snakeCaseProfile)
+          .insert(newProfileData)
           .select()
           .single();
       }
@@ -345,7 +371,8 @@ export class MoodMentorService implements IMoodMentorService {
       // Determine if this is a permission error
       const isPermissionError = error.message && 
         (error.message.includes('permission denied') || 
-         error.message.includes('not authorized'));
+         error.message.includes('not authorized') ||
+         error.message.includes('violates row-level security policy'));
       
       return {
         success: false,
@@ -353,7 +380,7 @@ export class MoodMentorService implements IMoodMentorService {
         error: isConstraintViolation ? 
           'One or more values do not meet database requirements' : 
           isPermissionError ?
-          'You do not have permission to perform this action' :
+          'You do not have permission to perform this action. Please ensure you are logged in with the correct account.' :
           error.message || 'An unknown error occurred',
         details: {
           originalError: error.message,
