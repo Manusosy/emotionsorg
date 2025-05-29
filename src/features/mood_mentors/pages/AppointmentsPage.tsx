@@ -140,13 +140,23 @@ export default function AppointmentsPage() {
 
       if (error) throw error;
       
+      // Function to normalize status values
+      const normalizeStatus = (status: string) => {
+        status = status.toLowerCase();
+        // Map "scheduled" and "pending" to "upcoming" for consistency
+        if (status === "scheduled" || status === "pending") {
+          return "upcoming";
+        }
+        return status;
+      };
+      
       const transformedData = (data || []).map(appointment => ({
         id: appointment.id,
         patient_id: appointment.patient_id,
         date: appointment.date,
         time: `${appointment.start_time} - ${appointment.end_time}`,
         type: appointment.meeting_type,
-        status: appointment.status,
+        status: normalizeStatus(appointment.status || "upcoming"),
         notes: appointment.notes,
         patient: {
           name: appointment.patient_name || "Unknown Patient",
@@ -182,7 +192,7 @@ export default function AppointmentsPage() {
   };
 
   const handleJoinSession = (appointmentId: string) => {
-    window.location.href = `/mood-mentor-dashboard/session/${appointmentId}`;
+    navigate(`/mood-mentor-dashboard/session/${appointmentId}`);
   };
 
   const handleExportAppointment = (appointment: AppointmentDisplay) => {
@@ -243,12 +253,14 @@ export default function AppointmentsPage() {
   const getStatusBadge = (status: string) => {
     const statusConfig = {
       upcoming: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
+      scheduled: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
+      pending: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
       completed: { color: "bg-green-100 text-green-800", label: "Completed" },
       cancelled: { color: "bg-red-100 text-red-800", label: "Cancelled" },
       "in-progress": { color: "bg-yellow-100 text-yellow-800", label: "In Progress" },
     };
 
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.upcoming;
+    const config = statusConfig[status.toLowerCase() as keyof typeof statusConfig] || statusConfig.upcoming;
     return <Badge className={`${config.color}`}>{config.label}</Badge>;
   };
 
@@ -280,20 +292,27 @@ export default function AppointmentsPage() {
     );
   });
 
-  // Add this function to check if an appointment is active (within 15 minutes of start time)
+  // Update the isAppointmentActive function
   const isAppointmentActive = (appointmentDate: string, appointmentTime: string) => {
-    const now = new Date();
-    const [hours, minutes] = appointmentTime.split(':').map(Number);
-    
-    // Create appointment start time
-    const appointmentStart = new Date(appointmentDate);
-    appointmentStart.setHours(hours, minutes);
-    
-    // Calculate time difference in minutes
-    const timeDiffMinutes = (appointmentStart.getTime() - now.getTime()) / (1000 * 60);
-    
-    // Return true if the appointment is within 15 minutes (before or after)
-    return timeDiffMinutes <= 15 && timeDiffMinutes >= -60; // Allow joining 15 min before and up to 60 min after start
+    try {
+      const now = new Date();
+      const [startHour, startMinute] = appointmentTime.split(':').map(Number);
+      
+      // Create appointment start time
+      const appointmentStart = new Date(appointmentDate);
+      appointmentStart.setHours(startHour, startMinute, 0, 0);
+      
+      // Calculate time difference in minutes
+      const timeDiffMinutes = (appointmentStart.getTime() - now.getTime()) / (1000 * 60);
+      
+      console.log(`Appointment time difference: ${timeDiffMinutes} minutes for ${appointmentDate} ${appointmentTime}`);
+      
+      // Return true if the appointment is within 5 minutes before or 60 minutes after
+      return timeDiffMinutes <= 5 && timeDiffMinutes >= -60;
+    } catch (error) {
+      console.error('Error checking appointment time:', error);
+      return false;
+    }
   };
 
   return (
@@ -420,25 +439,27 @@ export default function AppointmentsPage() {
                         <TableCell>{getStatusBadge(appointment.status)}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end space-x-2">
-                            {appointment.status === "upcoming" && (
+                            {/* Upcoming/Scheduled/Pending Appointments */}
+                            {(appointment.status.toLowerCase() === "upcoming" || 
+                              appointment.status.toLowerCase() === "scheduled" || 
+                              appointment.status.toLowerCase() === "pending") && (
                               <>
                                 {isAppointmentActive(appointment.date, appointment.time.split(' - ')[0]) ? (
                                   <Button
                                     size="sm"
                                     onClick={() => handleJoinSession(appointment.id)}
-                                    className="bg-[#0078FF] text-white hover:bg-blue-700"
+                                    className="bg-green-600 hover:bg-green-700 text-white"
                                   >
-                                    <Video className="w-3 h-3 mr-1" /> Join Session
+                                    <Video className="w-3 h-3 mr-1" /> Join Now
                                   </Button>
                                 ) : (
                                   <Button
                                     size="sm"
-                                    disabled
+                                    onClick={() => handleJoinSession(appointment.id)}
                                     variant="outline"
-                                    className="text-gray-400 border-gray-200"
-                                    title="This session will be available 15 minutes before the scheduled time"
+                                    className="border-blue-200 text-blue-600 hover:bg-blue-50"
                                   >
-                                    <Clock className="w-3 h-3 mr-1" /> Not Active Yet
+                                    <FileText className="w-3 h-3 mr-1" /> View Details
                                   </Button>
                                 )}
                                 <DropdownMenu>
@@ -448,6 +469,9 @@ export default function AppointmentsPage() {
                                     </Button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => handleJoinSession(appointment.id)}>
+                                      <Video className="w-4 h-4 mr-2" /> View Session
+                                    </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
                                       <Check className="w-4 h-4 mr-2" /> Mark as Completed
                                     </DropdownMenuItem>
@@ -461,17 +485,73 @@ export default function AppointmentsPage() {
                                 </DropdownMenu>
                               </>
                             )}
-                            {appointment.status === "cancelled" && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleExportAppointment(appointment)}
-                              >
-                                <FileText className="w-3 h-3 mr-1" /> Export
-                              </Button>
+                            
+                            {/* In-Progress Appointments */}
+                            {appointment.status.toLowerCase() === "in-progress" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleJoinSession(appointment.id)}
+                                  className="bg-green-600 hover:bg-green-700 text-white"
+                                >
+                                  <Video className="w-3 h-3 mr-1" /> Continue Session
+                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon">
+                                      <MoreVertical className="w-4 h-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
+                                      <Check className="w-4 h-4 mr-2" /> Mark as Completed
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleExportAppointment(appointment)}>
+                                      <FileText className="w-4 h-4 mr-2" /> Export Details
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </>
                             )}
-                            {appointment.status === "completed" && (
-                              <div className="flex space-x-2">
+                            
+                            {/* Completed Appointments */}
+                            {appointment.status.toLowerCase() === "completed" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleJoinSession(appointment.id)}
+                                >
+                                  <FileText className="w-3 h-3 mr-1" /> View Details
+                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon">
+                                      <MoreVertical className="w-4 h-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => navigate(`/mood-mentor-dashboard/notes/${appointment.id}`)}>
+                                      <Edit className="w-4 h-4 mr-2" /> Edit Notes
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleExportAppointment(appointment)}>
+                                      <FileText className="w-4 h-4 mr-2" /> Export Details
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </>
+                            )}
+                            
+                            {/* Cancelled Appointments */}
+                            {appointment.status.toLowerCase() === "cancelled" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleJoinSession(appointment.id)}
+                                >
+                                  <FileText className="w-3 h-3 mr-1" /> View Details
+                                </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -479,17 +559,11 @@ export default function AppointmentsPage() {
                                 >
                                   <FileText className="w-3 h-3 mr-1" /> Export
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="text-purple-600 border-purple-200 hover:bg-purple-50"
-                                  onClick={() => navigate(`/mood-mentor-dashboard/notes/${appointment.id}`)}
-                                >
-                                  <Edit className="w-3 h-3 mr-1" /> Notes
-                                </Button>
-                              </div>
+                              </>
                             )}
-                            {appointment.type === 'chat' && (
+                            
+                            {/* Chat Button for all chat appointments */}
+                            {appointment.type.toLowerCase() === 'chat' && (
                               <ChatButton
                                 appointmentId={appointment.id}
                                 variant="outline"
