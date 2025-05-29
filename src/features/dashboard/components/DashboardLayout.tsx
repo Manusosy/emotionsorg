@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useAuth } from "@/contexts/authContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { mentorSearchableItems, patientSearchableItems } from '../navigation';
 import {
   Dialog,
   DialogContent,
@@ -180,110 +181,6 @@ const moodMentorNavigation = [
     ]
   }
 ];
-
-// Define searchable items based on role
-const patientSearchableItems: SearchResult[] = [
-  // Overview
-  {
-    title: "Dashboard Overview",
-    description: "View your dashboard summary and upcoming activities",
-    icon: Home,
-    href: "/patient-dashboard",
-    category: "Pages"
-  },
-  // Appointments
-  {
-    title: "Appointments",
-    description: "View and manage your therapy appointments",
-    icon: Calendar,
-    href: "/patient-dashboard/appointments",
-    category: "Pages"
-  },
-  {
-    title: "Schedule Session",
-    description: "Book a new therapy session",
-    icon: Clock,
-    href: "/patient-dashboard/appointments/schedule",
-    category: "Appointments"
-  },
-  // Messages
-  {
-    title: "Messages",
-    description: "Chat with your therapist and support team",
-    icon: Inbox,
-    href: "/patient-dashboard/messages",
-    category: "Communication"
-  },
-  // Journal
-  {
-    title: "Journal",
-    description: "Write and manage your therapy journal entries",
-    icon: BookOpen,
-    href: "/patient-dashboard/journal",
-    category: "Wellbeing"
-  },
-  {
-    title: "New Journal Entry",
-    description: "Create a new journal entry",
-    icon: FileText,
-    href: "/patient-dashboard/journal/new",
-    category: "Wellbeing"
-  },
-  // Mood Tracking
-  {
-    title: "Mood Tracker",
-    description: "Track and analyze your daily mood patterns",
-    icon: Activity,
-    href: "/patient-dashboard/mood-tracker",
-    category: "Wellbeing"
-  },
-  {
-    title: "Mood Reports",
-    description: "View your mood tracking history and insights",
-    icon: FileText,
-    href: "/patient-dashboard/reports",
-    category: "Wellbeing"
-  },
-  // Resources
-  {
-    title: "Resource Library",
-    description: "Access therapeutic resources and materials",
-    icon: BookOpen,
-    href: "/patient-dashboard/resources",
-    category: "Support"
-  },
-  // Profile & Settings
-  {
-    title: "My Profile",
-    description: "View and update your profile information",
-    icon: User,
-    href: "/patient-dashboard/profile",
-    category: "Account"
-  },
-  {
-    title: "Favorite Items",
-    description: "Access your saved resources and content",
-    icon: Heart,
-    href: "/patient-dashboard/favorites",
-    category: "Account"
-  },
-  {
-    title: "Account Settings",
-    description: "Manage your account preferences",
-    icon: Settings,
-    href: "/patient-dashboard/settings",
-    category: "Account"
-  },
-  {
-    title: "Help Center",
-    description: "Get help and support",
-    icon: BadgeHelp,
-    href: "/patient-dashboard/help",
-    category: "Support"
-  }
-];
-
-// Mood mentor searchable items could be added here
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate();
