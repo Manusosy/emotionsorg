@@ -134,14 +134,14 @@ export default function ReportsPage() {
     
     setIsLoading(true);
     try {
-      // Always use test mode since the real endpoints might not exist yet
-      const isTestMode = true;
+      // Use real data mode instead of test mode
+      const isTestMode = false;
       
       let assessmentsData: Assessment[] = [];
       let moodData: MoodEntry[] = [];
       
       if (isTestMode) {
-        // Load test data from sessionStorage
+        // Test mode code remains unchanged
         try {
           // Load stress assessment data
           const testStressDataString = sessionStorage.getItem('test_stress_assessment');
@@ -238,40 +238,62 @@ export default function ReportsPage() {
           console.error("Error loading test data from sessionStorage:", error);
         }
       } else {
-        // This section won't run as isTestMode is set to true above
-        // It's kept here for future reference when the real endpoints are ready
+        // This section will now run as isTestMode is set to false
         try {
           // Calculate date range
           const endDate = new Date();
           const startDate = subDays(endDate, parseInt(dateRange));
           
-          // Use direct Supabase queries instead of the service methods that don't exist yet
+          // Use direct Supabase queries for stress assessments
           const { data: fetchedAssessments, error: assessmentsError } = await supabase
             .from('stress_assessments')
             .select('*')
             .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(10);
+            .order('created_at', { ascending: false });
             
-          if (assessmentsError) throw assessmentsError;
-          assessmentsData = fetchedAssessments || [];
+          if (assessmentsError) {
+            console.error("Error fetching stress assessments:", assessmentsError);
+            throw assessmentsError;
+          }
           
-          // Filter by date range since we can't query by date directly in test mode
+          // Map the fetched assessments to the expected format
+          assessmentsData = (fetchedAssessments || []).map(assessment => ({
+            id: assessment.id,
+            user_id: assessment.user_id,
+            stress_score: assessment.normalized_score, // Use normalized score
+            created_at: assessment.created_at
+          }));
+          
+          console.log("Fetched stress assessments:", assessmentsData);
+          
+          // Filter by date range
           assessmentsData = assessmentsData.filter(a => {
             const date = new Date(a.created_at);
             return isValid(date) && date >= startDate && date <= endDate;
           });
           
-          // Use direct Supabase queries for mood entries too
+          // Use direct Supabase queries for mood entries
           const { data: fetchedMoodData, error: moodError } = await supabase
             .from('mood_entries')
             .select('*')
             .eq('user_id', user.id)
-            .order('created_at', { ascending: false })
-            .limit(20);
+            .order('created_at', { ascending: false });
             
-          if (moodError) throw moodError;
-          moodData = fetchedMoodData || [];
+          if (moodError) {
+            console.error("Error fetching mood entries:", moodError);
+            throw moodError;
+          }
+          
+          // Map the fetched mood entries to the expected format
+          moodData = (fetchedMoodData || []).map(entry => ({
+            id: entry.id,
+            user_id: entry.user_id,
+            mood_score: entry.assessment_score || entry.mood, // Use assessment_score or fallback to mood
+            created_at: entry.created_at,
+            assessment_result: entry.assessment_result || 'Normal'
+          }));
+          
+          console.log("Fetched mood entries:", moodData);
           
           // Filter by date range
           moodData = moodData.filter(m => {

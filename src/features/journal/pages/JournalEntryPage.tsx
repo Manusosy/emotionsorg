@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Edit, Trash2, Calendar, Clock, Smile, Star, Check } from "lucide-react";
+import { ChevronLeft, Edit, Trash2, Calendar, Star, Check, Share2, FileDown } from "lucide-react";
 import { supabase } from '@/lib/supabase';
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
@@ -11,13 +11,14 @@ import { useToast } from "@/components/ui/use-toast";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { useAuth } from "@/contexts/authContext";
 import { toast as sonnerToast } from "sonner";
-import { userService } from "@/services";
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 
 interface JournalEntry {
   id: string;
   title: string;
   content: string;
-  mood: string;
+  mood: string | null;
   mood_type?: string;
   tags?: string[];
   created_at: string;
@@ -35,57 +36,11 @@ export default function JournalEntryPage() {
   const { user } = useAuth();
   const [entry, setEntry] = useState<JournalEntry | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isMentor, setIsMentor] = useState(false);
-  const [isRoleChecking, setIsRoleChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isFavorite, setIsFavorite] = useState(false);
 
-  // Check if the user is a mood mentor
-  useEffect(() => {
-    const checkUserRole = async () => {
-      if (!user) return;
-      
-      try {
-        setIsRoleChecking(true);
-        // Check if the user has a mentor profile
-        const profileResponse = await userService.getProfile(user.id);
-        
-        if (profileResponse.error) throw profileResponse.error;
-        
-        if (profileResponse.data?.role === 'mood_mentor') {
-          setIsMentor(true);
-          sonnerToast.error("Mood mentors do not have access to the journaling feature");
-          navigate('/mood-mentor-dashboard');
-          return;
-        }
-        
-        setIsMentor(false);
-      } catch (error) {
-        console.error("Error checking user role:", error);
-      } finally {
-        setIsRoleChecking(false);
-      }
-    };
-    
-    checkUserRole();
-  }, [user, navigate]);
-  
-  // If still checking role, show loading state
-  if (isRoleChecking) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center h-96">
-          <div className="flex flex-col items-center gap-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            <p className="text-slate-500">Checking access...</p>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
   // Get mood color based on mood name
-  const getMoodColor = (mood: string | undefined) => {
+  const getMoodColor = useCallback((mood: string | undefined | null) => {
     if (!mood) return "";
     
     const moodLower = mood.toLowerCase();
@@ -114,7 +69,7 @@ export default function JournalEntryPage() {
       default:
         return 'bg-slate-500 text-white';
     }
-  };
+  }, []);
 
   // Check if entry is a favorite
   useEffect(() => {
@@ -139,6 +94,7 @@ export default function JournalEntryPage() {
     checkFavoriteStatus();
   }, [user, entryId]);
 
+  // Fetch the journal entry
   useEffect(() => {
     const fetchEntry = async () => {
       if (!entryId) return;
@@ -291,6 +247,100 @@ export default function JournalEntryPage() {
     }
   };
 
+  // Extract potential gratitude items from content
+  const extractGratitudeItems = useCallback((content: string): string[] => {
+    // Only extract items if they're explicitly labeled as gratitude
+    if (!content.toLowerCase().includes('grateful') && 
+        !content.toLowerCase().includes('thankful') &&
+        !content.toLowerCase().includes('appreciate') &&
+        !content.toLowerCase().includes('things i\'m grateful')) {
+      return [];
+    }
+    
+    // Look for sections specifically about gratitude
+    const gratitudeSection = content.match(/things\s+i['']m\s+grateful\s+for\s+today:?([\s\S]*?)(?=\n\n|$)/i);
+    
+    if (gratitudeSection && gratitudeSection[1]) {
+      // Extract bullet points or lines from the gratitude section
+      return gratitudeSection[1]
+        .split(/\n/)
+        .map(line => line.replace(/^[-•*]\s*/, '').trim())
+        .filter(line => line.length > 0);
+    }
+    
+    return [];
+  }, []);
+
+  // Export journal entry to PDF
+  const exportToPdf = async () => {
+    if (!entry) return;
+    
+    try {
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(18);
+      doc.setTextColor(0, 0, 150);
+      doc.text('Journal Entry', 14, 20);
+      
+      // Add date and mood
+      doc.setFontSize(12);
+      doc.setTextColor(0, 0, 0);
+      doc.text(`Date: ${formattedDate}`, 14, 30);
+      
+      if (entry.title) {
+        doc.text(`Title: ${entry.title}`, 14, 37);
+      }
+      
+      if (entry.mood) {
+        doc.text(`Mood: ${entry.mood}`, 14, entry.title ? 44 : 37);
+      }
+      
+      // Add content
+      doc.setFontSize(14);
+      doc.text('Journal Content:', 14, entry.title ? (entry.mood ? 54 : 47) : (entry.mood ? 47 : 40));
+      
+      // Format content for PDF
+      const contentText = entry.content.replace(/<[^>]*>/g, '');
+      const splitContent = doc.splitTextToSize(contentText, 180);
+      
+      doc.setFontSize(11);
+      doc.text(splitContent, 14, entry.title ? (entry.mood ? 62 : 55) : (entry.mood ? 55 : 48));
+      
+      // Add tomorrow's intention if available
+      if (entry.tomorrows_intention) {
+        // Calculate position based on content length
+        const contentHeight = splitContent.length * 7;
+        const intentionY = entry.title ? (entry.mood ? 62 : 55) : (entry.mood ? 55 : 48) + contentHeight + 10;
+        
+        doc.setFontSize(14);
+        doc.text("Tomorrow's Intention:", 14, intentionY);
+        
+        doc.setFontSize(11);
+        const splitIntention = doc.splitTextToSize(entry.tomorrows_intention, 180);
+        doc.text(splitIntention, 14, intentionY + 8);
+      }
+      
+      // Add footer
+      doc.setFontSize(10);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`Generated on ${new Date().toLocaleDateString()}`, 14, 285);
+      
+      // Save the PDF
+      const fileName = `journal_entry_${format(new Date(entry.created_at), 'yyyy-MM-dd')}.pdf`;
+      doc.save(fileName);
+      
+      sonnerToast.success('Journal entry exported to PDF');
+    } catch (err: any) {
+      console.error("Error exporting journal entry:", err);
+      toast({
+        title: "Error",
+        description: "Failed to export journal entry to PDF",
+        variant: "destructive",
+      });
+    }
+  };
+
   // If loading, show skeleton
   if (isLoading) {
     return (
@@ -370,45 +420,7 @@ export default function JournalEntryPage() {
     ? format(new Date(entry.created_at), "EEEE, MMMM d, yyyy")
     : "Date not available";
   
-  // Extract potential gratitude items from content
-  const extractGratitudeItems = (content: string): string[] => {
-    // Simple extraction - look for lists or lines that might be gratitude items
-    const textContent = content.replace(/<[^>]*>/g, '');
-    const lines = textContent.split(/\n|\./).filter(line => 
-      line.trim().length > 0 && 
-      (line.toLowerCase().includes('grateful') || 
-       line.toLowerCase().includes('thankful') ||
-       line.toLowerCase().includes('appreciate') ||
-       line.toLowerCase().includes('blessing'))
-    );
-    
-    // If we found potential gratitude items, return them
-    if (lines.length > 0) {
-      return lines.map(line => line.trim());
-    }
-    
-    // Otherwise, check for bullet points or numbered lists
-    const listItems = textContent.split(/•|-|\d+\./).filter(item => 
-      item.trim().length > 0 && item.trim().length < 100
-    );
-    
-    // Return up to 3 items that might be gratitude items
-    return listItems.slice(0, 3).map(item => item.trim());
-  };
-  
-  const gratitudeItems = extractGratitudeItems(entry.content);
-
-  // Format content for display - remove HTML tags for simple display
-  const formatContent = (content: string): string => {
-    // Remove HTML tags and convert to plain text
-    const textContent = content.replace(/<[^>]*>/g, '');
-    
-    // Split into paragraphs
-    const paragraphs = textContent.split(/\n\n|\r\n\r\n/).filter(p => p.trim().length > 0);
-    
-    // Return first few paragraphs
-    return paragraphs.join('\n\n');
-  };
+  const gratitudeItems = entry ? extractGratitudeItems(entry.content) : [];
 
   return (
     <DashboardLayout>
@@ -423,9 +435,9 @@ export default function JournalEntryPage() {
               <Star className={`mr-2 h-4 w-4 ${isFavorite ? 'text-yellow-400 fill-current' : ''}`} />
               {isFavorite ? 'Remove from Favorites' : 'Add to Favorites'}
             </Button>
-            <Button variant="outline" onClick={handleEdit}>
-              <Edit className="mr-2 h-4 w-4" />
-              Edit
+            <Button variant="outline" onClick={exportToPdf}>
+              <FileDown className="mr-2 h-4 w-4" />
+              Export PDF
             </Button>
             <Button variant="destructive" onClick={handleDelete}>
               <Trash2 className="mr-2 h-4 w-4" />
@@ -438,10 +450,13 @@ export default function JournalEntryPage() {
           <div className="p-6 sm:p-8">
             {/* Header with date and mood */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-              <h1 className="text-2xl sm:text-3xl font-bold text-blue-600 mb-2 sm:mb-0">{formattedDate}</h1>
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold text-blue-600 mb-2">{entry.title || "Journal Entry"}</h1>
+                <p className="text-slate-500 text-sm">{formattedDate}</p>
+              </div>
               
               {entry.mood && (
-                <Badge className="px-4 py-1.5 rounded-full text-sm font-medium" variant="secondary">
+                <Badge className={`px-4 py-1.5 rounded-full text-sm font-medium ${getMoodColor(entry.mood)}`}>
                   Feeling {entry.mood}
                 </Badge>
               )}
@@ -457,7 +472,7 @@ export default function JournalEntryPage() {
                 ))}
               </div>
               
-              {/* Gratitude section - if we can extract gratitude items */}
+              {/* Gratitude section - only if explicitly written */}
               {gratitudeItems.length > 0 && (
                 <div className="bg-blue-50 p-5 rounded-lg border-l-4 border-blue-300 mt-6">
                   <h3 className="font-medium text-blue-800 mb-3 text-lg">Things I'm grateful for today:</h3>

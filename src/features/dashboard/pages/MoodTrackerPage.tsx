@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
 import { AuthContext } from "@/contexts/authContext";
 import { toast } from "sonner";
 import MoodAnalytics from "../components/MoodAnalytics";
@@ -36,13 +35,12 @@ import {
 
 // Import our custom dashboard mood assessment component
 import DashboardMoodAssessment from "../components/DashboardMoodAssessment";
+import { useAuth } from "@/contexts/authContext";
 
 export default function MoodTrackerPage() {
   const navigate = useNavigate();
-  const { user } = useContext(AuthContext);
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("check-in");
-  const [journalNote, setJournalNote] = useState("");
-  const [isSavingNote, setIsSavingNote] = useState(false);
   const [timeRange, setTimeRange] = useState<'week' | 'month' | 'year'>('week');
   
   // Flag to indicate if we're in test mode (no actual DB connections)
@@ -92,22 +90,6 @@ export default function MoodTrackerPage() {
     };
   }, []);
 
-  const handleSaveJournalNote = async () => {
-    if (!user?.id || !journalNote.trim()) return;
-    
-    try {
-      setIsSavingNote(true);
-      toast.success("Journal note saved successfully");
-      setJournalNote("");
-      navigate("/patient-dashboard/journal");
-    } catch (error) {
-      console.error('Error saving journal note:', error);
-      toast.error("Failed to save journal note");
-    } finally {
-      setIsSavingNote(false);
-    }
-  };
-
   const handleShareWithMentor = () => {
     toast.success("Mood analytics shared with your mentor");
   };
@@ -149,10 +131,9 @@ export default function MoodTrackerPage() {
         </div>
 
         <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full md:w-auto grid-cols-3">
+          <TabsList className="grid w-full md:w-auto grid-cols-2">
             <TabsTrigger value="check-in">Daily Check-in</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
-            <TabsTrigger value="journal">Mood Journal</TabsTrigger>
           </TabsList>
           
           {/* Daily Check-in Tab - Using our DashboardMoodAssessment component */}
@@ -381,94 +362,6 @@ export default function MoodTrackerPage() {
                   </div>
                   <div className="mt-4 text-sm text-slate-500">
                     <p>Most significant mood influencers based on your check-ins</p>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-          
-          {/* Mood Journal Tab */}
-          <TabsContent value="journal" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Mood Journal</CardTitle>
-                <CardDescription>Reflect on your emotional state today</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  placeholder="How are you feeling today? What factors might be contributing to your mood?"
-                  className="min-h-[200px]"
-                  value={journalNote}
-                  onChange={(e) => setJournalNote(e.target.value)}
-                />
-              </CardContent>
-              <CardFooter className="flex justify-between">
-                <Button variant="outline" onClick={() => navigate("/patient-dashboard/journal")}>
-                  View Journal History
-                </Button>
-                <Button 
-                  onClick={handleSaveJournalNote} 
-                  disabled={isSavingNote || !journalNote.trim()}
-                >
-                  {isSavingNote ? "Saving..." : "Save Entry"}
-                </Button>
-              </CardFooter>
-            </Card>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Journal Prompts</CardTitle>
-                  <CardDescription>Ideas to inspire your reflection</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="bg-blue-50 p-3 rounded-md">
-                    <p className="font-medium mb-1">What made you smile today?</p>
-                    <p className="text-sm text-slate-600">Recall moments that brought you joy, no matter how small.</p>
-                  </div>
-                  <div className="bg-purple-50 p-3 rounded-md">
-                    <p className="font-medium mb-1">What challenged you today?</p>
-                    <p className="text-sm text-slate-600">Reflect on difficulties and how you responded to them.</p>
-                  </div>
-                  <div className="bg-amber-50 p-3 rounded-md">
-                    <p className="font-medium mb-1">What are you grateful for?</p>
-                    <p className="text-sm text-slate-600">List three things you appreciate in your life right now.</p>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Journal Benefits</CardTitle>
-                  <CardDescription>Why tracking your mood matters</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-start gap-3">
-                    <div className="bg-green-100 p-2 rounded-full">
-                      <Heart className="h-5 w-5 text-green-600" />
-                    </div>
-                    <div>
-                      <h4 className="font-medium">Emotional Awareness</h4>
-                      <p className="text-sm text-slate-600">Regular journaling helps you recognize patterns in your emotions.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <div className="bg-blue-100 p-2 rounded-full">
-                      <Activity className="h-5 w-5 text-blue-600" />
-                    </div>
-                    <div>
-                      <h4 className="font-medium">Stress Reduction</h4>
-                      <p className="text-sm text-slate-600">Writing about your feelings can help reduce stress and anxiety.</p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <div className="bg-purple-100 p-2 rounded-full">
-                      <BarChart className="h-5 w-5 text-purple-600" />
-                    </div>
-                    <div>
-                      <h4 className="font-medium">Track Progress</h4>
-                      <p className="text-sm text-slate-600">Observe how your emotional health changes over time.</p>
-                    </div>
                   </div>
                 </CardContent>
               </Card>

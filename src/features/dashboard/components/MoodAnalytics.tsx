@@ -1,8 +1,8 @@
 import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
-import { useEffect, useState, useContext } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 // Supabase import removed
-import { AuthContext } from "@/contexts/authContext";
+import { useAuth } from "@/contexts/authContext";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, subDays, parseISO, isAfter, startOfDay, differenceInDays } from 'date-fns';
 import { Skeleton } from "@/components/ui/skeleton";
@@ -61,7 +61,7 @@ interface MoodAnalyticsProps {
 }
 
 export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps) {
-  const { user } = useContext(AuthContext);
+  const { user } = useAuth();
   const [moodData, setMoodData] = useState<MoodEntry[]>([]);
   const [filteredData, setFilteredData] = useState<MoodEntry[]>([]);
   const [moodStats, setMoodStats] = useState<MoodStats | null>(null);
@@ -75,29 +75,10 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
         
         console.log('MoodAnalytics: Fetching mood data...');
         
-        // Check sessionStorage first for recent assessments 
-        let hasRecentAssessment = false;
-        try {
-          const lastAssessmentStr = sessionStorage.getItem('last_mood_assessment');
-          if (lastAssessmentStr) {
-            const lastAssessment = JSON.parse(lastAssessmentStr);
-            const saveTime = new Date(lastAssessment.saveTime || lastAssessment.timestamp);
-            const now = new Date();
-            const timeDiff = now.getTime() - saveTime.getTime();
-            
-            // If assessment was saved in the last 30 seconds
-            if (timeDiff < 30000) {
-              console.log('MoodAnalytics: Recent mood assessment found in storage');
-              hasRecentAssessment = true;
-            }
-          }
-        } catch (error) {
-          console.error('Error checking for recent assessments:', error);
-        }
-        
         if (!user) {
           console.log('No user found, returning empty data');
           setIsLoading(false);
+          setHasData(false);
           return;
         }
         
@@ -118,13 +99,16 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
         
         const startDate = getDateRange();
         
+        console.log(`Fetching mood entries since: ${startDate.toISOString()}`);
+        console.log(`User ID: ${user.id}`);
+        
         // Fetch mood entries for the selected time period
         const { data: moodEntries, error } = await supabase
           .from('mood_entries')
           .select('*')
           .eq('user_id', user.id)
           .gte('created_at', startDate.toISOString())
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: true });
         
         if (error) {
           console.error('Error fetching mood entries:', error);
@@ -133,16 +117,24 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
           return;
         }
         
+        console.log(`Retrieved ${moodEntries?.length || 0} mood entries`);
+        
         if (moodEntries && moodEntries.length > 0) {
           setHasData(true);
           // Process data for chart
-          const processedData = moodEntries.map((entry: MoodEntryBase) => ({
-            ...entry,
+          const processedData = moodEntries.map((entry: any) => ({
+            id: entry.id,
+            created_at: entry.created_at,
+            mood_score: entry.mood || entry.mood_score,
+            assessment_result: entry.assessment_result || entry.mood_type,
+            user_id: entry.user_id,
             date: format(parseISO(entry.created_at), 'MMM dd'),
-            value: entry.mood_score,
+            value: entry.mood || entry.mood_score,
             rawDate: entry.created_at,
-            mood: entry.assessment_result || 'Unknown'
+            mood: entry.assessment_result || entry.mood_type || 'Unknown'
           }));
+          
+          console.log('Processed mood data:', processedData);
           
           setMoodData(processedData);
           setFilteredData(processedData);
@@ -152,6 +144,7 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
           setMoodStats(stats);
         } else {
           // No data available
+          console.log('No mood entries found');
           setHasData(false);
           setMoodData([]);
           setFilteredData([]);
@@ -278,9 +271,9 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
 
   // Format chart data with consistent date formatting
   const chartData = filteredData.map(entry => ({
-    date: format(parseISO(entry.rawDate), 'MMM dd'),
+    date: format(parseISO(entry.rawDate || new Date().toISOString()), 'MMM dd'),
     value: entry.value,
-    mood: entry.mood
+    mood: entry.mood || 'Unknown'
   }));
   
   // Export to PDF function
@@ -309,7 +302,7 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
         doc.text(`Total Assessments: ${moodStats.totalAssessments}`, 16, 66);
         doc.text(`Most Frequent Mood: ${moodStats.mostFrequentMood}`, 16, 72);
         doc.text(`Recent Trend: ${moodStats.recentTrend.charAt(0).toUpperCase() + moodStats.recentTrend.slice(1)}`, 16, 78);
-        doc.text(`Last Updated: ${format(parseISO(moodStats.lastUpdated), 'MMM dd, yyyy')}`, 16, 84);
+        doc.text(`Last Updated: ${format(parseISO(moodStats.lastUpdated || new Date().toISOString()), 'MMM dd, yyyy')}`, 16, 84);
       }
       
       // Add mood data table
@@ -318,9 +311,9 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
         doc.text('Mood History', 14, 100);
         
         const tableRows = filteredData.map(entry => [
-          format(parseISO(entry.rawDate), 'MMM dd, yyyy'),
+          format(parseISO(entry.rawDate || new Date().toISOString()), 'MMM dd, yyyy'),
           entry.value?.toFixed(1) + '/10',
-          entry.mood
+          entry.mood || 'Unknown'
         ]);
         
         (doc as any).autoTable({
@@ -364,9 +357,9 @@ export default function MoodAnalytics({ timeRange = 'week' }: MoodAnalyticsProps
       // Create CSV content
       const headers = ['Date', 'Mood Score', 'Mood'];
       const rows = filteredData.map(entry => [
-        format(parseISO(entry.rawDate), 'yyyy-MM-dd'),
+        format(parseISO(entry.rawDate || new Date().toISOString()), 'yyyy-MM-dd'),
         entry.value?.toString() || '',
-        entry.mood
+        entry.mood || 'Unknown'
       ]);
       
       const csvContent = [

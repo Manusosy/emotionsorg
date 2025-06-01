@@ -130,9 +130,11 @@ export default function StressAssessmentModal({ open, onOpenChange }: StressAsse
         // Dispatch custom event for dashboard to refresh
         window.dispatchEvent(new CustomEvent('dashboard-reload-needed'));
         
-        if (isMountedRef.current) { // Check before calling onOpenChange if it might cause unmount
-          onOpenChange(false); 
-        }
+        // Close the dialog immediately after successful save
+        onOpenChange(false);
+        
+        // No need to check isMountedRef here since we're closing the dialog
+        return; // Early return to avoid the finally block setting isSubmitting to false
       }
     } catch (error) {
       // This catch block is now more for unexpected errors during the try, 

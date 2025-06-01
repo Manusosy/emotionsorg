@@ -285,23 +285,60 @@ const JournalEditor = ({
         is_shared: false,
         tags: [],
         tomorrows_intention: tomorrowsIntention,
-        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
       
+      // Check if we already have an entry from today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const { data: existingEntries, error: fetchError } = await supabase
+        .from('journal_entries')
+        .select('id, created_at')
+        .eq('user_id', user.id)
+        .gte('created_at', today.toISOString())
+        .order('created_at', { ascending: false });
+      
+      if (fetchError) {
+        console.error("Error checking for existing entries:", fetchError);
+        throw fetchError;
+      }
+      
       try {
-        const { data, error } = await supabase
-          .from('journal_entries')
-          .insert(entryData)
-          .select();
-
-        if (error) throw error;
+        let result;
+        
+        if (existingEntries && existingEntries.length > 0) {
+          // Update the most recent entry from today
+          const mostRecentEntry = existingEntries[0];
+          
+          result = await supabase
+            .from('journal_entries')
+            .update(entryData)
+            .eq('id', mostRecentEntry.id)
+            .select();
+            
+          toast({
+            title: "Entry updated",
+            description: "Your journal entry has been updated successfully.",
+          });
+        } else {
+          // Create a new entry if none exists for today
+          entryData.created_at = new Date().toISOString(); // Only set created_at for new entries
+          
+          result = await supabase
+            .from('journal_entries')
+            .insert(entryData)
+            .select();
+            
+          toast({
+            title: "Entry saved",
+            description: "Your journal entry has been saved successfully.",
+          });
+        }
+        
+        if (result.error) throw result.error;
         
         setLastSaved(new Date());
-        toast({
-          title: "Entry saved",
-          description: "Your journal entry has been saved successfully.",
-        });
         
         // If the user is not on dashboard, suggest viewing in dashboard
         if (!window.location.pathname.includes('dashboard')) {

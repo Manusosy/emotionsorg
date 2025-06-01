@@ -1,13 +1,29 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   BookOpen,
   Calendar,
@@ -16,7 +32,11 @@ import {
   Star,
   Goal,
   PenTool,
-  Loader2
+  Loader2,
+  MoreVertical,
+  Trash,
+  Share2,
+  Copy
 } from "lucide-react";
 import { useAuth } from "@/contexts/authContext";
 import { supabase } from "@/lib/supabase";
@@ -47,6 +67,11 @@ export default function JournalPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('entries');
   const [journalStats, setJournalStats] = useState<any>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [currentEntry, setCurrentEntry] = useState<JournalEntry | null>(null);
+  const [isGeneratingShareCode, setIsGeneratingShareCode] = useState(false);
+  const [shareCode, setShareCode] = useState<string | null>(null);
 
   // Fetch journal entries and favorites
   useEffect(() => {
@@ -302,6 +327,250 @@ export default function JournalPage() {
     return favoriteEntries.some(entry => entry.id === entryId);
   };
 
+  // Handle delete journal entry
+  const handleDeleteEntry = async (entryId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent navigating to entry detail
+    
+    if (!user?.id) {
+      toast.error("You must be logged in to delete entries");
+      return;
+    }
+
+    // Find the entry to delete
+    const entryToDelete = journalEntries.find(entry => entry.id === entryId);
+    if (entryToDelete) {
+      setCurrentEntry(entryToDelete);
+      setDeleteDialogOpen(true);
+    }
+  };
+
+  // Handle share journal entry
+  const handleShareEntry = async (entryId: string, event: React.MouseEvent) => {
+    event.stopPropagation(); // Prevent navigating to entry detail
+    
+    if (!user?.id) {
+      toast.error("You must be logged in to share entries");
+      return;
+    }
+
+    // Find the entry to share
+    const entryToShare = journalEntries.find(entry => entry.id === entryId);
+    if (entryToShare) {
+      setCurrentEntry(entryToShare);
+      setShareCode(entryToShare.share_code || null);
+      setShareDialogOpen(true);
+    }
+  };
+
+  // Generate share code for journal entry
+  const generateShareCode = async () => {
+    if (!currentEntry || !user?.id) return;
+
+    try {
+      setIsGeneratingShareCode(true);
+      
+      // Generate a random share code
+      const randomCode = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+      
+      // Update the journal entry with the share code
+      const { error } = await supabase
+        .from('journal_entries')
+        .update({ 
+          share_code: randomCode,
+          is_shared: true
+        })
+        .eq('id', currentEntry.id)
+        .eq('user_id', user.id);
+      
+      if (error) {
+        console.error('Error generating share code:', error);
+        toast.error('Failed to generate share code');
+        return;
+      }
+      
+      // Update UI
+      setShareCode(randomCode);
+      
+      // Update the entry in the lists
+      const updatedEntry = { ...currentEntry, share_code: randomCode, is_shared: true };
+      setCurrentEntry(updatedEntry);
+      
+      setJournalEntries(journalEntries.map(entry => 
+        entry.id === currentEntry.id ? updatedEntry : entry
+      ));
+      
+      setFilteredEntries(filteredEntries.map(entry => 
+        entry.id === currentEntry.id ? updatedEntry : entry
+      ));
+      
+      if (favoriteEntries.some(entry => entry.id === currentEntry.id)) {
+        setFavoriteEntries(favoriteEntries.map(entry => 
+          entry.id === currentEntry.id ? updatedEntry : entry
+        ));
+      }
+      
+      toast.success('Share code generated successfully');
+    } catch (error) {
+      console.error('Error generating share code:', error);
+      toast.error('Failed to generate share code');
+    } finally {
+      setIsGeneratingShareCode(false);
+    }
+  };
+
+  // Copy share link to clipboard
+  const copyShareLink = () => {
+    if (!shareCode) return;
+    
+    const shareLink = `${window.location.origin}/journal/shared/${shareCode}`;
+    navigator.clipboard.writeText(shareLink).then(() => {
+      toast.success("Share link copied to clipboard");
+    }).catch(() => {
+      toast.error("Failed to copy share link");
+    });
+  };
+
+  // Confirm delete journal entry
+  const confirmDeleteEntry = async () => {
+    if (!currentEntry || !user?.id) return;
+
+    try {
+      // Delete from favorites first if it exists
+      const { error: favError } = await supabase
+        .from('journal_favorites')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('journal_entry_id', currentEntry.id);
+      
+      if (favError) {
+        console.error('Error removing from favorites:', favError);
+      }
+
+      // Delete the journal entry
+      const { error } = await supabase
+        .from('journal_entries')
+        .delete()
+        .eq('id', currentEntry.id)
+        .eq('user_id', user.id);
+      
+      if (error) {
+        console.error('Error deleting journal entry:', error);
+        toast.error('Failed to delete journal entry');
+        return;
+      }
+      
+      // Update UI
+      setJournalEntries(journalEntries.filter(entry => entry.id !== currentEntry.id));
+      setFilteredEntries(filteredEntries.filter(entry => entry.id !== currentEntry.id));
+      setFavoriteEntries(favoriteEntries.filter(entry => entry.id !== currentEntry.id));
+      
+      toast.success('Journal entry deleted successfully');
+      setDeleteDialogOpen(false);
+    } catch (error) {
+      console.error('Error deleting journal entry:', error);
+      toast.error('Failed to delete journal entry');
+    }
+  };
+
+  // Modify the card to include dropdown menu with delete and share options
+  const renderJournalCard = (entry: JournalEntry) => (
+    <Card 
+      key={entry.id} 
+      className="hover:shadow-md transition"
+    >
+      <CardHeader>
+        <div className="flex justify-between items-start mb-2">
+          <CardTitle 
+            className="text-lg cursor-pointer" 
+            onClick={() => handleViewEntryClick(entry.id)}
+          >
+            {entry.title || "Untitled Entry"}
+          </CardTitle>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={(e) => toggleFavorite(entry.id, e)}
+              className="focus:outline-none"
+            >
+              <Star 
+                className={`h-4 w-4 ${isEntryFavorite(entry.id) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} 
+              />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-8 w-8 p-0">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={(e) => handleShareEntry(entry.id, e)}>
+                  <Share2 className="mr-2 h-4 w-4" />
+                  <span>Share</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={(e) => handleDeleteEntry(entry.id, e)}
+                  className="text-red-600"
+                >
+                  <Trash className="mr-2 h-4 w-4" />
+                  <span>Delete</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+        <CardDescription 
+          className="flex items-center gap-2 cursor-pointer"
+          onClick={() => handleViewEntryClick(entry.id)}
+        >
+          <Calendar className="h-4 w-4" />
+          {formatDate(entry.created_at)}
+        </CardDescription>
+      </CardHeader>
+      <CardContent 
+        className="cursor-pointer"
+        onClick={() => handleViewEntryClick(entry.id)}
+      >
+        <p className="text-sm text-slate-600 mb-3">
+          {formatPreview(entry.content)}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {entry.mood && (
+            <Badge variant="secondary" className={getMoodColor(entry.mood)}>
+              {entry.mood}
+            </Badge>
+          )}
+          {entry.tags?.map(tag => (
+            <Badge key={tag} variant="outline">
+              {tag}
+            </Badge>
+          ))}
+        </div>
+      </CardContent>
+      {entry.is_shared && entry.share_code && (
+        <CardFooter className="pt-2 pb-3 px-6">
+          <div className="w-full flex items-center justify-between">
+            <span className="text-xs text-muted-foreground flex items-center">
+              <Share2 className="h-3 w-3 mr-1" />
+              Shared
+            </span>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="h-6 text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                setCurrentEntry(entry);
+                setShareCode(entry.share_code || null);
+                setShareDialogOpen(true);
+              }}
+            >
+              View Link
+            </Button>
+          </div>
+        </CardFooter>
+      )}
+    </Card>
+  );
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -356,48 +625,7 @@ export default function JournalPage() {
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredEntries.map(entry => (
-                  <Card 
-                    key={entry.id} 
-                    className="hover:shadow-md transition cursor-pointer"
-                    onClick={() => handleViewEntryClick(entry.id)}
-                  >
-                    <CardHeader>
-                      <div className="flex justify-between items-start mb-2">
-                        <CardTitle className="text-lg">{entry.title || "Untitled Entry"}</CardTitle>
-                        <button 
-                          onClick={(e) => toggleFavorite(entry.id, e)}
-                          className="focus:outline-none"
-                        >
-                          <Star 
-                            className={`h-4 w-4 ${isEntryFavorite(entry.id) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} 
-                          />
-                        </button>
-                      </div>
-                      <CardDescription className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4" />
-                        {formatDate(entry.created_at)}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-slate-600 mb-3">
-                        {formatPreview(entry.content)}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {entry.mood && (
-                          <Badge variant="secondary" className={getMoodColor(entry.mood)}>
-                            {entry.mood}
-                          </Badge>
-                        )}
-                        {entry.tags?.map(tag => (
-                          <Badge key={tag} variant="outline">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                {filteredEntries.map(entry => renderJournalCard(entry))}
               </div>
             )}
           </TabsContent>
@@ -421,46 +649,7 @@ export default function JournalPage() {
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {favoriteEntries.map(entry => (
-                  <Card 
-                    key={entry.id} 
-                    className="hover:shadow-md transition cursor-pointer"
-                    onClick={() => handleViewEntryClick(entry.id)}
-                  >
-                    <CardHeader>
-                      <div className="flex justify-between items-start mb-2">
-                        <CardTitle className="text-lg">{entry.title || "Untitled Entry"}</CardTitle>
-                        <button 
-                          onClick={(e) => toggleFavorite(entry.id, e)}
-                          className="focus:outline-none"
-                        >
-                          <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                        </button>
-                      </div>
-                      <CardDescription className="flex items-center gap-2">
-                        <Calendar className="h-4 w-4" />
-                        {formatDate(entry.created_at)}
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-slate-600 mb-3">
-                        {formatPreview(entry.content)}
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {entry.mood && (
-                          <Badge variant="secondary" className={getMoodColor(entry.mood)}>
-                            {entry.mood}
-                          </Badge>
-                        )}
-                        {entry.tags?.map(tag => (
-                          <Badge key={tag} variant="outline">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                {favoriteEntries.map(entry => renderJournalCard(entry))}
               </div>
             )}
           </TabsContent>
@@ -528,13 +717,13 @@ export default function JournalPage() {
                       <div className="pt-4">
                         <h4 className="text-sm font-medium mb-3">Recent moods</h4>
                         <div className="flex flex-wrap gap-2">
-                          {journalEntries.slice(0, 5).map(entry => (
+                          {journalEntries.slice(0, 5).map(entry => 
                             entry.mood && (
                               <Badge key={entry.id} variant="secondary" className={getMoodColor(entry.mood)}>
                                 {entry.mood}
                               </Badge>
                             )
-                          ))}
+                          )}
                         </div>
                       </div>
                     </div>
@@ -545,6 +734,81 @@ export default function JournalPage() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Journal Entry</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this journal entry? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmDeleteEntry}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Share Dialog */}
+      <AlertDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Share Journal Entry</AlertDialogTitle>
+            <AlertDialogDescription>
+              {currentEntry && (
+                <div className="text-sm text-muted-foreground mt-2">
+                  <p><strong>Title:</strong> {currentEntry.title || "Untitled Entry"}</p>
+                  <p><strong>Date:</strong> {formatDate(currentEntry.created_at)}</p>
+                </div>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="py-4">
+            {shareCode ? (
+              <div className="space-y-2">
+                <h3 className="font-medium text-sm">Share Link</h3>
+                <div className="flex gap-2">
+                  <Input 
+                    readOnly 
+                    value={`${window.location.origin}/journal/shared/${shareCode}`}
+                    className="text-sm"
+                  />
+                  <Button onClick={copyShareLink} size="sm">
+                    <Copy className="w-4 h-4 mr-2" />
+                    Copy
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Anyone with this link can view this journal entry
+                </p>
+              </div>
+            ) : (
+              <div>
+                <Button 
+                  onClick={generateShareCode}
+                  disabled={isGeneratingShareCode}
+                  className="w-full"
+                >
+                  {isGeneratingShareCode && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Generate Share Link
+                </Button>
+              </div>
+            )}
+          </div>
+          
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 } 
