@@ -92,12 +92,24 @@ export interface Resource {
   id: string;
   title: string;
   description: string;
+  type: 'article' | 'video' | 'podcast' | 'document' | 'group' | 'workshop' | 'image' | 'link';
   url: string;
-  image_url?: string;
+  file_url?: string;
+  thumbnail_url?: string;
   category: string;
   tags?: string[];
+  author?: string;
+  author_role?: string;
+  author_avatar?: string;
+  date?: string;
+  read_time?: string;
+  duration?: string;
+  featured?: boolean;
+  downloads?: number;
+  shares?: number;
+  mood_mentor_id?: string;
   created_at: string;
-  created_by?: string;
+  updated_at?: string;
 }
 
 export interface Notification {

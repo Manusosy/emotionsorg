@@ -16,17 +16,127 @@ export default class SupabaseMessagingService implements MessagingService {
     appointmentId?: string
   ): Promise<ServiceResponse<string>> {
     try {
-      // Call the database function to get or create a conversation
-      const { data, error } = await supabase
-        .rpc('get_or_create_conversation', { 
-          user1_id: user1Id, 
-          user2_id: user2Id,
-          appointment_id: appointmentId || null
-        });
-
-      if (error) throw error;
+      // First check if the conversations table exists
+      const { error: tableCheckError } = await supabase
+        .from('conversations')
+        .select('id')
+        .limit(1)
+        .maybeSingle();
+        
+      // If the conversations table doesn't exist, try to use direct messaging
+      if (tableCheckError && tableCheckError.message && 
+          tableCheckError.message.includes('relation "conversations" does not exist')) {
+        console.log('Conversations table does not exist, using direct messaging fallback');
+        
+        // For direct messaging, we can create a deterministic conversation ID
+        const conversationId = [user1Id, user2Id].sort().join('_');
+        
+        // Try to send a system message to initialize the conversation
+        const { error: msgError } = await supabase
+          .from('messages')
+          .insert({
+            sender_id: user1Id,
+            recipient_id: user2Id,
+            content: 'Conversation started',
+            read: false,
+            created_at: new Date().toISOString()
+          });
+          
+        if (msgError) {
+          // If direct messaging fails too, we're out of options
+          if (msgError.message && msgError.message.includes('relation "messages" does not exist')) {
+            return { error: 'Messaging system is not yet initialized.' };
+          }
+          throw msgError;
+        }
+        
+        return { data: conversationId };
+      }
       
-      return { data };
+      // Try to use the RPC function first
+      try {
+        const { data, error } = await supabase
+          .rpc('get_or_create_conversation', { 
+            user1_id: user1Id, 
+            user2_id: user2Id,
+            appointment_id: appointmentId || null
+          });
+
+        if (!error && data) {
+          return { data };
+        }
+        
+        // If RPC fails but not because it doesn't exist, throw the error
+        if (error && !error.message.includes('function get_or_create_conversation() does not exist')) {
+          throw error;
+        }
+        
+        // If we get here, the RPC function doesn't exist, so use manual creation
+        console.log('RPC function does not exist, falling back to manual conversation creation');
+      } catch (rpcError) {
+        console.log('RPC call failed, falling back to manual conversation creation', rpcError);
+        // Continue to manual conversation creation
+      }
+      
+      // Manual conversation creation process
+      // 1. Check if a conversation already exists between these users
+      const { data: existingConversations, error: findError } = await supabase
+        .from('conversations')
+        .select('id')
+        .eq('appointment_id', appointmentId || null);
+        
+      if (findError) throw findError;
+      
+      if (existingConversations && existingConversations.length > 0) {
+        // Find a conversation where both users are participants
+        for (const conversation of existingConversations) {
+          const { data: participants, error: participantsError } = await supabase
+            .from('conversation_participants')
+            .select('user_id')
+            .eq('conversation_id', conversation.id);
+            
+          if (participantsError) continue;
+          
+          const participantIds = participants.map(p => p.user_id);
+          if (participantIds.includes(user1Id) && participantIds.includes(user2Id)) {
+            return { data: conversation.id };
+          }
+        }
+      }
+      
+      // 2. If no existing conversation, create a new one
+      const { data: newConversation, error: createError } = await supabase
+        .from('conversations')
+        .insert({
+          appointment_id: appointmentId || null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          last_message_at: new Date().toISOString()
+        })
+        .select('id')
+        .single();
+        
+      if (createError) throw createError;
+      
+      // 3. Add both users as participants
+      const { error: addParticipantsError } = await supabase
+        .from('conversation_participants')
+        .insert([
+          {
+            conversation_id: newConversation.id,
+            user_id: user1Id,
+            joined_at: new Date().toISOString()
+          },
+          {
+            conversation_id: newConversation.id,
+            user_id: user2Id,
+            joined_at: new Date().toISOString()
+          }
+        ]);
+        
+      if (addParticipantsError) throw addParticipantsError;
+      
+      return { data: newConversation.id };
     } catch (error: any) {
       console.error('Error getting or creating conversation:', error);
       return { error: error.message || 'Failed to get or create conversation' };

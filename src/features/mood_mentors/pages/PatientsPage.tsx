@@ -1,5 +1,4 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
-import React, { useState, useEffect, useContext } from "react";
+import React, { useState, useEffect } from "react";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import {
   Table,
@@ -9,509 +8,262 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Search,
-  UserPlus,
-  Users,
-  Eye,
-  MoreVertical,
-  MapPin,
-  MessageCircle,
-  UserPlus2,
-} from "lucide-react";
-import { AuthContext } from "@/contexts/authContext";
-import { toast } from "sonner";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { format, differenceInHours } from "date-fns";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useNavigate } from "react-router-dom";
+import { RefreshCcw, MessageSquare, Eye } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Link } from "react-router-dom";
 
+// Interface matching the patient_profiles table
 interface PatientProfile {
   id: string;
-  first_name: string;
-  last_name: string;
+  user_id: string;
+  full_name: string;
   email: string;
-  phone_number: string;
-  date_of_birth: string;
-  country: string;
-  city: string;
-  state: string;
-  avatar_url?: string;
   created_at: string;
 }
 
-interface SupportGroup {
-  id: string;
-  name: string;
-  mood_mentor_id: string;
-  description: string;
-  created_at: string;
-}
+// Helper function to get initials from a name
+const getInitials = (name: string) => {
+  return name
+    .split(' ')
+    .map(part => part[0])
+    .join('')
+    .toUpperCase()
+    .substring(0, 2);
+};
+
+// Helper function to mask email for privacy
+const maskEmail = (email: string) => {
+  const [username, domain] = email.split('@');
+  if (username.length <= 2) return email; // Don't mask very short usernames
+  
+  const maskedUsername = username.substring(0, 2) + '•••••';
+  return `${maskedUsername}@${domain}`;
+};
 
 export default function PatientsPage() {
-  const { user } = useContext(AuthContext);
-  const navigate = useNavigate();
   const [patients, setPatients] = useState<PatientProfile[]>([]);
-  const [supportGroups, setSupportGroups] = useState<SupportGroup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedPatient, setSelectedPatient] = useState<PatientProfile | null>(null);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-  const [selectedGroup, setSelectedGroup] = useState<string>("");
-
-  useEffect(() => {
-    // Fetch patients first
-    fetchPatients();
-    
-    // Then fetch support groups
-    if (user?.id) {
-      fetchSupportGroups();
-    }
-
-    // Set up listener for patient updates
-    const patientListener = patientService.subscribeToPatientUpdates(() => {
-      fetchPatients(); // Refresh the patients list when changes occur
-    });
-
-    return () => {
-      // Clean up listener
-      if (patientListener && typeof patientListener === 'function') {
-        patientListener();
-      }
-    };
-  }, [user?.id]);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchPatients = async () => {
     try {
       setIsLoading(true);
-      console.log('Starting patient fetch...');
-
-      // First check network connectivity
-      const isNetworkOnline = navigator.onLine;
-      if (!isNetworkOnline) {
-        console.error('Device is offline');
-        toast.error("Network connection unavailable. Please check your internet connection.");
-        setIsLoading(false);
-        setPatients([]);
-        return;
-      }
-
-      // Option 1: Fetch from patient_profiles table directly using Supabase
-      const { data, error } = await supabase
-        .from('patient_profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (error) {
-        console.error('Error fetching patients from database:', error);
-        toast.error("Failed to fetch patients");
-        setPatients([]);
-      } else if (data && data.length > 0) {
-        console.log(`Found ${data.length} patients`);
-        setPatients(data);
-      } else {
-        // Option 2: Fall back to the patient service if no results
-        const patientData = await patientService.getAllPatients();
+      setError(null);
+      
+      console.log("Starting patient fetch process...");
+      
+      // Query the patient_profiles table
+      const { data: patientProfiles, error: profilesError } = await supabase
+        .from("patient_profiles")
+        .select("*");
         
-        if (patientData && patientData.length > 0) {
-          console.log(`Found ${patientData.length} patients from service`);
-          setPatients(patientData);
-        } else {
-          console.log('No patients found');
-          setPatients([]);
-          toast.info("No patients found");
+      if (profilesError) {
+        console.error("Error fetching from patient_profiles:", profilesError);
+        throw new Error(`Failed to fetch patients: ${profilesError.message}`);
+      }
+      
+      if (patientProfiles && patientProfiles.length > 0) {
+        console.log(`Found ${patientProfiles.length} patients`);
+        setPatients(patientProfiles);
+      } else {
+        console.log("No patients found in patient_profiles table");
+        
+        // Try to fetch patients from auth.users via RLS policy
+        const { data: authUsers, error: authError } = await supabase
+          .rpc('get_patient_users');
+        
+        if (authError) {
+          console.error("Error fetching patient users:", authError);
+        } else if (authUsers && authUsers.length > 0) {
+          console.log(`Found ${authUsers.length} patients from auth users`);
+          
+          // Transform auth users to match PatientProfile interface
+          const formattedPatients: PatientProfile[] = authUsers.map((p: {
+            auth_user_id: string;
+            auth_email: string;
+            auth_role: string;
+            auth_full_name: string | null;
+            patient_profile_id: string | null;
+          }) => ({
+            id: p.patient_profile_id || p.auth_user_id,
+            user_id: p.auth_user_id,
+            full_name: p.auth_full_name || p.auth_email.split('@')[0],
+            email: p.auth_email,
+            created_at: new Date().toISOString()
+          }));
+          
+          setPatients(formattedPatients);
         }
       }
-    } catch (error) {
-      console.error('Error fetching patients:', error);
-      toast.error("Failed to fetch patients");
-      setPatients([]);
+    } catch (err) {
+      console.error("Error fetching patients:", err);
+      setError(err instanceof Error ? err.message : "Failed to fetch patients");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const fetchSupportGroups = async () => {
-    try {
-      if (!user?.id) {
-        console.error('No user ID available');
-        return;
-      }
-      
-      // Fetch support groups directly from database
-      const { data, error } = await supabase
-        .from('support_groups')
-        .select('*')
-        .eq('mood_mentor_id', user.id)
-        .order('created_at', { ascending: false });
-      
-      if (error) {
-        console.error('Error fetching support groups:', error);
-        toast.error("Failed to fetch support groups");
-        setSupportGroups([]);
-        return;
-      }
-      
-      if (data && data.length > 0) {
-        setSupportGroups(data);
-        // Set the first group as selected by default
-        if (data.length > 0 && !selectedGroup) {
-          setSelectedGroup(data[0].id);
+  const handleStartChat = (patient: PatientProfile) => {
+    // In a real app, this would navigate to a chat page or open a chat modal
+    console.log(`Starting chat with ${patient.full_name}`);
+    alert(`Chat with ${patient.full_name} would open here`);
+  };
+
+  // Set up real-time subscription to patient_profiles table
+  useEffect(() => {
+    // First fetch the initial data
+    fetchPatients();
+
+    // Set up the real-time subscription
+    const subscription = supabase
+      .channel('patient_profiles_changes')
+      .on('postgres_changes', 
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'patient_profiles' 
+        }, 
+        (payload) => {
+          console.log('Real-time INSERT received:', payload);
+          
+          // Add the new patient to the list without refetching everything
+          if (payload.new) {
+            setPatients(currentPatients => [...currentPatients, payload.new as PatientProfile]);
+          } else {
+            // If we don't have the full data, refresh the list
+            fetchPatients();
+          }
         }
-      } else {
-        setSupportGroups([]);
-      }
-    } catch (error) {
-      console.error('Error fetching support groups:', error);
-      toast.error("Failed to fetch support groups");
-      setSupportGroups([]);
-    }
-  };
+      )
+      .on('postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'patient_profiles'
+        },
+        (payload) => {
+          console.log('Real-time UPDATE received:', payload);
+          
+          // Update the patient in the list without refetching everything
+          if (payload.new && payload.new.id) {
+            setPatients(currentPatients => 
+              currentPatients.map(patient => 
+                patient.id === payload.new.id ? {...patient, ...payload.new} : patient
+              )
+            );
+          } else {
+            // If we don't have the full data, refresh the list
+            fetchPatients();
+          }
+        }
+      )
+      .on('postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'patient_profiles'
+        },
+        (payload) => {
+          console.log('Real-time DELETE received:', payload);
+          
+          // Remove the patient from the list
+          if (payload.old && payload.old.id) {
+            setPatients(currentPatients => 
+              currentPatients.filter(patient => patient.id !== payload.old.id)
+            );
+          } else {
+            // If we don't have the full data, refresh the list
+            fetchPatients();
+          }
+        }
+      )
+      .subscribe();
 
-  const addToGroup = async (patientId: string, groupId: string) => {
-    try {
-      if (!groupId || !patientId) {
-        toast.error("Missing group or patient information");
-        return;
-      }
-      
-      // Add patient to the group directly using Supabase
-      const { error } = await supabase
-        .from('group_members')
-        .insert({
-          group_id: groupId,
-          user_id: patientId,
-          added_by: user?.id,
-          status: 'active',
-          created_at: new Date().toISOString()
-        });
-      
-      if (error) {
-        console.error('Error adding patient to group:', error);
-        toast.error("Failed to add patient to group");
-        return;
-      }
-      
-      toast.success("Patient added to group successfully");
-    } catch (error) {
-      console.error('Error adding patient to group:', error);
-      toast.error("Failed to add patient to group");
-    }
-  };
-
-  const handleMessagePatient = async (patientId: string) => {
-    try {
-      if (!user?.id || !patientId) {
-        toast.error("Cannot start conversation");
-        return;
-      }
-      
-      // Get or create a conversation with this patient
-      const { data: conversationId, error } = await messageService.getOrCreateConversation(
-        patientId,
-        user.id
-      );
-      
-      if (error) {
-        console.error('Error creating conversation:', error);
-        toast.error("Failed to start conversation");
-        return;
-      }
-      
-      // Navigate to the conversation
-      navigate(`/mood-mentor-dashboard/messages/${patientId}`);
-    } catch (error) {
-      console.error('Error starting conversation:', error);
-      toast.error("Failed to start conversation");
-    }
-  };
-
-  const viewProfile = (patient: PatientProfile) => {
-    setSelectedPatient(patient);
-    setIsProfileOpen(true);
-  };
-
-  const getFullName = (patient: PatientProfile) => {
-    return `${patient.first_name} ${patient.last_name}`.trim();
-  };
-
-  const getInitials = (patient: PatientProfile) => {
-    return `${patient.first_name?.[0] || ''}${patient.last_name?.[0] || ''}`.trim() || '?';
-  };
-
-  const getAge = (dateOfBirth: string) => {
-    if (!dateOfBirth) return "N/A";
-    try {
-      const birthDate = new Date(dateOfBirth);
-      const ageDiff = new Date().getFullYear() - birthDate.getFullYear();
-      return `${ageDiff} yrs`;
-    } catch (e) {
-      return "N/A";
-    }
-  };
-
-  const isNewPatient = (createdAt: string) => {
-    if (!createdAt) return false;
-    try {
-      const created = new Date(createdAt);
-      const hoursDiff = differenceInHours(new Date(), created);
-      return hoursDiff < 48; // Consider new if added in the last 48 hours
-    } catch (e) {
-      return false;
-    }
-  };
-
-  // Filter patients based on search query
-  const filteredPatients = patients.filter(patient => {
-    const fullName = getFullName(patient).toLowerCase();
-    const email = patient.email.toLowerCase();
-    const query = searchQuery.toLowerCase();
-    
-    return fullName.includes(query) || email.includes(query);
-  });
+    // Clean up subscription on component unmount
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   return (
     <DashboardLayout>
-      <div className="p-6">
-        <div className="flex flex-col md:flex-row items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold">Patients</h1>
-            <p className="text-muted-foreground">Manage your patients and group memberships</p>
-          </div>
-          
-          <div className="flex flex-col sm:flex-row w-full md:w-auto space-y-2 sm:space-y-0 sm:space-x-2">
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-500" />
-              <Input
-                placeholder="Search patients..."
-                className="pl-8 w-full md:w-[200px]"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            
-            {supportGroups.length > 0 && (
-              <Select value={selectedGroup} onValueChange={setSelectedGroup}>
-                <SelectTrigger className="w-full md:w-[200px]">
-                  <SelectValue placeholder="Select group" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {supportGroups.map((group) => (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            )}
-            
-            <Button className="flex items-center">
-              <UserPlus className="h-4 w-4 mr-2" />
-              Add Patient
+      <div className="container mx-auto py-6">
+        <div className="flex justify-between items-center mb-6">
+          <h1 className="text-2xl font-bold">Patients</h1>
+          <div className="flex gap-2">
+            <Button onClick={fetchPatients} variant="outline" size="sm" disabled={isLoading}>
+              <RefreshCcw className="h-4 w-4 mr-2" />
+              Refresh
             </Button>
           </div>
         </div>
-        
-        <div className="overflow-x-auto">
-          {isLoading ? (
-            <div className="p-8 text-center">
-              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4"></div>
-              <p className="text-gray-500">Loading patients...</p>
-            </div>
-          ) : filteredPatients.length === 0 ? (
-            <div className="p-8 text-center">
-              <Users className="mx-auto h-12 w-12 text-gray-300 mb-3" />
-              <h3 className="text-lg font-medium mb-2">No patients found</h3>
-              <p className="text-gray-500 mb-4">
-                {searchQuery 
-                  ? "No patients match your search criteria"
-                  : "You haven't added any patients yet"}
-              </p>
-              <Button variant="outline">
-                <UserPlus className="h-4 w-4 mr-2" />
-                Add your first patient
-              </Button>
-            </div>
-          ) : (
+
+        {error && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertTitle>Error</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {isLoading ? (
+          <div className="text-center py-10">Loading patients...</div>
+        ) : patients.length > 0 ? (
+          <div className="rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Age</TableHead>
+                  <TableHead>Patient</TableHead>
                   <TableHead>Email</TableHead>
-                  <TableHead>Joined</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredPatients.map((patient) => (
-                  <TableRow key={patient.id}>
+                {patients.map((patient) => (
+                  <TableRow key={patient.id || patient.user_id}>
                     <TableCell>
-                      <div className="flex items-center">
-                        <Avatar className="mr-3 h-8 w-8">
-                          <AvatarImage src={patient.avatar_url || undefined} alt={getFullName(patient)} />
-                          <AvatarFallback>{getInitials(patient)}</AvatarFallback>
+                      <div className="flex items-center gap-3">
+                        <Avatar>
+                          <AvatarImage src={`https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(patient.full_name)}`} />
+                          <AvatarFallback>{getInitials(patient.full_name)}</AvatarFallback>
                         </Avatar>
-                        <div>
-                          <div className="font-medium">{getFullName(patient)}</div>
-                          {isNewPatient(patient.created_at) && (
-                            <Badge variant="outline" className="mt-1 bg-green-50 text-green-600 text-xs">New</Badge>
-                          )}
-                        </div>
+                        <div className="font-medium">{patient.full_name || "Unknown"}</div>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center">
-                        <MapPin className="h-3.5 w-3.5 text-gray-500 mr-1" />
-                        <span>{patient.city ? `${patient.city}, ${patient.country}` : patient.country}</span>
-                      </div>
+                    <TableCell className="font-mono text-sm select-none">
+                      {maskEmail(patient.email)}
                     </TableCell>
-                    <TableCell>{getAge(patient.date_of_birth)}</TableCell>
-                    <TableCell>{patient.email}</TableCell>
-                    <TableCell>{patient.created_at ? format(new Date(patient.created_at), 'MMM d, yyyy') : 'N/A'}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end space-x-2">
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" size="sm" asChild>
+                          <Link to={`/mood-mentor-dashboard/patient-profile/${patient.id}`}>
+                            <Eye className="h-4 w-4 mr-1" />
+                            View
+                          </Link>
+                        </Button>
                         <Button 
                           variant="outline" 
                           size="sm"
-                          className="flex items-center"
-                          onClick={() => handleMessagePatient(patient.id)}
+                          onClick={() => handleStartChat(patient)}
                         >
-                          <MessageCircle className="mr-2 h-4 w-4" />
-                          Message
+                          <MessageSquare className="h-4 w-4 mr-1" />
+                          Chat
                         </Button>
-                        
-                        {supportGroups.length > 0 && (
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            className="flex items-center"
-                            onClick={() => selectedGroup ? addToGroup(patient.id, selectedGroup) : toast.error("Please select a group first")}
-                          >
-                            <UserPlus2 className="mr-2 h-4 w-4" />
-                            Add to Group
-                          </Button>
-                        )}
-                        
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => viewProfile(patient)}>
-                              <Eye className="mr-2 h-4 w-4" />
-                              View Profile
-                            </DropdownMenuItem>
-                            {supportGroups.length > 0 && selectedGroup && (
-                              <DropdownMenuItem onClick={() => addToGroup(patient.id, selectedGroup)}>
-                                <Users className="mr-2 h-4 w-4" />
-                                Add to Group
-                              </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="text-center py-10">
+            No patients found. Please make sure the patient_profiles table exists in your Supabase database.
+          </div>
+        )}
       </div>
-      
-      {/* Patient Profile Dialog */}
-      <Dialog open={isProfileOpen} onOpenChange={setIsProfileOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Patient Profile</DialogTitle>
-            <DialogDescription>
-              Detailed information about the patient
-            </DialogDescription>
-          </DialogHeader>
-          
-          {selectedPatient && (
-            <div className="space-y-4">
-              <div className="flex items-center space-x-4">
-                <Avatar className="h-16 w-16">
-                  <AvatarImage src={selectedPatient.avatar_url || undefined} alt={getFullName(selectedPatient)} />
-                  <AvatarFallback>{getInitials(selectedPatient)}</AvatarFallback>
-                </Avatar>
-                <div>
-                  <h3 className="text-xl font-semibold">{getFullName(selectedPatient)}</h3>
-                  <p className="text-gray-500">{selectedPatient.email}</p>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-sm text-gray-500">Phone</p>
-                  <p>{selectedPatient.phone_number || 'Not provided'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Date of Birth</p>
-                  <p>{selectedPatient.date_of_birth 
-                      ? format(new Date(selectedPatient.date_of_birth), 'MMMM d, yyyy')
-                      : 'Not provided'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Location</p>
-                  <p>{selectedPatient.city && selectedPatient.state
-                      ? `${selectedPatient.city}, ${selectedPatient.state}`
-                      : selectedPatient.country || 'Not provided'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Joined</p>
-                  <p>{selectedPatient.created_at 
-                      ? format(new Date(selectedPatient.created_at), 'MMMM d, yyyy')
-                      : 'Unknown'}</p>
-                </div>
-              </div>
-              
-              <div className="pt-4 flex justify-end space-x-2">
-                <Button variant="outline" onClick={() => setIsProfileOpen(false)}>
-                  Close
-                </Button>
-                <Button>
-                  Schedule Session
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </DashboardLayout>
   );
 } 
-
-

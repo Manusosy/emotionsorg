@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/authContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +14,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -32,11 +31,15 @@ import {
   Plus,
   BookOpen,
   Video,
-  FileImage,
-  Link as LinkIcon,
   Upload,
+  Headphones,
+  Users,
+  Calendar,
+  Eye,
+  Clock,
+  Check,
+  Info
 } from "lucide-react";
-import { Resource } from "../../../types/database.types";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -45,33 +48,72 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 
-const resourceCategories = [
-  { value: "anxiety", label: "Anxiety" },
-  { value: "depression", label: "Depression" },
-  { value: "stress", label: "Stress Management" },
-  { value: "mindfulness", label: "Mindfulness" },
-  { value: "self-care", label: "Self-Care" },
-  { value: "trauma", label: "Trauma" },
-  { value: "relationships", label: "Relationships" },
-  { value: "grief", label: "Grief & Loss" },
-];
+// Resource interface
+interface Resource {
+  id: string;
+  title: string;
+  description: string;
+  type: 'article' | 'video' | 'podcast' | 'document' | 'group' | 'workshop';
+  url: string;
+  file_url?: string;
+  thumbnail_url?: string;
+  category: string;
+  tags?: string[];
+  author?: string;
+  author_role?: string;
+  author_avatar?: string;
+  read_time?: string;
+  duration?: string;
+  featured?: boolean;
+  downloads?: number;
+  shares?: number;
+  mood_mentor_id?: string;
+  created_at: string;
+  updated_at?: string;
+}
 
-const resourceTypes = [
-  { value: "document", label: "Document", icon: <FileText className="h-4 w-4" /> },
-  { value: "video", label: "Video", icon: <Video className="h-4 w-4" /> },
-  { value: "image", label: "Image", icon: <FileImage className="h-4 w-4" /> },
-  { value: "link", label: "Link (Article/Website)", icon: <LinkIcon className="h-4 w-4" /> },
-];
-
-interface AddResourceFormData {
+// Form data interface
+interface ResourceFormData {
   title: string;
   description: string;
   type: string;
   category: string;
   url: string;
-  file?: File | null;
+  thumbnail_url: string;
+  file: File | null;
 }
+
+// Resource categories
+const resourceCategories = [
+  { value: "educational", label: "Educational Materials" },
+  { value: "self-help", label: "Self-Help Tools" },
+  { value: "crisis", label: "Crisis Support" },
+  { value: "video", label: "Video Resources" },
+  { value: "community", label: "Community Support" },
+  { value: "digital", label: "Digital Tools" },
+];
+
+// Resource types
+const resourceTypes = [
+  { value: "document", label: "Document", icon: <FileText className="h-4 w-4" /> },
+  { value: "video", label: "Video", icon: <Video className="h-4 w-4" /> },
+  { value: "article", label: "Article", icon: <BookOpen className="h-4 w-4" /> },
+  { value: "podcast", label: "Podcast", icon: <Headphones className="h-4 w-4" /> },
+  { value: "group", label: "Support Group", icon: <Users className="h-4 w-4" /> },
+  { value: "workshop", label: "Workshop", icon: <Calendar className="h-4 w-4" /> },
+];
+
+// Default thumbnails for resource types
+const defaultThumbnails = {
+  document: "https://images.unsplash.com/photo-1551847677-dc82d764e1eb?q=80&w=500&auto=format&fit=crop",
+  video: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=500&auto=format&fit=crop",
+  article: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=500&auto=format&fit=crop",
+  podcast: "https://images.unsplash.com/photo-1589903308904-1010c2294adc?q=80&w=500&auto=format&fit=crop",
+  group: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?q=80&w=500&auto=format&fit=crop",
+  workshop: "https://images.unsplash.com/photo-1558403194-611308249627?q=80&w=500&auto=format&fit=crop"
+};
 
 const ResourcesPage = () => {
   const { user } = useAuth();
@@ -81,56 +123,146 @@ const ResourcesPage = () => {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [formOpen, setFormOpen] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-  const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [formData, setFormData] = useState<AddResourceFormData>({
+  // Form state
+  const [formData, setFormData] = useState<ResourceFormData>({
     title: "",
     description: "",
     type: "document",
-    category: "anxiety",
+    category: "educational",
     url: "",
+    thumbnail_url: "",
     file: null,
   });
 
-  const fetchResources = async () => {
-    try {
-      setIsLoading(true);
-      
-      if (!user?.id) return;
-      
-      const data = await supabase.from('resources').select();
-      
-      setResources(data || []);
-    } catch (error: any) {
-      console.error('Error fetching resources:', error);
-      toast.error('Failed to load resources');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
+  // Fetch resources created by this mood mentor
   useEffect(() => {
+    const fetchResources = async () => {
+      try {
+        setIsLoading(true);
+        
+        if (!user?.id) return;
+        
+        const { data, error } = await supabase
+          .from('resources')
+          .select('*')
+          .eq('mood_mentor_id', user.id);
+        
+        if (error) {
+          throw error;
+        }
+        
+        setResources(data || []);
+      } catch (error) {
+        console.error('Error fetching resources:', error);
+        toast.error('Failed to load resources');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
     fetchResources();
   }, [user]);
 
+  // Filter resources based on search and category
   const filteredResources = resources.filter(resource => {
-    const matchesSearch = resource.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    const matchesSearch = !searchQuery || 
+      resource.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       resource.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = selectedCategory === "all" || resource.category === selectedCategory;
+      
+    const matchesCategory = selectedCategory === "all" || 
+      resource.category === selectedCategory;
+      
     return matchesSearch && matchesCategory;
   });
 
-  const handleDownload = async (resource: Resource) => {
+  // Handle form input changes
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Handle select changes
+  const handleSelectChange = (name: string, value: string) => {
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Handle file input changes
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    setFormData(prev => ({ ...prev, file }));
+    setUploadedFile(file);
+  };
+
+  // Reset form to initial state
+  const resetForm = () => {
+    setFormData({
+      title: "",
+      description: "",
+      type: "document",
+      category: "educational",
+      url: "",
+      thumbnail_url: "",
+      file: null
+    });
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    setUploadedFile(null);
+  };
+
+  // Upload file to Supabase storage
+  const uploadFile = async (file: File): Promise<string | null> => {
     try {
-      // For file_url, use that for direct download
-      const downloadUrl = resource.file_url || resource.url;
+      if (!file) return null;
+      
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
+      const filePath = `resources/${fileName}`;
+      
+      // Try to upload to 'resources' bucket
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('resources')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true
+        });
+      
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        return null;
+      }
+      
+      // Get the public URL
+      const { data: urlData } = await supabase.storage
+        .from('resources')
+        .getPublicUrl(filePath);
+      
+      return urlData?.publicUrl || null;
+    } catch (error) {
+      console.error('Error uploading file:', error);
+      return null;
+    }
+  };
+
+  // Handle resource download/view
+  const handleResourceView = async (resource: Resource) => {
+    try {
+      const viewUrl = resource.file_url || resource.url;
+      
+      if (!viewUrl) {
+        toast.error("No URL available for this resource");
+        return;
+      }
       
       // Increment download count
-      await supabase.from('resources').update({ downloads: resource.downloads + 1 }).eq('id', resource.id);
+      const currentDownloads = resource.downloads || 0;
+      await supabase
+        .from('resources')
+        .update({ downloads: currentDownloads + 1 })
+        .eq('id', resource.id);
       
       // Update local state
       setResources(prev => 
@@ -140,22 +272,33 @@ const ResourcesPage = () => {
             : res
         )
       );
-
-      // Open the download in a new window
-      window.open(downloadUrl, "_blank");
-      toast.success("Resource downloaded successfully");
-    } catch (error: any) {
-      console.error('Error downloading resource:', error);
-      toast.error("Failed to download resource");
+      
+      // Open the URL
+      window.open(viewUrl, "_blank");
+    } catch (error) {
+      console.error('Error viewing resource:', error);
+      toast.error("Failed to view resource");
     }
   };
 
+  // Handle resource sharing
   const handleShare = async (resource: Resource) => {
     try {
-      await navigator.clipboard.writeText(resource.url);
+      const shareUrl = resource.url || resource.file_url;
+      
+      if (!shareUrl) {
+        toast.error("No URL available to share");
+        return;
+      }
+      
+      await navigator.clipboard.writeText(shareUrl);
       
       // Increment share count
-      await supabase.from('resources').update({ shares: resource.shares + 1 }).eq('id', resource.id);
+      const currentShares = resource.shares || 0;
+      await supabase
+        .from('resources')
+        .update({ shares: currentShares + 1 })
+        .eq('id', resource.id);
       
       // Update local state
       setResources(prev => 
@@ -167,468 +310,551 @@ const ResourcesPage = () => {
       );
       
       toast.success("Resource link copied to clipboard");
-    } catch (error: any) {
+    } catch (error) {
       console.error('Error sharing resource:', error);
       toast.error("Failed to share resource");
     }
   };
 
+  // Handle resource deletion
   const handleDelete = async (resourceId: string) => {
-    if (window.confirm("Are you sure you want to delete this resource?")) {
-      try {
-        await supabase.from('resources').delete().eq('id', resourceId);
-      } catch (error) {
-        console.error('Error in handleDelete:', error);
-        toast.error("Failed to delete resource");
-      }
+    if (!window.confirm("Are you sure you want to delete this resource?")) {
+      return;
+    }
+    
+    try {
+      const { error } = await supabase
+        .from('resources')
+        .delete()
+        .eq('id', resourceId);
+      
+      if (error) throw error;
+      
+      // Update local state
+      setResources(prev => prev.filter(resource => resource.id !== resourceId));
+      
+      toast.success("Resource deleted successfully");
+    } catch (error) {
+      console.error('Error deleting resource:', error);
+      toast.error("Failed to delete resource");
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleSelectChange = (name: string, value: string) => {
-    setFormData(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] || null;
-    setFormData(prev => ({ ...prev, file }));
-    setUploadedFile(file);
-  };
-
-  const resetForm = () => {
-    setFormData({
-      title: "",
-      description: "",
-      type: "document",
-      category: "anxiety",
-      url: "",
-      file: null
-    });
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+  // Toggle featured status
+  const toggleFeature = async (resource: Resource) => {
+    try {
+      const newFeaturedValue = !resource.featured;
+      
+      const { error } = await supabase
+        .from('resources')
+        .update({ featured: newFeaturedValue })
+        .eq('id', resource.id);
+      
+      if (error) throw error;
+      
+      // Update local state
+      setResources(prev => 
+        prev.map(res => 
+          res.id === resource.id 
+            ? { ...res, featured: newFeaturedValue } 
+            : res
+        )
+      );
+      
+      toast.success(newFeaturedValue 
+        ? "Resource is now featured on the public page" 
+        : "Resource removed from featured section");
+    } catch (error) {
+      console.error('Error toggling feature status:', error);
+      toast.error("Failed to update resource");
     }
-    setUploadedFile(null);
   };
 
+  // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
     
     try {
-      if (!user?.id) throw new Error("User not authenticated");
+      if (!user?.id) {
+        throw new Error("User not authenticated");
+      }
       
+      // Validate form data
       if (!formData.title) throw new Error("Title is required");
       if (!formData.description) throw new Error("Description is required");
       
-      let fileUrl = "";
+      let fileUrl: string | null = null;
       let resourceUrl = formData.url;
+      let thumbnailUrl = formData.thumbnail_url;
       
-      // Handle file upload for document, video, or image types
-      if (formData.file && ["document", "video", "image"].includes(formData.type)) {
-        const file = formData.file;
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${Date.now()}-${Math.random().toString(36).substring(2, 15)}.${fileExt}`;
-        const filePath = `resources/${fileName}`;
+      // Handle file upload if provided
+      if (formData.file) {
+        fileUrl = await uploadFile(formData.file);
         
-        const { data, error } = await supabase.storage.from('resources').upload(filePath, file);
-        
-        if (error) throw error;
-        if (!data) throw new Error("Failed to get file URL");
-        
-        fileUrl = data.publicUrl;
-        // If no direct URL was provided, use the file URL as the resource URL
-        if (!resourceUrl) {
-          resourceUrl = data.publicUrl;
+        if (!fileUrl) {
+          throw new Error("Failed to upload file");
         }
-      } else if (formData.type === "link") {
-        // For link type, URL is required
-        if (!resourceUrl) throw new Error("URL is required for link resources");
+        
+        // If no URL was provided, use the file URL
+        if (!resourceUrl) {
+          resourceUrl = fileUrl;
+        }
       }
       
-      // Validate that we have a URL
-      if (!resourceUrl) throw new Error("Either a file or URL must be provided");
+      // Ensure we have a URL
+      if (!resourceUrl && !fileUrl) {
+        throw new Error("Either a URL or file must be provided");
+      }
       
-      // Create the resource in the database
-      const { data: dbData, error: dbError } = await supabase.from('resources').insert({
+      // If no thumbnail URL was provided, use default based on resource type
+      if (!thumbnailUrl) {
+        thumbnailUrl = defaultThumbnails[formData.type as keyof typeof defaultThumbnails];
+      }
+      
+      // Current timestamp
+      const now = new Date().toISOString();
+      
+      // Author information
+      const author = user.user_metadata?.name || user.email || "Mood Mentor";
+      const authorRole = "Mentor";
+      
+      // Prepare resource data
+      const resourceData = {
         title: formData.title,
         description: formData.description,
-        type: formData.type,
+        type: formData.type as Resource['type'],
         category: formData.category,
         url: resourceUrl,
-        file_url: fileUrl || null,
-        mood_mentor_id: user.id
-      }).select();
+        file_url: fileUrl,
+        thumbnail_url: thumbnailUrl,
+        mood_mentor_id: user.id,
+        author,
+        author_role: authorRole,
+        featured: false,
+        downloads: 0,
+        shares: 0,
+        created_at: now,
+        updated_at: now
+      };
       
-      if (dbError) throw dbError;
+      // Insert into database
+      const { data: insertedData, error: insertError } = await supabase
+        .from('resources')
+        .insert(resourceData)
+        .select();
       
-      // Update the local state with the new resource
-      if (dbData && dbData.length > 0) {
-        setResources(prev => [dbData[0], ...prev]);
+      if (insertError) {
+        throw new Error(`Failed to add resource: ${insertError.message}`);
       }
+      
+      if (!insertedData || insertedData.length === 0) {
+        throw new Error("Failed to add resource: No data returned");
+      }
+      
+      // Update local state
+      setResources(prev => [insertedData[0], ...prev]);
       
       // Reset form and close dialog
       resetForm();
       setIsAddDialogOpen(false);
       toast.success("Resource added successfully");
     } catch (error: any) {
-      console.error('Error adding resource:', error);
       toast.error(error.message || "Failed to add resource");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Get icon for resource type
   const getResourceIcon = (type: string) => {
     switch (type) {
-      case 'document':
-        return <FileText className="h-6 w-6 text-blue-500" />;
-      case 'video':
-        return <Video className="h-6 w-6 text-purple-500" />;
-      case 'image':
-        return <FileImage className="h-6 w-6 text-green-500" />;
-      case 'link':
-        return <LinkIcon className="h-6 w-6 text-amber-500" />;
-      default:
-        return <BookOpen className="h-6 w-6 text-gray-500" />;
+      case 'document': return <FileText className="h-6 w-6 text-blue-500" />;
+      case 'video': return <Video className="h-6 w-6 text-purple-500" />;
+      case 'article': return <BookOpen className="h-6 w-6 text-gray-500" />;
+      case 'podcast': return <Headphones className="h-6 w-6 text-green-500" />;
+      case 'group': return <Users className="h-6 w-6 text-red-500" />;
+      case 'workshop': return <Calendar className="h-6 w-6 text-teal-500" />;
+      default: return <BookOpen className="h-6 w-6 text-gray-500" />;
     }
   };
 
-  // Mock function for file upload (to be replaced with a real implementation)
-  const uploadFile = async (file: File): Promise<{ success: boolean, url: string | null, error: Error | null }> => {
-    setIsUploading(true);
-    try {
-      // Simulate network delay
-      await new Promise(resolve => setTimeout(resolve, 800));
-      
-      // For demo purposes, just return a mock URL
-      return {
-        success: true,
-        url: 'https://images.unsplash.com/photo-1629195634308-77f0a2356341?ixlib=rb-4.0.3',
-        error: null
-      };
-    } finally {
-      setIsUploading(false);
+  // Get label for resource type
+  const getResourceTypeLabel = (type: string) => {
+    switch (type) {
+      case 'document': return 'Document';
+      case 'video': return 'Video';
+      case 'article': return 'Article';
+      case 'podcast': return 'Podcast';
+      case 'group': return 'Support Group';
+      case 'workshop': return 'Workshop';
+      default: return type;
     }
   };
 
-  const deleteResource = async (resourceId: string) => {
-    try {
-      // Delete any attached file if needed
-      await dataService.deleteResource(resourceId);
-      
-      toast.success("Resource deleted successfully");
-      fetchResources(); // Refresh the resources list
-    } catch (error) {
-      console.error("Error deleting resource:", error);
-      toast.error("Failed to delete resource");
-    }
-  };
-
-  // Function to load resources
-  const loadResources = () => {
-    fetchResources();
-  };
-
-  // Add the missing onSubmit function for the form
-  const onSubmit = async (data: any) => {
-    if (editingResource) {
-      // Handle editing (we'll implement this later)
-      toast.info("Editing resources is not yet implemented");
-    } else {
-      // Handle creating a new resource
-      await handleSubmit({
-        preventDefault: () => {}
-      } as React.FormEvent);
-    }
+  // Open public resources page
+  const viewPublicResourcesPage = () => {
+    window.open('/resources', '_blank');
   };
 
   return (
     <DashboardLayout>
-      <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
+      <div className="p-4 md:p-8">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Resources</h1>
-            <p className="text-gray-500">Manage and share mental health resources</p>
+            <h1 className="text-2xl font-bold mb-2">Resources Management</h1>
+            <p className="text-gray-600">
+              Add and manage resources to share with users on the public resources page.
+            </p>
           </div>
-          
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-[#0078FF] text-white hover:bg-blue-700">
-                <Plus className="h-4 w-4 mr-2" />
-                Add Resource
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-[800px] w-[90vw] h-auto overflow-y-auto max-h-[90vh] p-6">
-              <DialogHeader>
-                <DialogTitle>Add New Resource</DialogTitle>
-                <DialogDescription>
-                  Add educational materials, tools, or external links for your patients.
-                </DialogDescription>
-              </DialogHeader>
-              
-              <form onSubmit={handleSubmit} className="space-y-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="title">Title</Label>
-                  <Input 
-                    id="title" 
-                    name="title" 
-                    value={formData.title}
-                    onChange={handleInputChange}
-                    placeholder="E.g. Understanding Anxiety Workbook"
-                    required
-                  />
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea 
-                    id="description" 
-                    name="description" 
-                    value={formData.description}
-                    onChange={handleInputChange}
-                    placeholder="Briefly describe what this resource is about..."
-                    rows={3}
-                    required
-                  />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="type">Resource Type</Label>
-                    <Select 
-                      value={formData.type} 
-                      onValueChange={(value) => handleSelectChange("type", value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select type" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {resourceTypes.map((type) => (
-                          <SelectItem key={type.value} value={type.value}>
-                            <div className="flex items-center">
-                              {type.icon}
-                              <span className="ml-2">{type.label}</span>
-                            </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="category">Category</Label>
-                    <Select 
-                      value={formData.category} 
-                      onValueChange={(value) => handleSelectChange("category", value)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {resourceCategories.map((category) => (
-                          <SelectItem key={category.value} value={category.value}>
-                            {category.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                
-                {formData.type === "link" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="url">URL Link</Label>
-                    <Input 
-                      id="url" 
-                      name="url" 
-                      value={formData.url}
-                      onChange={handleInputChange}
-                      placeholder="https://example.com/resource"
-                      required={formData.type === "link"}
+          <div className="flex flex-col sm:flex-row gap-3 mt-4 md:mt-0">
+            <Button 
+              className="flex items-center gap-2" 
+              onClick={() => setIsAddDialogOpen(true)}
+            >
+              <Plus size={16} />
+              Add Resource
+            </Button>
+            <Button
+              variant="outline"
+              className="flex items-center gap-2"
+              onClick={viewPublicResourcesPage}
+            >
+              <Eye size={16} />
+              View Public Page
+            </Button>
+          </div>
+        </div>
+        
+        {/* Search and filter */}
+        <div className="mb-6 flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <Input
+              type="text"
+              placeholder="Search resources..."
+              className="pl-10 pr-4 py-2"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filter by category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {resourceCategories.map((category) => (
+                <SelectItem key={category.value} value={category.value}>
+                  {category.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        
+        {/* Resources list */}
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+          </div>
+        ) : filteredResources.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredResources.map(resource => (
+              <Card key={resource.id} className="overflow-hidden">
+                <div className="relative h-40">
+                  {resource.thumbnail_url ? (
+                    <img 
+                      src={resource.thumbnail_url} 
+                      alt={resource.title}
+                      className="w-full h-full object-cover"
                     />
+                  ) : (
+                    <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+                      {getResourceIcon(resource.type)}
+                    </div>
+                  )}
+                  {resource.featured && (
+                    <div className="absolute top-2 right-2">
+                      <Badge className="bg-yellow-500">Featured</Badge>
+                    </div>
+                  )}
+                  <div className="absolute top-2 left-2">
+                    <Badge variant="secondary">
+                      {getResourceTypeLabel(resource.type)}
+                    </Badge>
                   </div>
-                )}
-                
-                {["document", "video", "image"].includes(formData.type) && (
-                  <div className="space-y-2">
-                    <Label htmlFor="file">Upload File</Label>
-                    <div className="flex items-center gap-2">
-                      <Input 
-                        id="file" 
-                        name="file" 
-                        type="file" 
-                        ref={fileInputRef}
-                        onChange={handleFileChange}
-                        className="flex-1"
-                        accept={
-                          formData.type === "document" 
-                            ? ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt" 
-                            : formData.type === "video"
-                              ? ".mp4,.webm,.avi,.mov" 
-                              : ".jpg,.jpeg,.png,.gif,.webp"
-                        }
-                        required={!formData.url}
-                      />
+                </div>
+                <CardHeader className="pb-2">
+                  <CardTitle className="font-bold text-lg line-clamp-1">{resource.title}</CardTitle>
+                </CardHeader>
+                <CardContent className="pb-2">
+                  <p className="text-gray-600 text-sm line-clamp-2 mb-2">{resource.description}</p>
+                  <div className="flex items-center text-xs text-gray-500 gap-2">
+                    <div className="flex items-center">
+                      <Clock className="h-3 w-3 mr-1" />
+                      <span>
+                        {new Date(resource.created_at).toLocaleDateString()}
+                      </span>
                     </div>
-                    
-                    <div className="text-sm text-gray-500 mt-1">
-                      {formData.type === "document" && "Accepted formats: PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT"}
-                      {formData.type === "video" && "Accepted formats: MP4, WEBM, AVI, MOV"}
-                      {formData.type === "image" && "Accepted formats: JPG, PNG, GIF, WEBP"}
-                    </div>
-                    
-                    {["document", "video"].includes(formData.type) && (
-                      <div className="mt-2">
-                        <Label htmlFor="url" className="text-sm">Or provide a URL (optional)</Label>
-                        <Input 
-                          id="url" 
-                          name="url" 
-                          value={formData.url}
-                          onChange={handleInputChange}
-                          placeholder={formData.type === "document" 
-                            ? "https://example.com/document.pdf" 
-                            : "https://example.com/video.mp4"
-                          }
-                          className="mt-1"
-                        />
-                        <p className="text-xs text-gray-500 mt-1">
-                          {formData.type === "document" 
-                            ? "For documents hosted elsewhere (Google Drive, Dropbox, etc.)" 
-                            : "For videos hosted elsewhere (YouTube, Vimeo, etc.)"
-                          }
-                        </p>
+                    {resource.downloads && resource.downloads > 0 && (
+                      <div className="flex items-center">
+                        <Download className="h-3 w-3 mr-1" />
+                        <span>{resource.downloads}</span>
+                      </div>
+                    )}
+                    {resource.shares && resource.shares > 0 && (
+                      <div className="flex items-center">
+                        <Share2 className="h-3 w-3 mr-1" />
+                        <span>{resource.shares}</span>
                       </div>
                     )}
                   </div>
-                )}
-                
-                <DialogFooter className="mt-6 pt-4 border-t flex justify-end gap-2">
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={() => setIsAddDialogOpen(false)}
-                    disabled={isSubmitting}
-                  >
-                    Cancel
-                  </Button>
-                  <Button 
-                    type="submit" 
-                    disabled={isSubmitting}
-                    className="bg-[#0078FF] text-white hover:bg-blue-700"
-                  >
-                    {isSubmitting ? 'Adding...' : 'Add Resource'}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
-        </div>
-
-        <Card className="mb-6">
-          <div className="p-4 border-b">
-            <div className="flex items-center space-x-4">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                <Input
-                  placeholder="Search resources..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 focus:border-[#20C0F3] focus:ring-[#20C0F3]"
-                />
-              </div>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="border rounded-md px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Categories</option>
-                {resourceCategories.map(category => (
-                  <option key={category.value} value={category.value}>
-                    {category.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+                </CardContent>
+                <div className="px-6 py-3 bg-gray-50 flex justify-between items-center">
+                  <div className="flex gap-2">
+                    <Button 
+                      size="sm" 
+                      className="h-8"
+                      onClick={() => handleResourceView(resource)}
+                    >
+                      <Download className="h-4 w-4 mr-1" />
+                      View
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="outline" 
+                      className="h-8"
+                      onClick={() => handleShare(resource)}
+                    >
+                      <Share2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon">
+                        <MoreVertical className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => toggleFeature(resource)}>
+                        {resource.featured ? (
+                          <>
+                            <Info className="h-4 w-4 mr-2" />
+                            Remove from Featured
+                          </>
+                        ) : (
+                          <>
+                            <Check className="h-4 w-4 mr-2" />
+                            Mark as Featured
+                          </>
+                        )}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => handleDelete(resource.id)}>
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete Resource
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </Card>
+            ))}
           </div>
-
-          <div className="p-4">
-            {isLoading ? (
-              <div className="text-center py-8 text-gray-500">
-                Loading resources...
-              </div>
-            ) : filteredResources.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                No resources found
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredResources.map((resource) => (
-                  <Card key={resource.id} className="overflow-hidden">
-                    <div className="p-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start space-x-3">
-                          <div className="p-2 bg-gray-100 rounded-lg">
-                            {getResourceIcon(resource.type)}
-                          </div>
-                          <div>
-                            <h3 className="font-medium">{resource.title}</h3>
-                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                              {resource.description}
-                            </p>
-                          </div>
-                        </div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" className="h-8 w-8 p-0">
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => handleDownload(resource)}>
-                              <Download className="mr-2 h-4 w-4" />
-                              Download
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleShare(resource)}>
-                              <Share2 className="mr-2 h-4 w-4" />
-                              Share
-                            </DropdownMenuItem>
-                            <DropdownMenuItem 
-                              onClick={() => handleDelete(resource.id)}
-                              className="text-red-600"
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-
-                      <div className="mt-4 pt-4 border-t flex items-center justify-between text-sm text-gray-500">
-                        <div className="flex items-center">
-                          <Download className="h-4 w-4 mr-1" />
-                          <span>{resource.downloads || 0} downloads</span>
-                        </div>
-                        <div className="flex items-center">
-                          <Share2 className="h-4 w-4 mr-1" />
-                          <span>{resource.shares || 0} shares</span>
-                        </div>
-                      </div>
-                    </div>
-                  </Card>
-                ))}
-              </div>
-            )}
+        ) : (
+          <div className="text-center p-8 bg-gray-50 rounded-lg">
+            <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="font-medium text-lg mb-2">No resources found</h3>
+            <p className="text-gray-500 mb-4">
+              {searchQuery || selectedCategory !== "all" ? 
+                "Try adjusting your search or filters." : 
+                "You haven't added any resources yet."}
+            </p>
+            <Button onClick={() => setIsAddDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Your First Resource
+            </Button>
           </div>
-        </Card>
+        )}
       </div>
+
+      {/* Add Resource Dialog */}
+      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+        <DialogContent className="max-w-3xl w-[90vw] max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add New Resource</DialogTitle>
+            <DialogDescription>
+              Share resources with users to help them on their mental health journey.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="title">Title</Label>
+              <Input
+                id="title"
+                name="title"
+                placeholder="Enter resource title"
+                value={formData.title}
+                onChange={handleInputChange}
+                required
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="description">Description</Label>
+              <Textarea
+                id="description"
+                name="description"
+                placeholder="Enter resource description"
+                value={formData.description}
+                onChange={handleInputChange}
+                required
+                rows={3}
+              />
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="type">Resource Type</Label>
+                <Select
+                  value={formData.type}
+                  onValueChange={(value) => handleSelectChange("type", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {resourceTypes.map((type) => (
+                      <SelectItem key={type.value} value={type.value}>
+                        <div className="flex items-center">
+                          {type.icon}
+                          <span className="ml-2">{type.label}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="category">Category</Label>
+                <Select
+                  value={formData.category}
+                  onValueChange={(value) => handleSelectChange("category", value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {resourceCategories.map((category) => (
+                      <SelectItem key={category.value} value={category.value}>
+                        {category.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="url">URL (external link or embedded content)</Label>
+              <Input
+                id="url"
+                name="url"
+                type="url"
+                placeholder="Enter URL (optional for documents)"
+                value={formData.url}
+                onChange={handleInputChange}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="thumbnail_url">Thumbnail URL</Label>
+              <Input
+                id="thumbnail_url"
+                name="thumbnail_url"
+                type="url"
+                placeholder="Enter thumbnail image URL"
+                value={formData.thumbnail_url}
+                onChange={handleInputChange}
+              />
+              <p className="text-xs text-gray-500">
+                Provide a URL to an image that represents this resource. If left empty, a default image will be used.
+              </p>
+            </div>
+            
+            <div className="space-y-2">
+              <Label>File Upload (for documents or videos)</Label>
+              <div className="border-2 border-dashed border-gray-300 rounded-md p-6 text-center">
+                <Input
+                  id="file"
+                  type="file"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  ref={fileInputRef}
+                  accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.mov,.avi"
+                />
+                <div className="space-y-2">
+                  {uploadedFile ? (
+                    <div className="text-sm">
+                      <p className="font-medium">{uploadedFile.name}</p>
+                      <p className="text-gray-500">
+                        {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                      <p className="text-sm text-gray-500">
+                        Click to upload or drag and drop
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        PDF, Word, PowerPoint, Videos (max 100MB)
+                      </p>
+                    </>
+                  )}
+                  <Button
+                    type="button"
+                    variant={uploadedFile ? "outline" : "secondary"}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-2"
+                  >
+                    {uploadedFile ? "Change File" : "Select File"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+            
+            <DialogFooter className="pt-4">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => {
+                  resetForm();
+                  setIsAddDialogOpen(false);
+                }}
+                disabled={isSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? (
+                  <>
+                    <span className="animate-spin mr-2">⟳</span>
+                    Saving...
+                  </>
+                ) : 'Add Resource'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 };
 
 export default ResourcesPage; 
+
 
 

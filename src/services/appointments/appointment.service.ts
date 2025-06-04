@@ -3,6 +3,7 @@ import { AppointmentService, AppointmentData, ServiceResponse } from '../index';
 import { tables } from '@/lib/supabase';
 import { Appointment } from '@/types/database.types';
 import { messagingService } from '@/services';
+import { messageService } from '@/services';
 
 class SupabaseAppointmentService implements AppointmentService {
   async bookAppointment(data: AppointmentData): Promise<ServiceResponse<any>> {
@@ -91,6 +92,23 @@ class SupabaseAppointmentService implements AppointmentService {
         return { error: 'User not authenticated' };
       }
       
+      // First get the appointment details to know who to notify
+      const { data: appointment, error: fetchError } = await supabase
+        .from(tables.appointments)
+        .select('id, patient_id, mentor_id, title, date, start_time')
+        .eq('id', appointmentId)
+        .single();
+        
+      if (fetchError) {
+        console.error('Error fetching appointment for cancellation:', fetchError);
+        return { error: 'Could not find the appointment' };
+      }
+      
+      if (!appointment) {
+        return { error: 'Appointment not found' };
+      }
+      
+      // Update the appointment status
       const { error } = await supabase
         .from(tables.appointments)
         .update({ 
@@ -102,6 +120,49 @@ class SupabaseAppointmentService implements AppointmentService {
         .eq('id', appointmentId);
 
       if (error) throw error;
+      
+      // Create a notification for the other party
+      try {
+        // Determine who to notify (the other person)
+        const recipientId = user.id === appointment.patient_id 
+          ? appointment.mentor_id 
+          : appointment.patient_id;
+          
+        const isCancelledByMentor = user.id === appointment.mentor_id;
+        
+        // Format the date for the notification
+        const appointmentDate = new Date(appointment.date);
+        const formattedDate = appointmentDate.toLocaleDateString('en-US', { 
+          weekday: 'long',
+          month: 'long', 
+          day: 'numeric'
+        });
+        
+        // Create notification
+        const notificationData = {
+          user_id: recipientId,
+          title: 'Appointment Cancelled',
+          message: isCancelledByMentor
+            ? `Your appointment on ${formattedDate} at ${appointment.start_time} has been cancelled by your mood mentor.${reason ? ` Reason: ${reason}` : ''}`
+            : `Your patient has cancelled their appointment scheduled for ${formattedDate} at ${appointment.start_time}.${reason ? ` Reason: ${reason}` : ''}`,
+          type: 'appointment',
+          is_read: false,
+          created_at: new Date().toISOString()
+        };
+        
+        const { error: notifyError } = await supabase
+          .from('notifications')
+          .insert(notificationData);
+          
+        if (notifyError) {
+          console.error('Error creating cancellation notification:', notifyError);
+          // Continue anyway as this is not critical
+        }
+      } catch (notifyError) {
+        console.warn('Error creating cancellation notification:', notifyError);
+        // Continue anyway as this is not critical
+      }
+      
       return {};
     } catch (error: any) {
       console.error('Error cancelling appointment:', error);
@@ -345,6 +406,39 @@ class SupabaseAppointmentService implements AppointmentService {
     return `https://meet.emotionsapp.com/${patientId}/${mentorId}`;
   }
 
+  async getAppointmentById(appointmentId: string): Promise<ServiceResponse<any>> {
+    try {
+      const { data, error } = await supabase
+        .from(tables.appointments)
+        .select(`
+          id,
+          patient_id,
+          mentor_id,
+          date,
+          start_time,
+          end_time,
+          status,
+          meeting_link,
+          meeting_type,
+          title,
+          description,
+          notes
+        `)
+        .eq('id', appointmentId)
+        .single();
+      
+      if (error) {
+        console.error('Error fetching appointment details:', error);
+        return { error: 'Could not find the appointment' };
+      }
+      
+      return { data };
+    } catch (error: any) {
+      console.error('Error in getAppointmentById:', error);
+      return { error: error.message || 'Failed to get appointment details' };
+    }
+  }
+
   async startAppointmentChat(appointmentId: string): Promise<ServiceResponse<string>> {
     try {
       // Get the appointment details
@@ -359,17 +453,40 @@ class SupabaseAppointmentService implements AppointmentService {
       if (!appointment) {
         return { error: 'Appointment not found' };
       }
-      
-      // Get or create a conversation for this appointment
-      const { data: conversationId, error } = await messagingService.getOrCreateConversation(
-        appointment.patient_id,
-        appointment.mentor_id,
-        appointmentId
-      );
-      
-      if (error) throw error;
-      
-      return { data: conversationId };
+
+      try {
+        // First try to use the conversational messaging system
+        const { data: conversationId, error } = await messagingService.getOrCreateConversation(
+          appointment.patient_id,
+          appointment.mentor_id,
+          appointmentId
+        );
+        
+        if (!error && conversationId) {
+          return { data: conversationId };
+        }
+        
+        // If that fails, try to use the direct messaging system
+        // Create a unique conversation ID based on the two users
+        const fallbackConversationId = [appointment.patient_id, appointment.mentor_id].sort().join('_');
+        
+        // Check if we can send direct messages
+        const testResult = await messageService.sendMessage({
+          senderId: appointment.patient_id,
+          recipientId: appointment.mentor_id,
+          content: `Chat started for appointment ${appointmentId}`
+        });
+        
+        if (!testResult.error) {
+          return { data: fallbackConversationId };
+        }
+        
+        // If both systems fail, return an appropriate error
+        return { error: 'Messaging system unavailable. Please try again later.' };
+      } catch (msgError: any) {
+        console.error('Error in messaging services:', msgError);
+        return { error: msgError.message || 'Failed to initialize chat' };
+      }
     } catch (error: any) {
       console.error('Error starting appointment chat:', error);
       return { error: error.message || 'Failed to start appointment chat' };

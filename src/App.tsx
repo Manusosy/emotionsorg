@@ -67,6 +67,10 @@ import ChatPage from "@/features/chat/pages/ChatPage";
 import NewConversation from "@/features/chat/components/NewConversation";
 import { useAuth } from "@/contexts/authContext";
 import AppointmentSessionPage from "@/features/mood_mentors/pages/AppointmentSessionPage";
+import { ThemeProvider } from './contexts/themeContext';
+import { setupDatabaseFunctions } from './lib/supabase';
+import PatientsPage from "./features/mood_mentors/pages/PatientsPage";
+import PatientProfilePage from "./features/mood_mentors/pages/PatientProfilePage";
 
 // Type definition for UserRole
 type UserRole = 'patient' | 'mood_mentor';
@@ -326,6 +330,11 @@ const AppContent = () => {
                   <MoodMentorPatientsPage />
                 </ProtectedErrorBoundary>
               } />
+              <Route path="/mood-mentor-dashboard/patient-profile/:id" element={
+                <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
+                  <PatientProfilePage />
+                </ProtectedErrorBoundary>
+              } />
               <Route path="/mood-mentor-dashboard/groups" element={
                 <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
                   <MoodMentorGroupsPage />
@@ -357,6 +366,11 @@ const AppContent = () => {
                 </ProtectedErrorBoundary>
               } />
               <Route path="/mood-mentor-dashboard/messages" element={
+                <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
+                  <MoodMentorMessagesPage />
+                </ProtectedErrorBoundary>
+              } />
+              <Route path="/mood-mentor-dashboard/messages/:patientId" element={
                 <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
                   <MoodMentorMessagesPage />
                 </ProtectedErrorBoundary>
@@ -412,6 +426,18 @@ const App = () => {
           console.error('Storage setup error:', err);
         });
     });
+    
+    // Try to set up database functions on app start
+    const initDb = async () => {
+      try {
+        console.log('Initializing database functions...');
+        await setupDatabaseFunctions();
+      } catch (error) {
+        console.error('Error initializing database functions:', error);
+      }
+    };
+    
+    initDb();
     
     // Log all navigation events
     const unregister = window.addEventListener('popstate', () => {

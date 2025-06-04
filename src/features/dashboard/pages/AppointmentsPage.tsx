@@ -405,17 +405,23 @@ export default function AppointmentsPage() {
       const { data: conversationId, error } = await appointmentService.startAppointmentChat(appointmentId);
       
       if (error) {
-        toast.error("Failed to start chat session");
-        console.error(error);
+        // Special handling for database table not existing yet
+        if (error.includes('relation') && error.includes('does not exist')) {
+          toast.info('Chat system is being set up. Please try again in a moment.');
+        } else {
+          toast.error('Failed to start chat session: ' + error);
+        }
         return;
       }
       
       if (conversationId) {
         navigate(`/chat/${conversationId}`);
+      } else {
+        toast.error('Could not create a chat session');
       }
     } catch (err) {
-      console.error("Error starting chat:", err);
-      toast.error("An error occurred while starting the chat");
+      console.error('Error starting chat:', err);
+      toast.error('An error occurred while starting the chat');
     }
   };
 
@@ -582,7 +588,7 @@ export default function AppointmentsPage() {
                                 variant="outline"
                                 size="sm"
                                 className="h-8 px-3 rounded-full"
-                                onClick={() => navigate(`/messages/${appointment.mentor?.id}`)}
+                                onClick={() => navigate(`/mood-mentor-dashboard/messages/${appointment.mentor?.id}`)}
                               >
                                 <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
                                 Chat

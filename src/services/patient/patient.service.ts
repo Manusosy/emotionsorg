@@ -44,16 +44,142 @@ const convertObjectToSnakeCase = (obj: any): any => {
 export class PatientService implements IPatientService {
   async getAllPatients(): Promise<PatientProfile[]> {
     try {
-      const { data, error } = await supabase
-        .from('patient_profiles')
-        .select('*')
-        .eq('is_active', true);
-
-      if (error) throw error;
+      console.log('Fetching all patients from database...');
       
-      // Convert snake_case to camelCase
-      return (data || []).map(patient => convertObjectToCamelCase(patient)) as PatientProfile[];
-    } catch (error) {
+      // Try multiple approaches to get patient data
+      let patients: PatientProfile[] = [];
+      
+      // Approach 1: Try patient_profiles table
+      try {
+        const { data, error } = await supabase
+          .from('patient_profiles')
+          .select('*')
+          .eq('is_active', true);
+
+        if (!error && data && data.length > 0) {
+          console.log(`Found ${data.length} patients in patient_profiles table`);
+          // Convert snake_case to camelCase
+          return (data || []).map(patient => convertObjectToCamelCase(patient)) as PatientProfile[];
+        } else if (error) {
+          console.warn('Error fetching from patient_profiles:', error);
+        }
+      } catch (err) {
+        console.warn('Exception fetching from patient_profiles:', err);
+      }
+      
+      // Approach 2: Try profiles table with role filter
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'patient');
+
+        if (!error && data && data.length > 0) {
+          console.log(`Found ${data.length} patients in profiles table`);
+          // Map to expected format
+          patients = data.map(p => ({
+            id: p.id,
+            userId: p.user_id || p.id,
+            fullName: p.full_name || `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+            email: p.email || '',
+            phoneNumber: p.phone_number || '',
+            dateOfBirth: p.date_of_birth || '',
+            gender: p.gender || '',
+            location: p.country || '',
+            city: p.city || '',
+            state: p.state || '',
+            avatarUrl: p.avatar_url,
+            isActive: true,
+            createdAt: p.created_at,
+            updatedAt: p.updated_at || p.created_at
+          }));
+          return patients;
+        } else if (error) {
+          console.warn('Error fetching from profiles:', error);
+        }
+      } catch (err) {
+        console.warn('Exception fetching from profiles:', err);
+      }
+      
+      // Approach 3: Try users table with role metadata filter
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('*');
+
+        if (!error && data && data.length > 0) {
+          // Filter for patients
+          const patientUsers = data.filter(u => 
+            u.user_metadata?.role === 'patient' || 
+            u.raw_user_meta_data?.role === 'patient'
+          );
+          
+          if (patientUsers.length > 0) {
+            console.log(`Found ${patientUsers.length} patients in users table`);
+            // Map to expected format
+            patients = patientUsers.map(p => ({
+              id: p.id,
+              userId: p.id,
+              fullName: p.user_metadata?.full_name || `${p.user_metadata?.first_name || ''} ${p.user_metadata?.last_name || ''}`.trim(),
+              email: p.email || '',
+              phoneNumber: p.phone || p.user_metadata?.phone_number || '',
+              dateOfBirth: p.user_metadata?.date_of_birth || '',
+              gender: p.user_metadata?.gender || '',
+              location: p.user_metadata?.country || '',
+              city: p.user_metadata?.city || '',
+              state: p.user_metadata?.state || '',
+              avatarUrl: p.user_metadata?.avatar_url,
+              isActive: true,
+              createdAt: p.created_at,
+              updatedAt: p.updated_at || p.created_at
+            }));
+            return patients;
+          }
+        } else if (error) {
+          console.warn('Error fetching from users:', error);
+        }
+      } catch (err: any) {
+        console.warn('Exception fetching from users:', err);
+      }
+      
+      // Approach 4: Try auth_users_view if available
+      try {
+        const { data, error } = await supabase
+          .from('auth_users_view')
+          .select('*')
+          .eq('role', 'patient');
+
+        if (!error && data && data.length > 0) {
+          console.log(`Found ${data.length} patients in auth_users_view`);
+          // Map to expected format
+          patients = data.map(p => ({
+            id: p.id,
+            userId: p.user_id || p.id,
+            fullName: p.full_name || `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+            email: p.email || '',
+            phoneNumber: p.phone_number || '',
+            dateOfBirth: p.date_of_birth || '',
+            gender: p.gender || '',
+            location: p.country || '',
+            city: p.city || '',
+            state: p.state || '',
+            avatarUrl: p.avatar_url,
+            isActive: true,
+            createdAt: p.created_at,
+            updatedAt: p.updated_at || p.created_at
+          }));
+          return patients;
+        } else if (error) {
+          console.warn('Error fetching from auth_users_view:', error);
+        }
+      } catch (err: any) {
+        console.warn('Exception fetching from auth_users_view:', err);
+      }
+      
+      // If we get here, we couldn't find any patients
+      console.log('No patient data found in database');
+      return [];
+    } catch (error: any) {
       console.error('Error in getAllPatients:', error);
       return [];
     }
@@ -192,7 +318,7 @@ export class PatientService implements IPatientService {
       
       // Try each bucket until one works
       let uploadedUrl = null;
-      let lastError = null;
+      let lastError: Error | null = null;
       
       for (const bucketName of bucketOptions) {
         try {
@@ -208,7 +334,7 @@ export class PatientService implements IPatientService {
             
           if (uploadError) {
             console.warn(`Failed to upload to "${bucketName}" bucket:`, uploadError.message);
-            lastError = uploadError;
+            lastError = new Error(uploadError.message);
             continue; // Try next bucket
           }
           
@@ -250,9 +376,9 @@ export class PatientService implements IPatientService {
             
             break; // Exit loop after successful upload
           }
-        } catch (bucketError) {
+        } catch (bucketError: any) {
           console.warn(`Error with "${bucketName}" bucket:`, bucketError);
-          lastError = bucketError;
+          lastError = new Error(bucketError.message || `Error with "${bucketName}" bucket`);
         }
       }
       
@@ -430,13 +556,84 @@ export class PatientService implements IPatientService {
     error: string | null;
   }> {
     try {
-      // Implementation placeholder - use getMockAppointmentReports for now
-      // In a real implementation, this would query the appointment_reports table
-      const mockReports = this.getMockAppointmentReports(options);
+      // Query the appointment_reports table or create a query to join appointments with feedback
+      let query = supabase
+        .from('appointments')
+        .select(`
+          id,
+          title,
+          description,
+          date,
+          start_time,
+          end_time,
+          status,
+          patient_id,
+          mentor_id,
+          rating,
+          feedback,
+          created_at,
+          updated_at
+        `)
+        .order('date', { ascending: false });
+      
+      // Apply filters based on options
+      if (options.patientId) {
+        query = query.eq('patient_id', options.patientId);
+      }
+      
+      if (options.moodMentorId) {
+        query = query.eq('mentor_id', options.moodMentorId);
+      }
+      
+      if (options.startDate) {
+        query = query.gte('date', options.startDate);
+      }
+      
+      if (options.endDate) {
+        query = query.lte('date', options.endDate);
+      }
+      
+      // Only get completed appointments with feedback
+      query = query.eq('status', 'completed').not('feedback', 'is', null);
+      
+      // Apply pagination
+      if (options.limit) {
+        query = query.limit(options.limit);
+      }
+      
+      if (options.offset) {
+        query = query.range(options.offset, options.offset + (options.limit || 10) - 1);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        throw error;
+      }
+      
+      // Convert to camelCase and map to AppointmentReport format
+      const reports: AppointmentReport[] = (data || []).map(appointment => ({
+        id: appointment.id,
+        appointmentId: appointment.id,
+        patientId: appointment.patient_id,
+        mentorId: appointment.mentor_id,
+        moodMentorId: appointment.mentor_id,
+        date: appointment.date,
+        startTime: appointment.start_time,
+        endTime: appointment.end_time,
+        notes: appointment.feedback || '',
+        summary: appointment.description || '',
+        recommendations: [], // Empty array as required by the interface
+        rating: appointment.rating || 0,
+        status: appointment.status,
+        title: appointment.title || 'Appointment',
+        createdAt: appointment.created_at,
+        updatedAt: appointment.updated_at
+      }));
       
       return {
         success: true,
-        data: mockReports,
+        data: reports,
         error: null
       };
     } catch (error: any) {
@@ -447,6 +644,21 @@ export class PatientService implements IPatientService {
         error: error.message
       };
     }
+  }
+
+  // Add the method required by the interface but implement it to use the real data method
+  getMockAppointmentReports(options: {
+    patientId?: string;
+    moodMentorId?: string;
+    limit?: number;
+    offset?: number;
+    startDate?: string;
+    endDate?: string;
+  }): AppointmentReport[] {
+    // This method can't directly call an async method, so we'll return an empty array
+    // The real implementation is in getAppointmentReports
+    console.log('getMockAppointmentReports is deprecated, use getAppointmentReports instead');
+    return [];
   }
 
   async createAppointment(appointment: Omit<Appointment, 'id' | 'status' | 'created_at' | 'updated_at' | 'cancellation_reason' | 'cancelled_by' | 'rating' | 'feedback'>): Promise<Appointment> {
@@ -502,6 +714,24 @@ export class PatientService implements IPatientService {
         return false;
       }
       
+      // First get the appointment details to know who to notify
+      const { data: appointment, error: fetchError } = await supabase
+        .from('appointments')
+        .select('id, patient_id, mentor_id, title, date, start_time')
+        .eq('id', id)
+        .single();
+        
+      if (fetchError) {
+        console.error('Error fetching appointment for cancellation:', fetchError);
+        return false;
+      }
+      
+      if (!appointment) {
+        console.error('Appointment not found');
+        return false;
+      }
+      
+      // Update the appointment status
       const { error } = await supabase
         .from('appointments')
         .update({ 
@@ -513,6 +743,48 @@ export class PatientService implements IPatientService {
         .eq('id', id);
         
       if (error) throw error;
+      
+      // Create a notification for the other party
+      try {
+        // Determine who to notify (the other person)
+        const recipientId = user.id === appointment.patient_id 
+          ? appointment.mentor_id 
+          : appointment.patient_id;
+          
+        const isCancelledByMentor = user.id === appointment.mentor_id;
+        
+        // Format the date for the notification
+        const appointmentDate = new Date(appointment.date);
+        const formattedDate = appointmentDate.toLocaleDateString('en-US', { 
+          weekday: 'long',
+          month: 'long', 
+          day: 'numeric'
+        });
+        
+        // Create notification
+        const notificationData = {
+          user_id: recipientId,
+          title: 'Appointment Cancelled',
+          message: isCancelledByMentor
+            ? `Your appointment on ${formattedDate} at ${appointment.start_time} has been cancelled by your mood mentor.${reason ? ` Reason: ${reason}` : ''}`
+            : `Your patient has cancelled their appointment scheduled for ${formattedDate} at ${appointment.start_time}.${reason ? ` Reason: ${reason}` : ''}`,
+          type: 'appointment',
+          is_read: false,
+          created_at: new Date().toISOString()
+        };
+        
+        const { error: notifyError } = await supabase
+          .from('notifications')
+          .insert(notificationData);
+          
+        if (notifyError) {
+          console.error('Error creating cancellation notification:', notifyError);
+          // Continue anyway as this is not critical
+        }
+      } catch (notifyError) {
+        console.warn('Error creating cancellation notification:', notifyError);
+        // Continue anyway as this is not critical
+      }
       
       return true;
     } catch (error) {
@@ -526,8 +798,90 @@ export class PatientService implements IPatientService {
     startDate?: string;
     endDate?: string;
   }): Promise<PatientMetric[]> {
-    // This is a placeholder - would query metrics tables in a real implementation
-    return [];
+    try {
+      // Build query to get metrics from mood_entries and stress_assessments
+      let query = supabase
+        .from('mood_entries')
+        .select('*')
+        .eq('user_id', patientId)
+        .order('created_at', { ascending: false });
+      
+      if (options?.startDate) {
+        query = query.gte('created_at', options.startDate);
+      }
+      
+      if (options?.endDate) {
+        query = query.lte('created_at', options.endDate);
+      }
+      
+      const { data: moodData, error: moodError } = await query;
+      
+      if (moodError) {
+        console.error('Error fetching mood metrics:', moodError);
+      }
+      
+      // Get stress assessments
+      let stressQuery = supabase
+        .from('stress_assessments')
+        .select('*')
+        .eq('user_id', patientId)
+        .order('created_at', { ascending: false });
+      
+      if (options?.startDate) {
+        stressQuery = stressQuery.gte('created_at', options.startDate);
+      }
+      
+      if (options?.endDate) {
+        stressQuery = stressQuery.lte('created_at', options.endDate);
+      }
+      
+      const { data: stressData, error: stressError } = await stressQuery;
+      
+      if (stressError) {
+        console.error('Error fetching stress metrics:', stressError);
+      }
+      
+      // Combine and format results
+      const metrics: PatientMetric[] = [];
+      
+      // Add mood metrics
+      if (moodData) {
+        moodData.forEach(entry => {
+          metrics.push({
+            id: `mood-${entry.id}`,
+            patientId,
+            type: 'mood',
+            value: typeof entry.mood === 'number' ? entry.mood : 
+                   typeof entry.mood === 'string' ? parseFloat(entry.mood) || 0 : 0,
+            timestamp: entry.created_at
+          });
+        });
+      }
+      
+      // Add stress metrics
+      if (stressData) {
+        stressData.forEach(entry => {
+          metrics.push({
+            id: `stress-${entry.id}`,
+            patientId,
+            type: 'stress',
+            value: typeof entry.score === 'number' ? entry.score : 
+                   typeof entry.score === 'string' ? parseFloat(entry.score) || 0 : 0,
+            timestamp: entry.created_at
+          });
+        });
+      }
+      
+      // Filter by type if specified
+      if (options?.type) {
+        return metrics.filter(m => m.type === options.type);
+      }
+      
+      return metrics;
+    } catch (error) {
+      console.error('Error getting metrics:', error);
+      return [];
+    }
   }
 
   async getAssessments(patientId: string, options?: {
@@ -536,20 +890,44 @@ export class PatientService implements IPatientService {
     startDate?: string;
     endDate?: string;
   }): Promise<Assessment[]> {
-    // This is a placeholder - would query assessment tables in a real implementation
-    return [];
-  }
-
-  getMockAppointmentReports(options: {
-    patientId?: string;
-    moodMentorId?: string;
-    limit?: number;
-    offset?: number;
-    startDate?: string;
-    endDate?: string;
-  }): AppointmentReport[] {
-    // This is a placeholder for mock data
-    return [];
+    try {
+      // Query the assessments table
+      let query = supabase
+        .from('assessments')
+        .select('*')
+        .eq('user_id', patientId)
+        .order('created_at', { ascending: false });
+      
+      // Apply filters
+      if (options?.type) {
+        query = query.eq('type', options.type);
+      }
+      
+      if (options?.startDate) {
+        query = query.gte('created_at', options.startDate);
+      }
+      
+      if (options?.endDate) {
+        query = query.lte('created_at', options.endDate);
+      }
+      
+      if (options?.limit) {
+        query = query.limit(options.limit);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        console.error('Error fetching assessments:', error);
+        return [];
+      }
+      
+      // Convert to camelCase and map to Assessment format
+      return (data || []).map(assessment => convertObjectToCamelCase(assessment)) as Assessment[];
+    } catch (error) {
+      console.error('Error getting assessments:', error);
+      return [];
+    }
   }
 
   async getPatientDashboardData(patientId: string): Promise<{
@@ -558,25 +936,154 @@ export class PatientService implements IPatientService {
     error: string | null;
   }> {
     try {
-      // This is a placeholder - would aggregate data from multiple tables in a real implementation
-      const mockData: PatientDashboardData = {
+      // Get metrics for dashboard calculations
+      const metrics = await this.getMetrics(patientId);
+      
+      // Get recent mood entries
+      const { data: moodData, error: moodError } = await supabase
+        .from('mood_entries')
+        .select('*')
+        .eq('user_id', patientId)
+        .order('created_at', { ascending: false })
+        .limit(30);
+      
+      if (moodError) {
+        console.error('Error fetching mood data:', moodError);
+      }
+      
+      // Get recent journal entries
+      const { data: journalData, error: journalError } = await supabase
+        .from('journal_entries')
+        .select('*')
+        .eq('user_id', patientId)
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      if (journalError) {
+        console.error('Error fetching journal entries:', journalError);
+      }
+      
+      // Get support groups
+      const { data: groupData, error: groupError } = await supabase
+        .from('group_members')
+        .select(`
+          group_id,
+          support_groups (
+            id,
+            name,
+            description,
+            mood_mentor_id,
+            created_at
+          )
+        `)
+        .eq('user_id', patientId)
+        .eq('status', 'active');
+      
+      if (groupError) {
+        console.error('Error fetching support groups:', groupError);
+      }
+      
+      // Calculate metrics
+      const moodEntries = moodData || [];
+      const hasEntries = moodEntries.length > 0;
+      
+      // Calculate average mood score
+      const moodScore = hasEntries 
+        ? moodEntries.reduce((sum, entry) => {
+            const moodValue = typeof entry.mood === 'number' ? entry.mood : 
+                             typeof entry.mood === 'string' ? parseFloat(entry.mood) || 0 : 0;
+            return sum + moodValue;
+          }, 0) / moodEntries.length
+        : 0;
+      
+      // Calculate stress level from metrics
+      const stressMetrics = metrics.filter(m => m.type === 'stress');
+      const stressLevel = stressMetrics.length > 0
+        ? stressMetrics.reduce((sum, m) => sum + m.value, 0) / stressMetrics.length
+        : 0;
+      
+      // Calculate streak and consistency
+      let streak = 0;
+      let consistency = 0;
+      
+      if (hasEntries) {
+        // Sort by date ascending for streak calculation
+        const sortedEntries = [...moodEntries].sort((a, b) => 
+          new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+        );
+        
+        // Calculate dates with entries in the last 30 days
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const datesWithEntries = new Set();
+        
+        sortedEntries.forEach(entry => {
+          const entryDate = new Date(entry.created_at);
+          if (entryDate >= thirtyDaysAgo) {
+            datesWithEntries.add(entryDate.toISOString().split('T')[0]);
+          }
+        });
+        
+        // Calculate consistency as percentage of days with entries
+        const daysBetween = Math.ceil((now.getTime() - thirtyDaysAgo.getTime()) / (24 * 60 * 60 * 1000));
+        consistency = Math.round((datesWithEntries.size / daysBetween) * 100);
+        
+        // Calculate current streak
+        const lastEntry = sortedEntries[sortedEntries.length - 1];
+        const lastEntryDate = new Date(lastEntry.created_at);
+        const lastEntryDay = lastEntryDate.toISOString().split('T')[0];
+        const today = now.toISOString().split('T')[0];
+        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        
+        // Check if the user has logged today or yesterday to maintain streak
+        const hasRecentEntry = lastEntryDay === today || lastEntryDay === yesterday;
+        
+        if (hasRecentEntry) {
+          streak = 1; // Start with 1 for the most recent day
+          
+          // Go backwards through dates to find consecutive days
+          let currentDate = new Date(lastEntryDate);
+          currentDate.setDate(currentDate.getDate() - 1);
+          
+          while (true) {
+            const dateStr = currentDate.toISOString().split('T')[0];
+            if (datesWithEntries.has(dateStr)) {
+              streak++;
+              currentDate.setDate(currentDate.getDate() - 1);
+            } else {
+              break;
+            }
+          }
+        }
+      }
+      
+      // Format journal entries
+      const journalEntries = (journalData || []).map(entry => convertObjectToCamelCase(entry));
+      
+      // Format support groups
+      const supportGroups = (groupData || [])
+        .filter(item => item.support_groups) // Filter out any null groups
+        .map(item => convertObjectToCamelCase(item.support_groups));
+      
+      // Build dashboard data
+      const dashboardData: PatientDashboardData = {
         metrics: {
-          moodScore: 3.5,
-          stressLevel: 2.1,
-          consistency: 85,
-          lastCheckInStatus: 'good',
-          streak: 5,
-          firstCheckInDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
-          lastCheckInDate: new Date().toISOString(),
-          hasAssessments: true
+          moodScore: parseFloat(moodScore.toFixed(1)),
+          stressLevel: parseFloat(stressLevel.toFixed(1)),
+          consistency,
+          streak,
+          lastCheckInStatus: hasEntries ? this.getMoodStatus(moodEntries[0].mood) : 'unknown',
+          firstCheckInDate: hasEntries ? moodEntries[moodEntries.length - 1].created_at : null,
+          lastCheckInDate: hasEntries ? moodEntries[0].created_at : null,
+          hasAssessments: metrics.length > 0
         },
-        journalEntries: [],
-        supportGroups: []
+        journalEntries,
+        supportGroups
       };
       
       return {
         success: true,
-        data: mockData,
+        data: dashboardData,
         error: null
       };
     } catch (error: any) {
@@ -587,6 +1094,18 @@ export class PatientService implements IPatientService {
         error: error.message
       };
     }
+  }
+  
+  // Helper method to convert mood value to status
+  private getMoodStatus(mood: number | string): string {
+    const moodValue = typeof mood === 'number' ? mood : 
+                     typeof mood === 'string' ? parseFloat(mood) || 0 : 0;
+    
+    if (moodValue >= 4) return 'excellent';
+    if (moodValue >= 3) return 'good';
+    if (moodValue >= 2) return 'okay';
+    if (moodValue >= 1) return 'poor';
+    return 'bad';
   }
 
   async saveAssessment(assessment: Omit<Assessment, 'id'>): Promise<Assessment> {

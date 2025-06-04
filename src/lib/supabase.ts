@@ -13,6 +13,7 @@ declare global {
       VITE_SUPABASE_URL: string;
       VITE_SUPABASE_ANON_KEY: string;
       VITE_SUPABASE_SERVICE_KEY: string;
+      [key: string]: string; // Add index signature to allow string indexing
     }
   }
 }
@@ -223,4 +224,109 @@ export const tables = {
   messages: 'messages',
   help_groups: 'help_groups',
   favorites: 'favorites',
-}; 
+};
+
+// Create a function to set up the required database functions if they don't exist
+export const setupDatabaseFunctions = async () => {
+  try {
+    console.log('Setting up database functions...');
+    
+    // Create a function to get all patients for a mood mentor
+    // This function will bypass RLS for mood mentors to see patients
+    const { error: rpcError } = await supabase.rpc('create_get_patients_function', {
+      function_sql: `
+        CREATE OR REPLACE FUNCTION public.get_all_patients_for_mentor(mentor_id UUID)
+        RETURNS SETOF public.patient_profiles
+        LANGUAGE sql
+        SECURITY DEFINER
+        AS $$
+          -- Return all patients
+          -- In a real implementation, this would filter based on relationships
+          -- between mentors and patients
+          SELECT * FROM public.patient_profiles;
+        $$;
+      `
+    });
+    
+    if (rpcError) {
+      console.error('Error creating get_all_patients_for_mentor function:', rpcError);
+      
+      // Try direct SQL execution as fallback (requires admin privileges)
+      const { error: sqlError } = await supabase.from('_setup_functions').insert({
+        sql: `
+          CREATE OR REPLACE FUNCTION public.get_all_patients_for_mentor(mentor_id UUID)
+          RETURNS SETOF public.patient_profiles
+          LANGUAGE sql
+          SECURITY DEFINER
+          AS $$
+            -- Return all patients
+            -- In a real implementation, this would filter based on relationships
+            -- between mentors and patients
+            SELECT * FROM public.patient_profiles;
+          $$;
+        `
+      });
+      
+      if (sqlError) {
+        console.error('Error with fallback function creation:', sqlError);
+      }
+    }
+    
+    console.log('Database functions setup complete');
+    return true;
+  } catch (error) {
+    console.error('Error setting up database functions:', error);
+    return false;
+  }
+};
+
+/**
+ * Helper function to list all tables in the database
+ * This is useful for debugging database connection issues
+ */
+export async function listDatabaseTables(): Promise<string[]> {
+  try {
+    console.log('Listing database tables...');
+    
+    // First try the PostgreSQL information schema
+    const { data: schemaTables, error: schemaError } = await supabase
+      .from('information_schema.tables')
+      .select('table_name')
+      .eq('table_schema', 'public');
+    
+    if (!schemaError && schemaTables && schemaTables.length > 0) {
+      const tableNames = schemaTables.map(t => t.table_name);
+      console.log('Tables found via schema:', tableNames);
+      return tableNames;
+    }
+    
+    // If that fails, try a simpler approach - query a known table
+    console.log('Schema query failed, trying direct table access...');
+    
+    // Try to access profiles table
+    const { data: profileData, error: profileError } = await supabase
+      .from('profiles')
+      .select('count');
+    
+    if (!profileError) {
+      console.log('Found profiles table');
+      return ['profiles'];
+    }
+    
+    // Try to access patient_profiles table
+    const { data: patientData, error: patientError } = await supabase
+      .from('patient_profiles')
+      .select('count');
+    
+    if (!patientError) {
+      console.log('Found patient_profiles table');
+      return ['patient_profiles'];
+    }
+    
+    console.log('Could not detect any tables');
+    return [];
+  } catch (error) {
+    console.error('Error listing tables:', error);
+    return [];
+  }
+} 

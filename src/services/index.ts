@@ -18,6 +18,7 @@ export { authService } from './auth/auth.service';
 export { appointmentService } from './appointments/appointment.service';
 export { messageService } from './messages/message.service';
 export { userService } from './users/user.service';
+export { notificationService } from './notifications/notification.service';
 
 // Service Interfaces
 export interface ServiceResponse<T> {
@@ -60,6 +61,7 @@ export interface AppointmentService {
     endDate?: string; 
   }) => Promise<any[]>;
   startAppointmentChat: (appointmentId: string) => Promise<ServiceResponse<string>>;
+  getAppointmentById: (appointmentId: string) => Promise<ServiceResponse<any>>;
 }
 
 export interface UserService {
@@ -71,6 +73,7 @@ export interface MessageService {
   sendMessage: (data: { senderId: string; recipientId: string; content: string }) => Promise<ServiceResponse<void>>;
   getMessages: (userId: string) => Promise<ServiceResponse<any[]>>;
   markAsRead: (messageId: string) => Promise<ServiceResponse<void>>;
+  getOrCreateConversation: (user1Id: string, user2Id: string) => Promise<ServiceResponse<string>>;
 }
 
 // TODO: These services will be implemented later
@@ -337,6 +340,4 @@ export const dataService: DataService = {
 };
 
 export const apiService: ApiService = {};
-
-// Export the messaging service
 export const messagingService: MessagingService = new SupabaseMessagingService(); 

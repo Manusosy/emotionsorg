@@ -7,7 +7,9 @@ export interface IDataService {
   getUserNotifications(userId: string): Promise<any>;
   markNotificationAsRead(id: string): Promise<any>;
   markAllNotificationsAsRead(userId: string): Promise<any>;
+  markNotificationsAsRead(ids: string[]): Promise<any>;
   deleteNotification(id: string): Promise<any>;
+  getNotifications(userId: string, userType: string): Promise<any>;
 }
 
 /**
@@ -33,6 +35,24 @@ export class DataService implements IDataService {
   }
 
   /**
+   * Get notifications with user type filter
+   */
+  async getNotifications(userId: string, userType: string) {
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+      
+      return { data, error };
+    } catch (error) {
+      console.error('Error in getNotifications:', error);
+      return { data: null, error };
+    }
+  }
+
+  /**
    * Mark notification as read
    */
   async markNotificationAsRead(id: string) {
@@ -45,6 +65,23 @@ export class DataService implements IDataService {
       return { data, error };
     } catch (error) {
       console.error('Error in markNotificationAsRead:', error);
+      return { data: null, error };
+    }
+  }
+
+  /**
+   * Mark multiple notifications as read
+   */
+  async markNotificationsAsRead(ids: string[]) {
+    try {
+      const { data, error } = await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .in('id', ids);
+      
+      return { data, error };
+    } catch (error) {
+      console.error('Error in markNotificationsAsRead:', error);
       return { data: null, error };
     }
   }

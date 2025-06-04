@@ -1,4 +1,4 @@
-import { useState, useCallback, useContext, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "../../../components/ui/card";
@@ -24,9 +24,10 @@ import {
   Clock3,
   Loader2
 } from "lucide-react";
-import { AuthContext } from "@/contexts/authContext";
+import { useAuth } from "@/contexts/authContext";
 import { dataService } from "@/services";
 import { toast } from "sonner";
+import { supabase } from "@/lib/supabase";
 
 // Resource type definition
 interface Resource {
@@ -35,25 +36,28 @@ interface Resource {
   type: 'article' | 'video' | 'podcast' | 'document' | 'group' | 'workshop';
   category: string;
   author: string;
-  authorRole: string;
-  authorAvatar?: string;
-  date: string;
-  readTime?: string;
+  author_role?: string;
+  author_avatar?: string;
+  date?: string;
+  read_time?: string;
   duration?: string;
   description: string;
-  imageUrl: string;
-  tags: string[];
+  thumbnail_url?: string;
   url: string;
+  file_url?: string;
+  tags?: string[];
   featured?: boolean;
-  savedByUser?: boolean;
   downloads?: number;
   shares?: number;
   mood_mentor_id?: string;
+  created_at: string;
+  updated_at?: string;
+  is_favorite?: boolean;
 }
 
 export default function ResourcesPage() {
   const navigate = useNavigate();
-  const { user } = useContext(AuthContext);
+  const { user } = useAuth();
   const [resources, setResources] = useState<Resource[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -68,15 +72,34 @@ export default function ResourcesPage() {
   const loadResources = async () => {
     try {
       setIsLoading(true);
-      const response = await dataService.getResources();
       
-      if (response.error) {
-        console.error('Error loading resources:', response.error);
+      if (!user) {
+        setResources([]);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Get resources with favorite status
+      const { data, error } = await supabase.rpc('get_resources_with_favorite_status', {
+        p_user_id: user.id
+      });
+      
+      if (error) {
+        console.error('Error loading resources:', error);
         toast.error('Failed to load resources');
         return;
       }
       
-      setResources(response.data || []);
+      // Only set resources if we got data back from the database
+      setResources(data || []);
+      
+      // Update savedResources state based on favorites
+      if (data) {
+        const favoriteIds = data
+          .filter((resource: Resource) => resource.is_favorite)
+          .map((resource: Resource) => resource.id);
+        setSavedResources(favoriteIds);
+      }
     } catch (error) {
       console.error('Error:', error);
       toast.error('Failed to load resources');
@@ -86,12 +109,13 @@ export default function ResourcesPage() {
   };
 
   // Filter resources based on search and active tab
-  const filteredResources = resources.filter(resource => {
+  const filteredResources = resources.filter((resource: Resource) => {
     // Check if search query matches
     const matchesSearch = searchQuery === "" || 
       resource.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       resource.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      resource.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
+      resource.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      resource.author.toLowerCase().includes(searchQuery.toLowerCase());
     
     // Check if tab matches
     const matchesTab = activeTab === "all" || 
@@ -101,32 +125,83 @@ export default function ResourcesPage() {
       (activeTab === "groups" && resource.type === "group") ||
       (activeTab === "workshops" && resource.type === "workshop") ||
       (activeTab === "documents" && resource.type === "document") ||
-      (activeTab === "saved" && savedResources.includes(resource.id));
+      (activeTab === "saved" && resource.is_favorite);
     
     return matchesSearch && matchesTab;
   });
 
   // Get featured resources
-  const featuredResources = resources.filter(resource => resource.featured);
+  const featuredResources = resources.filter((resource: Resource) => resource.featured);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     // Search is already applied through the filter
   };
 
-  const handleSaveResource = useCallback((resourceId: string, e?: React.MouseEvent) => {
+  const handleSaveResource = useCallback(async (resourceId: string, e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation(); // Prevent triggering parent click events
     }
     
-    if (savedResources.includes(resourceId)) {
-      setSavedResources(prev => prev.filter(id => id !== resourceId));
-      toast("Resource removed from your saved items");
-    } else {
-      setSavedResources(prev => [...prev, resourceId]);
-      toast("Resource saved to your collection");
+    if (!user) {
+      toast.error("Please sign in to save resources");
+      return;
     }
-  }, [savedResources]);
+    
+    try {
+      const isFavorite = savedResources.includes(resourceId);
+      
+      if (isFavorite) {
+        // Remove from favorites
+        const { error } = await supabase
+          .from('resource_favorites')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('resource_id', resourceId);
+          
+        if (error) throw error;
+        
+        setSavedResources(prev => prev.filter(id => id !== resourceId));
+        
+        // Update the resource in the local state
+        setResources(prev => 
+          prev.map(resource => 
+            resource.id === resourceId 
+              ? { ...resource, is_favorite: false } 
+              : resource
+          )
+        );
+        
+        toast.success("Resource removed from your saved items");
+      } else {
+        // Add to favorites
+        const { error } = await supabase
+          .from('resource_favorites')
+          .insert({
+            user_id: user.id,
+            resource_id: resourceId
+          });
+          
+        if (error) throw error;
+        
+        setSavedResources(prev => [...prev, resourceId]);
+        
+        // Update the resource in the local state
+        setResources(prev => 
+          prev.map(resource => 
+            resource.id === resourceId 
+              ? { ...resource, is_favorite: true } 
+              : resource
+          )
+        );
+        
+        toast.success("Resource saved to your collection");
+      }
+    } catch (error) {
+      console.error('Error saving resource:', error);
+      toast.error("Failed to update saved resources");
+    }
+  }, [savedResources, user]);
 
   const handleShareResource = useCallback((resource: Resource, e?: React.MouseEvent) => {
     if (e) {
@@ -197,6 +272,14 @@ export default function ResourcesPage() {
 
   // Resource list component
   const ResourceList = () => {
+    if (isLoading) {
+      return (
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      );
+    }
+    
     if (filteredResources.length === 0) {
       return (
         <Card className="p-6 text-center">
@@ -205,7 +288,9 @@ export default function ResourcesPage() {
           <p className="text-slate-500 mb-4">
             {searchQuery 
               ? "Try a different search term or category" 
-              : "Resources will be available soon"}
+              : activeTab === "saved"
+                ? "You haven't saved any resources yet"
+                : "Resources will be added by Mood Mentors soon"}
           </p>
         </Card>
       );
@@ -222,7 +307,7 @@ export default function ResourcesPage() {
             <div className="flex flex-col md:flex-row">
               <div className="md:w-1/4 h-48 md:h-auto relative">
                 <img
-                  src={resource.imageUrl}
+                  src={resource.thumbnail_url || "https://placehold.co/400x300?text=Resource+Image"}
                   alt={resource.title}
                   className="object-cover h-full w-full"
                   onError={(e) => {
@@ -245,7 +330,7 @@ export default function ResourcesPage() {
                   <div>
                     <h3 className="text-lg font-medium mb-1">{resource.title}</h3>
                     <p className="text-sm text-slate-500 mb-2">
-                      {resource.type === 'article' || resource.type === 'document' ? `${resource.readTime} • ` : 
+                      {resource.type === 'article' || resource.type === 'document' ? `${resource.read_time} • ` : 
                       resource.type === 'video' || resource.type === 'podcast' || resource.type === 'workshop' ? `${resource.duration} • ` : 
                       ''}
                       {resource.date}
@@ -259,7 +344,7 @@ export default function ResourcesPage() {
                       onClick={(e) => handleSaveResource(resource.id, e)}
                       type="button"
                     >
-                      {savedResources.includes(resource.id) ? (
+                      {resource.is_favorite ? (
                         <Bookmark className="h-4 w-4 fill-current" />
                       ) : (
                         <BookmarkPlus className="h-4 w-4" />
@@ -291,7 +376,7 @@ export default function ResourcesPage() {
                 <p className="text-slate-600 mb-3">{resource.description}</p>
                 
                 <div className="flex flex-wrap gap-1 mb-3">
-                  {resource.tags.map(tag => (
+                  {resource.tags?.map(tag => (
                     <Badge key={tag} variant="outline" className="text-xs">
                       {tag}
                     </Badge>
@@ -300,10 +385,10 @@ export default function ResourcesPage() {
                 
                 <div className="flex justify-between items-center">
                   <div className="flex items-center">
-                    {resource.authorAvatar ? (
+                    {resource.author_avatar ? (
                       <Avatar className="h-6 w-6 mr-2">
                         <AvatarImage 
-                          src={resource.authorAvatar} 
+                          src={resource.author_avatar} 
                           alt={resource.author}
                           onError={(e) => {
                             e.currentTarget.style.display = 'none';
@@ -318,7 +403,7 @@ export default function ResourcesPage() {
                     )}
                     <div>
                       <span className="text-sm font-medium">{resource.author}</span>
-                      <span className="text-xs text-slate-500 block">{resource.authorRole}</span>
+                      <span className="text-xs text-slate-500 block">{resource.author_role}</span>
                     </div>
                   </div>
                   <Button 
@@ -349,7 +434,7 @@ export default function ResourcesPage() {
     >
       <div className="aspect-video w-full relative">
         <img
-          src={resource.imageUrl}
+          src={resource.thumbnail_url || "https://placehold.co/400x300?text=Resource+Image"}
           alt={resource.title}
           className="object-cover w-full h-full"
           onError={(e) => {
@@ -373,7 +458,7 @@ export default function ResourcesPage() {
           onClick={(e) => handleSaveResource(resource.id, e)}
           type="button"
         >
-          {savedResources.includes(resource.id) ? (
+          {resource.is_favorite ? (
             <Bookmark className="h-4 w-4 fill-current" />
           ) : (
             <BookmarkPlus className="h-4 w-4" />
@@ -383,7 +468,7 @@ export default function ResourcesPage() {
       <CardHeader className="pb-2">
         <CardTitle className="text-lg">{resource.title}</CardTitle>
         <CardDescription>
-          {resource.type === 'article' || resource.type === 'document' ? `${resource.readTime} • ` : 
+          {resource.type === 'article' || resource.type === 'document' ? `${resource.read_time} • ` : 
           resource.type === 'video' || resource.type === 'podcast' || resource.type === 'workshop' ? `${resource.duration} • ` : 
           ''}
           {resource.date}
@@ -392,7 +477,7 @@ export default function ResourcesPage() {
       <CardContent>
         <p className="text-sm text-slate-600 line-clamp-2">{resource.description}</p>
         <div className="flex flex-wrap gap-1 mt-3">
-          {resource.tags.map(tag => (
+          {resource.tags?.map(tag => (
             <Badge key={tag} variant="outline" className="text-xs">
               {tag}
             </Badge>
@@ -401,10 +486,10 @@ export default function ResourcesPage() {
       </CardContent>
       <CardFooter className="border-t pt-3 flex justify-between">
         <div className="flex items-center text-sm text-slate-500">
-          {resource.authorAvatar ? (
+          {resource.author_avatar ? (
             <Avatar className="h-6 w-6 mr-2">
               <AvatarImage 
-                src={resource.authorAvatar} 
+                src={resource.author_avatar} 
                 alt={resource.author}
                 onError={(e) => {
                   e.currentTarget.style.display = 'none';
