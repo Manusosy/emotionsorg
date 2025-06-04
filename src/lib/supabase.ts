@@ -329,4 +329,314 @@ export async function listDatabaseTables(): Promise<string[]> {
     console.error('Error listing tables:', error);
     return [];
   }
+}
+
+export async function setupMessagingSystem() {
+  console.log('Setting up messaging system tables...');
+  
+  try {
+    // First, check if the conversations table exists
+    const { error: checkError } = await supabase
+      .from('conversations')
+      .select('id')
+      .limit(1);
+    
+    if (!checkError) {
+      console.log('Messaging system is already set up.');
+      return { success: true };
+    }
+    
+    if (checkError && !checkError.message?.includes('does not exist')) {
+      console.error('Unexpected error checking conversations table:', checkError);
+      return { success: false, error: checkError };
+    }
+    
+    // Check if the user has admin privileges
+    const { data: authData } = await supabase.auth.getSession();
+    if (!authData || !authData.session) {
+      return { 
+        success: false, 
+        error: new Error('You must be logged in to set up the messaging system') 
+      };
+    }
+
+    // SQL script for creating messaging tables
+    const messagingSetupSQL = `
+      -- Table: conversations
+      CREATE TABLE IF NOT EXISTS public.conversations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        appointment_id UUID,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        last_message_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
+      );
+      
+      -- Enable RLS on conversations
+      ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+      
+      -- Table: conversation_participants
+      CREATE TABLE IF NOT EXISTS public.conversation_participants (
+        conversation_id UUID NOT NULL,
+        user_id UUID NOT NULL,
+        joined_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        last_read_at TIMESTAMP WITH TIME ZONE,
+        PRIMARY KEY (conversation_id, user_id)
+      );
+      
+      -- Enable RLS on conversation_participants
+      ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
+      
+      -- Table: messages
+      CREATE TABLE IF NOT EXISTS public.messages (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        conversation_id UUID NOT NULL,
+        sender_id UUID NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
+        read_at TIMESTAMP WITH TIME ZONE,
+        deleted_at TIMESTAMP WITH TIME ZONE,
+        attachment_url TEXT,
+        attachment_type TEXT
+      );
+      
+      -- Enable RLS on messages
+      ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+      
+      -- RLS Policies for conversations
+      CREATE POLICY IF NOT EXISTS "Users can view their own conversations" ON public.conversations
+        FOR SELECT USING (
+          EXISTS (
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = id
+            AND user_id = auth.uid()
+          )
+        );
+      
+      CREATE POLICY IF NOT EXISTS "Users can create conversations" ON public.conversations
+        FOR INSERT WITH CHECK (true);
+      
+      CREATE POLICY IF NOT EXISTS "Users can update their own conversations" ON public.conversations
+        FOR UPDATE USING (
+          EXISTS (
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = id
+            AND user_id = auth.uid()
+          )
+        );
+      
+      -- RLS Policies for conversation_participants
+      CREATE POLICY IF NOT EXISTS "Users can view participants in their conversations" ON public.conversation_participants
+        FOR SELECT USING (
+          EXISTS (
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = conversation_participants.conversation_id
+            AND user_id = auth.uid()
+          )
+        );
+      
+      CREATE POLICY IF NOT EXISTS "Users can add participants to conversations they create" ON public.conversation_participants
+        FOR INSERT WITH CHECK (true);
+      
+      CREATE POLICY IF NOT EXISTS "Users can update their own participant status" ON public.conversation_participants
+        FOR UPDATE USING (user_id = auth.uid());
+      
+      -- RLS Policies for messages
+      CREATE POLICY IF NOT EXISTS "Users can view messages in their conversations" ON public.messages
+        FOR SELECT USING (
+          EXISTS (
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = messages.conversation_id
+            AND user_id = auth.uid()
+          )
+        );
+      
+      CREATE POLICY IF NOT EXISTS "Users can send messages to conversations they are part of" ON public.messages
+        FOR INSERT WITH CHECK (
+          sender_id = auth.uid() AND
+          EXISTS (
+            SELECT 1 FROM conversation_participants
+            WHERE conversation_id = messages.conversation_id
+            AND user_id = auth.uid()
+          )
+        );
+      
+      CREATE POLICY IF NOT EXISTS "Users can update their own messages" ON public.messages
+        FOR UPDATE USING (sender_id = auth.uid());
+      
+      -- Create view for user conversations
+      CREATE OR REPLACE VIEW public.user_conversations_view AS
+      SELECT 
+        c.id AS conversation_id,
+        c.appointment_id,
+        cp.user_id,
+        (
+          SELECT m.id 
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message_id,
+        (
+          SELECT m.sender_id 
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message_sender_id,
+        (
+          SELECT m.content 
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message_content,
+        (
+          SELECT m.created_at 
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message_time,
+        (
+          SELECT m.read_at 
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          ORDER BY m.created_at DESC
+          LIMIT 1
+        ) AS last_message_read_at,
+        cp.last_read_at,
+        (
+          SELECT COUNT(*)::int
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          AND m.sender_id != cp.user_id
+          AND (m.read_at IS NULL OR m.read_at > cp.last_read_at)
+          AND m.deleted_at IS NULL
+        ) > 0 AS has_unread,
+        (
+          SELECT COUNT(*)::int
+          FROM messages m
+          WHERE m.conversation_id = c.id
+          AND m.sender_id != cp.user_id
+          AND (m.read_at IS NULL OR m.read_at > cp.last_read_at)
+          AND m.deleted_at IS NULL
+        ) AS unread_count,
+        c.created_at,
+        (
+          SELECT ocp.user_id
+          FROM conversation_participants ocp
+          WHERE ocp.conversation_id = c.id
+          AND ocp.user_id != cp.user_id
+          LIMIT 1
+        ) AS other_user_id
+      FROM conversations c
+      JOIN conversation_participants cp ON c.id = cp.conversation_id;
+      
+      -- Grant permissions
+      GRANT SELECT, INSERT, UPDATE ON public.conversations TO authenticated;
+      GRANT SELECT, INSERT, UPDATE ON public.conversation_participants TO authenticated;
+      GRANT SELECT, INSERT, UPDATE ON public.messages TO authenticated;
+      GRANT SELECT ON public.user_conversations_view TO authenticated;
+    `;
+    
+    // Execute the SQL script directly
+    const { error: sqlError } = await supabase.rpc('exec_sql', { sql: messagingSetupSQL });
+    
+    if (sqlError) {
+      console.error('Error executing SQL script:', sqlError);
+      
+      // If exec_sql function doesn't exist or fails, try executing SQL through the SQL editor
+      // This is a fallback for users who don't have the exec_sql function
+      return { 
+        success: false, 
+        error: new Error(`Could not set up messaging system: ${sqlError.message}. Please run the SQL script manually in the Supabase SQL editor.`) 
+      };
+    }
+    
+    // Verify tables were created
+    const { error: verifyError } = await supabase
+      .from('conversations')
+      .select('id')
+      .limit(1);
+    
+    if (verifyError) {
+      console.error('Verification failed - conversations table was not created:', verifyError);
+      return { 
+        success: false, 
+        error: new Error('Failed to create messaging tables. Please run the SQL script manually in the Supabase SQL editor.') 
+      };
+    }
+    
+    console.log('Messaging system tables setup completed successfully');
+    return { success: true };
+  } catch (error) {
+    console.error('Error setting up messaging system:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error 
+        ? error 
+        : new Error('Unknown error setting up messaging system. Please run the SQL script manually in the Supabase SQL editor.') 
+    };
+  }
+}
+
+/**
+ * Check if the messaging system is properly set up by verifying all required tables exist
+ */
+export async function isMessagingSystemSetup(): Promise<boolean> {
+  try {
+    console.log('Checking if messaging system is properly set up...');
+    
+    // Check for conversations table
+    const { error: conversationsError } = await supabase
+      .from('conversations')
+      .select('id')
+      .limit(1);
+    
+    if (conversationsError && conversationsError.message?.includes('does not exist')) {
+      console.log('Conversations table does not exist');
+      return false;
+    }
+    
+    // Check for conversation_participants table
+    const { error: participantsError } = await supabase
+      .from('conversation_participants')
+      .select('conversation_id')
+      .limit(1);
+    
+    if (participantsError && participantsError.message?.includes('does not exist')) {
+      console.log('Conversation participants table does not exist');
+      return false;
+    }
+    
+    // Check for messages table
+    const { error: messagesError } = await supabase
+      .from('messages')
+      .select('id')
+      .limit(1);
+    
+    if (messagesError && messagesError.message?.includes('does not exist')) {
+      console.log('Messages table does not exist');
+      return false;
+    }
+    
+    // Check for user_conversations_view
+    const { error: viewError } = await supabase
+      .from('user_conversations_view')
+      .select('conversation_id')
+      .limit(1);
+    
+    if (viewError && viewError.message?.includes('does not exist')) {
+      console.log('User conversations view does not exist');
+      return false;
+    }
+    
+    // All required tables and views exist
+    console.log('Messaging system appears to be properly set up');
+    return true;
+  } catch (error) {
+    console.error('Error checking messaging system setup:', error);
+    return false;
+  }
 } 

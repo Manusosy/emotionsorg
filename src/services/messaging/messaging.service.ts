@@ -149,39 +149,162 @@ export default class SupabaseMessagingService implements MessagingService {
         .eq('user_id', userId)
         .order('last_message_time', { ascending: false });
 
-      if (conversationsError) throw conversationsError;
+      if (conversationsError) {
+        console.error('Error fetching user conversations:', conversationsError);
+        // Check if the view doesn't exist
+        if (conversationsError.message?.includes('relation "user_conversations_view" does not exist')) {
+          return { error: 'Messaging system is not yet initialized. Please check your database setup.' };
+        }
+        throw conversationsError;
+      }
+
+      if (!conversationsData || conversationsData.length === 0) {
+        return { data: [] };
+      }
 
       // For each conversation, get the other participant's details
       const enhancedConversations = await Promise.all(
         (conversationsData || []).map(async (conv) => {
-          // Get the other participant in this conversation
-          const { data: participantsData, error: participantsError } = await supabase
-            .from('conversation_participants')
-            .select('user_id')
-            .eq('conversation_id', conv.conversation_id)
-            .neq('user_id', userId);
+          try {
+            // Get the other participant in this conversation
+            const { data: participantsData, error: participantsError } = await supabase
+              .from('conversation_participants')
+              .select('user_id')
+              .eq('conversation_id', conv.conversation_id)
+              .neq('user_id', userId);
 
-          if (participantsError) throw participantsError;
+            if (participantsError) {
+              console.warn('Error fetching conversation participants:', participantsError);
+              return {
+                ...conv,
+                other_participant: { 
+                  id: "unknown", 
+                  full_name: "Unknown User", 
+                  email: "",
+                  avatar_url: null
+                }
+              };
+            }
 
-          if (participantsData && participantsData.length > 0) {
-            const otherUserId = participantsData[0].user_id;
-            
-            // Get the other user's profile
-            const { data: userData, error: userError } = await supabase
-              .from('profiles')
-              .select('id, full_name, email, avatar_url')
-              .eq('id', otherUserId)
-              .single();
+            if (participantsData && participantsData.length > 0) {
+              const otherUserId = participantsData[0].user_id;
+              
+              // First try to get from profiles table
+              let userData = null;
+              let userError = null;
+              
+              try {
+                const result = await supabase
+                  .from('profiles')
+                  .select('id, full_name, email, avatar_url')
+                  .eq('id', otherUserId)
+                  .maybeSingle();
+                  
+                userData = result.data;
+                userError = result.error;
+              } catch (err) {
+                console.warn('Error fetching user profile:', err);
+              }
+              
+              // If that fails, try patient_profiles
+              if (!userData || userError) {
+                try {
+                  const patientResult = await supabase
+                    .from('patient_profiles')
+                    .select('id, user_id, full_name, email, avatar_url')
+                    .eq('user_id', otherUserId)
+                    .maybeSingle();
+                    
+                  if (patientResult.data) {
+                    userData = {
+                      id: patientResult.data.user_id,
+                      full_name: patientResult.data.full_name,
+                      email: patientResult.data.email,
+                      avatar_url: patientResult.data.avatar_url
+                    };
+                  }
+                } catch (err) {
+                  console.warn('Error fetching patient profile:', err);
+                }
+              }
+              
+              // If still no data, try mood_mentor_profiles
+              if (!userData) {
+                try {
+                  const mentorResult = await supabase
+                    .from('mood_mentor_profiles')
+                    .select('id, user_id, full_name, email, avatar_url')
+                    .eq('user_id', otherUserId)
+                    .maybeSingle();
+                    
+                  if (mentorResult.data) {
+                    userData = {
+                      id: mentorResult.data.user_id,
+                      full_name: mentorResult.data.full_name,
+                      email: mentorResult.data.email,
+                      avatar_url: mentorResult.data.avatar_url
+                    };
+                  }
+                } catch (err) {
+                  console.warn('Error fetching mentor profile:', err);
+                }
+              }
+              
+              // If still no data, try auth.users as a last resort
+              if (!userData) {
+                try {
+                  const { data: authUser } = await supabase.auth.admin.getUserById(otherUserId);
+                  if (authUser && authUser.user) {
+                    userData = {
+                      id: authUser.user.id,
+                      full_name: authUser.user.user_metadata?.full_name || authUser.user.email?.split('@')[0] || 'Unknown User',
+                      email: authUser.user.email || '',
+                      avatar_url: authUser.user.user_metadata?.avatar_url || null
+                    };
+                  }
+                } catch (err) {
+                  console.warn('Error fetching auth user:', err);
+                }
+              }
 
-            if (userError) throw userError;
+              // If we still don't have user data, use a placeholder
+              if (!userData) {
+                userData = { 
+                  id: otherUserId, 
+                  full_name: "Unknown User", 
+                  email: "",
+                  avatar_url: null
+                };
+              }
 
+              return {
+                ...conv,
+                other_participant: userData
+              };
+            }
+
+            // No other participant found
             return {
               ...conv,
-              other_participant: userData
+              other_participant: { 
+                id: "unknown", 
+                full_name: "Unknown User", 
+                email: "",
+                avatar_url: null
+              }
+            };
+          } catch (err) {
+            console.error('Error processing conversation:', err);
+            return {
+              ...conv,
+              other_participant: { 
+                id: "unknown", 
+                full_name: "Unknown User", 
+                email: "",
+                avatar_url: null
+              }
             };
           }
-
-          return conv;
         })
       );
 

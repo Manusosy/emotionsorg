@@ -31,6 +31,7 @@ export default function MessagesPage() {
           console.log(`Initializing conversation with mentor ID: ${mentorId}`);
           
           // Try to create a conversation with the messaging system
+          console.log(`Creating conversation between patient ${user.id} and mentor ${mentorId}`);
           const result = await messagingService.getOrCreateConversation(
             user.id,
             mentorId
@@ -40,6 +41,7 @@ export default function MessagesPage() {
             console.error("Error initializing conversation:", result.error);
             setInitializationError(result.error);
             toast.error("Could not initialize conversation with mood mentor");
+            setIsInitializing(false);
             return;
           }
           
@@ -51,7 +53,12 @@ export default function MessagesPage() {
             // Add a small delay to ensure the database has registered the conversation
             setTimeout(() => {
               setIsInitializing(false);
-            }, 500);
+            }, 1000);
+          } else {
+            console.error("No conversation ID returned");
+            setInitializationError("Failed to create conversation");
+            toast.error("Could not initialize conversation with mood mentor");
+            setIsInitializing(false);
           }
         } catch (err: any) {
           console.error("Error in conversation initialization:", err);
@@ -62,6 +69,9 @@ export default function MessagesPage() {
       };
       
       initializeConversation();
+    } else {
+      // If we don't have a mentor ID, just show the messages page
+      setIsInitializing(false);
     }
   }, [mentorId, user, retryCount]);
 

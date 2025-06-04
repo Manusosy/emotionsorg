@@ -11,7 +11,7 @@ import { Spinner } from '@/components/ui/spinner';
 export interface ConversationUser {
   id: string;
   name: string;
-  avatarUrl?: string;
+  avatarUrl?: string | null;
   role: 'patient' | 'mood_mentor';
 }
 

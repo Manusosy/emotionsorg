@@ -73,8 +73,8 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
               id: convo.conversation_id,
               otherUser: {
                 id: otherUser.id,
-                name: otherUser.full_name,
-                avatarUrl: otherUser.avatar_url,
+                name: otherUser.full_name || "Unknown User",
+                avatarUrl: otherUser.avatar_url || undefined,
                 role: userRole === 'patient' ? 'mood_mentor' : 'patient'
               },
               lastMessage: {
@@ -99,15 +99,27 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
             } else if (!hasInitializedConversation) {
               // If we didn't find a conversation for this patient, create one
               console.log("Creating new conversation with patient:", initialPatientId);
-              const { data: newConversationId } = await messagingService.getOrCreateConversation(
-                user.id,
-                initialPatientId
-              );
-              
-              if (newConversationId) {
-                // Reload conversations to include the new one
-                loadConversations();
-                setHasInitializedConversation(true);
+              try {
+                const { data: newConversationId, error } = await messagingService.getOrCreateConversation(
+                  user.id,
+                  initialPatientId
+                );
+                
+                if (error) {
+                  console.error("Error creating conversation:", error);
+                  toast.error("Could not create conversation with patient");
+                  return;
+                }
+                
+                if (newConversationId) {
+                  console.log("Created conversation with ID:", newConversationId);
+                  // Reload conversations to include the new one
+                  setTimeout(() => loadConversations(), 500);
+                  setHasInitializedConversation(true);
+                }
+              } catch (err) {
+                console.error("Error creating conversation:", err);
+                toast.error("Failed to initialize conversation");
               }
             }
           } else if (formattedConversations.length > 0 && !activeConversationId) {
@@ -116,6 +128,36 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
           }
         } else {
           console.log("No conversations found or error occurred:", conversationsError);
+          
+          // If there's an error and we have an initialPatientId, try to create the conversation
+          if (conversationsError && initialPatientId && !hasInitializedConversation) {
+            try {
+              console.log("Attempting to create conversation with patient:", initialPatientId);
+              const { data: newConversationId, error } = await messagingService.getOrCreateConversation(
+                user.id,
+                initialPatientId
+              );
+              
+              if (error) {
+                console.error("Error creating conversation:", error);
+                toast.error("Could not create conversation with patient");
+                setConversations([]);
+                return;
+              }
+              
+              if (newConversationId) {
+                console.log("Created conversation with ID:", newConversationId);
+                // Reload conversations after a short delay
+                setTimeout(() => loadConversations(), 500);
+                setHasInitializedConversation(true);
+                return;
+              }
+            } catch (err) {
+              console.error("Error creating conversation:", err);
+              toast.error("Failed to initialize conversation");
+            }
+          }
+          
           setConversations([]);
         }
       } catch (error: any) {

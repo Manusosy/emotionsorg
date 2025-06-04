@@ -52,7 +52,20 @@ export default function MessagesPage() {
           setInitializationError(null);
           console.log(`Initializing conversation with patient ID: ${patientId}`);
           
+          // First verify that the patient exists
+          const patientResult = await patientService.getPatientById(patientId);
+          if (!patientResult.success || !patientResult.data) {
+            console.error("Patient not found:", patientId);
+            setInitializationError("Patient not found. Please check the patient ID.");
+            toast.error("Could not find patient profile");
+            setIsInitializing(false);
+            return;
+          }
+          
+          console.log("Patient found:", patientResult.data);
+          
           // Try to create a conversation with the messaging system
+          console.log(`Creating conversation between mentor ${user.id} and patient ${patientId}`);
           const result = await messagingService.getOrCreateConversation(
             user.id,
             patientId
@@ -62,6 +75,7 @@ export default function MessagesPage() {
             console.error("Error initializing conversation:", result.error);
             setInitializationError(result.error);
             toast.error("Could not initialize conversation with patient");
+            setIsInitializing(false);
             return;
           }
           
@@ -73,7 +87,12 @@ export default function MessagesPage() {
             // Add a small delay to ensure the database has registered the conversation
             setTimeout(() => {
               setIsInitializing(false);
-            }, 500);
+            }, 1000);
+          } else {
+            console.error("No conversation ID returned");
+            setInitializationError("Failed to create conversation");
+            toast.error("Could not initialize conversation with patient");
+            setIsInitializing(false);
           }
         } catch (err: any) {
           console.error("Error in conversation initialization:", err);
@@ -84,6 +103,9 @@ export default function MessagesPage() {
       };
       
       initializeConversation();
+    } else {
+      // If we don't have a patient ID, just show the messages page
+      setIsInitializing(false);
     }
   }, [patientId, user, retryCount]);
   
