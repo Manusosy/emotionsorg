@@ -5,10 +5,11 @@ import { SharedMessagesPage } from "@/components/messaging/SharedMessagesPage";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/authContext";
 import { toast } from "sonner";
-import { messagingService, messageService } from "@/services";
+import { messagingService, messageService, patientService } from "@/services";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { AlertCircle, Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export default function MessagesPage() {
   const { patientId } = useParams();
@@ -19,6 +20,25 @@ export default function MessagesPage() {
   const [isInitializing, setIsInitializing] = useState(false);
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [patientProfile, setPatientProfile] = useState<any>(null);
+  
+  // Fetch patient profile if we have a patient ID
+  useEffect(() => {
+    const fetchPatientProfile = async () => {
+      if (!patientId) return;
+      
+      try {
+        const result = await patientService.getPatientById(patientId);
+        if (result.success && result.data) {
+          setPatientProfile(result.data);
+        }
+      } catch (err) {
+        console.error("Error fetching patient profile:", err);
+      }
+    };
+    
+    fetchPatientProfile();
+  }, [patientId]);
   
   // Set the initial patient ID when component mounts
   useEffect(() => {
@@ -32,20 +52,11 @@ export default function MessagesPage() {
           setInitializationError(null);
           console.log(`Initializing conversation with patient ID: ${patientId}`);
           
-          // Try to create a conversation with the new messaging system first
-          let result = await messagingService.getOrCreateConversation(
+          // Try to create a conversation with the messaging system
+          const result = await messagingService.getOrCreateConversation(
             user.id,
             patientId
           );
-          
-          // If that fails, try the direct messaging fallback
-          if (result.error) {
-            console.log('First attempt failed, trying direct messaging fallback');
-            result = await messageService.getOrCreateConversation(
-              user.id,
-              patientId
-            );
-          }
           
           if (result.error) {
             console.error("Error initializing conversation:", result.error);
@@ -58,19 +69,23 @@ export default function MessagesPage() {
             console.log(`Conversation initialized with ID: ${result.data}`);
             setInitialPatientId(patientId);
             setInitializationError(null);
+            
+            // Add a small delay to ensure the database has registered the conversation
+            setTimeout(() => {
+              setIsInitializing(false);
+            }, 500);
           }
         } catch (err: any) {
           console.error("Error in conversation initialization:", err);
           setInitializationError(err.message || "Failed to prepare messaging interface");
           toast.error("Failed to create conversation with patient");
-        } finally {
           setIsInitializing(false);
         }
       };
       
       initializeConversation();
     }
-  }, [patientId, user, navigate, retryCount]);
+  }, [patientId, user, retryCount]);
   
   const handleCreateNewMessage = () => {
     setShowNewMessageModal(true);
@@ -81,13 +96,40 @@ export default function MessagesPage() {
     setRetryCount(prev => prev + 1);
   };
 
+  // Helper function to get initials from a name
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(part => part[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2);
+  };
+
   return (
     <DashboardLayout>
       {isInitializing ? (
         <div className="flex items-center justify-center h-[calc(100vh-134px)]">
-          <div className="flex flex-col items-center">
-            <div className="w-10 h-10 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mb-4"></div>
-            <p className="text-gray-600">Preparing chat interface...</p>
+          <div className="flex flex-col items-center text-center">
+            {/* Modern loading spinner */}
+            <div className="relative">
+              <div className="w-16 h-16 border-4 border-blue-200 border-opacity-50 rounded-full"></div>
+              <div className="absolute top-0 left-0 w-16 h-16 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+              {patientProfile && (
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                  <Avatar className="h-10 w-10">
+                    <AvatarImage src={patientProfile.avatarUrl} />
+                    <AvatarFallback>{getInitials(patientProfile.fullName || "")}</AvatarFallback>
+                  </Avatar>
+                </div>
+              )}
+            </div>
+            <p className="mt-4 text-gray-700 font-medium">Preparing chat interface...</p>
+            {patientProfile && (
+              <p className="text-sm text-gray-500 mt-1">
+                Connecting with {patientProfile.fullName}
+              </p>
+            )}
           </div>
         </div>
       ) : initializationError ? (
@@ -113,7 +155,10 @@ export default function MessagesPage() {
                     Trying again...
                   </>
                 ) : (
-                  "Try Again"
+                  <>
+                    <MessageSquare className="mr-2 h-4 w-4" />
+                    Try Again
+                  </>
                 )}
               </Button>
             </div>

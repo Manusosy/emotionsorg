@@ -44,6 +44,7 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [hasInitializedConversation, setHasInitializedConversation] = useState(false);
   
   // Load conversations
   useEffect(() => {
@@ -52,116 +53,100 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
       
       try {
         setIsLoading(true);
-        // Get all messages for the user
-        const { data: messagesData, error } = await messageService.getMessages(user.id);
         
-        if (error) {
-          console.error("Error loading messages:", error);
-          // Don't show error toast for empty results or when table doesn't exist yet
-          if (error.toString().includes('relation "messages" does not exist')) {
-            setConversations([]);
-            setIsLoading(false);
-            return;
-          }
-          throw new Error(error);
-        }
+        // Try the new conversation-based messaging system first
+        const { data: conversationsData, error: conversationsError } = await messagingService.getUserConversations(user.id);
         
-        // If no messages, return empty array instead of showing error
-        if (!messagesData || messagesData.length === 0) {
-          setConversations([]);
-          setIsLoading(false);
-          return;
-        }
-        
-        // Group messages by conversation (based on the other user)
-        const conversationsMap = new Map<string, {
-          otherUser: ConversationUser,
-          lastMessage: {
-            content: string,
-            timestamp: string,
-            unread: boolean
-          }
-        }>();
-        
-        messagesData?.forEach((message: any) => {
-          const isCurrentUser = message.sender_id === user.id;
-          const otherUser = isCurrentUser ? message.recipient : message.sender;
-          const otherUserId = otherUser.id;
+        if (!conversationsError && conversationsData && conversationsData.length > 0) {
+          console.log("Found conversations using conversation-based messaging:", conversationsData);
           
-          // Skip if no other user found
-          if (!otherUserId) return;
-          
-          // Create a unique conversation ID based on both users
-          const conversationId = [user.id, otherUserId].sort().join('_');
-          
-          // Determine if the other user is a patient or mentor
-          const otherUserRole = userRole === 'patient' ? 'mood_mentor' : 'patient';
-          
-          if (!conversationsMap.has(conversationId)) {
-            conversationsMap.set(conversationId, {
+          // Format conversations for the UI
+          const formattedConversations: ConversationItem[] = conversationsData.map(convo => {
+            const otherUser = convo.other_participant || { 
+              id: "", 
+              full_name: "Unknown User", 
+              email: "",
+              avatar_url: ""
+            };
+            
+            return {
+              id: convo.conversation_id,
               otherUser: {
-                id: otherUserId,
-                name: otherUser.full_name || "Unknown User",
+                id: otherUser.id,
+                name: otherUser.full_name,
                 avatarUrl: otherUser.avatar_url,
-                role: otherUserRole as 'patient' | 'mood_mentor'
+                role: userRole === 'patient' ? 'mood_mentor' : 'patient'
               },
               lastMessage: {
-                content: message.content,
-                timestamp: message.created_at,
-                unread: !isCurrentUser && !message.read
+                content: convo.last_message_content || "No messages yet",
+                timestamp: convo.last_message_time || new Date().toISOString(),
+                unread: convo.has_unread
               }
-            });
-          } else {
-            // Update last message if this one is newer
-            const existing = conversationsMap.get(conversationId)!;
-            const existingTimestamp = new Date(existing.lastMessage.timestamp).getTime();
-            const newTimestamp = new Date(message.created_at).getTime();
-            
-            if (newTimestamp > existingTimestamp) {
-              existing.lastMessage = {
-                content: message.content,
-                timestamp: message.created_at,
-                unread: !isCurrentUser && !message.read
-              };
-              conversationsMap.set(conversationId, existing);
-            }
-          }
-        });
-        
-        // Convert map to array and sort by last message time
-        const formattedConversations: ConversationItem[] = Array.from(conversationsMap.entries())
-          .map(([id, data]) => ({
-            id,
-            otherUser: data.otherUser,
-            lastMessage: data.lastMessage
-          }))
-          .sort((a, b) => {
-            return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
+            };
           });
-        
-        setConversations(formattedConversations);
-        
-        // If we have conversations, select the first one
-        if (formattedConversations.length > 0) {
-          handleSelectConversation(formattedConversations[0].id);
+          
+          setConversations(formattedConversations);
+          
+          // If we have conversations and an initialPatientId, find and select that conversation
+          if (initialPatientId) {
+            const targetConversation = formattedConversations.find(
+              c => c.otherUser.id === initialPatientId
+            );
+            
+            if (targetConversation) {
+              handleSelectConversation(targetConversation.id);
+              setHasInitializedConversation(true);
+            } else if (!hasInitializedConversation) {
+              // If we didn't find a conversation for this patient, create one
+              console.log("Creating new conversation with patient:", initialPatientId);
+              const { data: newConversationId } = await messagingService.getOrCreateConversation(
+                user.id,
+                initialPatientId
+              );
+              
+              if (newConversationId) {
+                // Reload conversations to include the new one
+                loadConversations();
+                setHasInitializedConversation(true);
+              }
+            }
+          } else if (formattedConversations.length > 0 && !activeConversationId) {
+            // If no specific conversation is requested, select the first one
+            handleSelectConversation(formattedConversations[0].id);
+          }
+        } else {
+          console.log("No conversations found or error occurred:", conversationsError);
+          setConversations([]);
         }
       } catch (error: any) {
         console.error("Error loading conversations:", error);
-        // Only show toast for actual errors, not empty states
-        if (error.toString().includes('Failed to fetch') || 
-            error.toString().includes('Network Error')) {
-          toast.error("Failed to load conversations. Network issue.");
-        } else {
-          // Set empty conversations instead of showing error
-          setConversations([]);
-        }
+        setConversations([]);
       } finally {
         setIsLoading(false);
       }
     };
     
     loadConversations();
-  }, [user, userRole]);
+    
+    // Set up a real-time subscription for new conversations
+    const channel = supabase
+      .channel('public:conversation_participants')
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'conversation_participants',
+        filter: `user_id=eq.${user?.id}`
+      }, (payload) => {
+        console.log('New conversation participant added:', payload);
+        // Reload conversations when a new one is created
+        loadConversations();
+      })
+      .subscribe();
+      
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, userRole, initialPatientId, hasInitializedConversation]);
   
   // Handle selecting a conversation
   const handleSelectConversation = async (conversationId: string) => {
@@ -175,174 +160,119 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
         setOtherUserData(convo.otherUser);
       }
       
-      // Get the two user IDs from the conversation ID
-      const userIds = conversationId.split('_');
-      const otherUserId = userIds.find(id => id !== user?.id);
-      
-      if (!user || !otherUserId) {
-        throw new Error("Could not determine participants in conversation");
+      if (!user) {
+        throw new Error("User not authenticated");
       }
       
-      // Get messages between these two users
-      const { data: messagesData, error: messagesError } = await messageService.getMessages(user.id);
+      // Get messages for this conversation
+      const { data: messagesData, error: messagesError } = await messagingService.getConversationMessages(
+        conversationId,
+        50,
+        0
+      );
       
       if (messagesError) {
-        // Don't show error for empty results or when table doesn't exist yet
-        if (messagesError.toString().includes('relation "messages" does not exist')) {
-          setMessages([]);
-          setIsLoadingMessages(false);
-          return;
-        }
-        throw new Error(messagesError);
+        console.error("Error fetching messages:", messagesError);
+        setMessages([]);
+        setIsLoadingMessages(false);
+        return;
       }
       
-      // If no messages, set empty array and return
       if (!messagesData || messagesData.length === 0) {
         setMessages([]);
         setIsLoadingMessages(false);
         return;
       }
       
-      // Filter messages to only those between these two users
-      const relevantMessages = (messagesData || []).filter((msg: any) => {
-        return (msg.sender_id === user.id && msg.recipient_id === otherUserId) || 
-               (msg.sender_id === otherUserId && msg.recipient_id === user.id);
-      });
-      
-      // If no relevant messages between these users, show empty state
-      if (relevantMessages.length === 0) {
-        setMessages([]);
-        setIsLoadingMessages(false);
-        return;
-      }
-      
       // Format messages for UI
-      const formattedMessages = relevantMessages.map((msg: any) => ({
+      const formattedMessages = messagesData.map((msg: any) => ({
         id: msg.id,
         content: msg.content,
         timestamp: msg.created_at,
         isCurrentUser: msg.sender_id === user.id,
         senderName: msg.sender_id === user.id ? "You" : convo?.otherUser.name || "User",
-        read: !!msg.read
+        read: !!msg.read_at
       }));
-      
-      // Sort messages by timestamp
-      formattedMessages.sort((a, b) => 
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
       
       setMessages(formattedMessages);
       
       // Mark all unread messages as read
-      const unreadMessages = relevantMessages.filter((msg: any) => 
-        !msg.read && msg.recipient_id === user.id
-      );
-      
-      for (const msg of unreadMessages) {
-        try {
-          await messageService.markAsRead(msg.id);
-        } catch (markError) {
-          console.error("Error marking message as read:", markError);
-          // Continue with other messages even if one fails
-        }
-      }
+      await messagingService.markMessagesAsRead(conversationId, user.id);
       
       // Update conversation list to show messages as read
-      if (unreadMessages.length > 0) {
-        setConversations(prev => prev.map(c => {
-          if (c.id === conversationId) {
-            return {
-              ...c,
-              lastMessage: {
-                ...c.lastMessage,
-                unread: false
-              }
-            };
-          }
-          return c;
-        }));
-      }
+      setConversations(prev => prev.map(c => {
+        if (c.id === conversationId) {
+          return {
+            ...c,
+            lastMessage: {
+              ...c.lastMessage,
+              unread: false
+            }
+          };
+        }
+        return c;
+      }));
       
       // Set up real-time subscription for new messages
-      try {
-        const channel = supabase
-          .channel(`messages:${user.id}`)
-          .on('postgres_changes', { 
-            event: 'INSERT', 
-            schema: 'public', 
-            table: 'messages',
-            filter: `recipient_id=eq.${user.id}`
-          }, (payload) => {
-            const newMessage = payload.new as any;
+      const channel = supabase
+        .channel(`messages:${conversationId}`)
+        .on('postgres_changes', { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`
+        }, (payload) => {
+          const newMessage = payload.new as any;
+          
+          // Add message to UI
+          setMessages(prevMessages => {
+            const messageExists = prevMessages.some(msg => msg.id === newMessage.id);
+            if (messageExists) return prevMessages;
             
-            // Only handle messages relevant to this conversation
-            if (newMessage.sender_id !== otherUserId && newMessage.recipient_id !== otherUserId) {
-              return;
+            // Mark message as read automatically if it's for the active conversation
+            if (newMessage.sender_id !== user.id) {
+              messagingService.markMessagesAsRead(conversationId, user.id);
             }
             
-            // Add message to UI
-            setMessages(prevMessages => {
-              const messageExists = prevMessages.some(msg => msg.id === newMessage.id);
-              if (messageExists) return prevMessages;
-              
-              // Mark message as read automatically
-              try {
-                messageService.markAsRead(newMessage.id);
-              } catch (markError) {
-                console.error("Error marking new message as read:", markError);
+            return [
+              ...prevMessages,
+              {
+                id: newMessage.id,
+                content: newMessage.content,
+                timestamp: newMessage.created_at,
+                isCurrentUser: newMessage.sender_id === user.id,
+                senderName: newMessage.sender_id === user.id ? "You" : otherUserData?.name || "User",
+                read: true
               }
-              
-              return [
-                ...prevMessages,
-                {
-                  id: newMessage.id,
-                  content: newMessage.content,
-                  timestamp: newMessage.created_at,
-                  isCurrentUser: false,
-                  senderName: otherUserData?.name || "User",
-                  read: true
-                }
-              ];
+            ];
+          });
+          
+          // Update conversation last message
+          setConversations(prevConversations => {
+            return prevConversations.map(convo => {
+              if (convo.id === conversationId) {
+                return {
+                  ...convo,
+                  lastMessage: {
+                    content: newMessage.content,
+                    timestamp: newMessage.created_at,
+                    unread: false // Already marked as read
+                  }
+                };
+              }
+              return convo;
             });
-            
-            // Update conversation last message
-            setConversations(prevConversations => {
-              return prevConversations.map(convo => {
-                if (convo.id === conversationId) {
-                  return {
-                    ...convo,
-                    lastMessage: {
-                      content: newMessage.content,
-                      timestamp: newMessage.created_at,
-                      unread: false // Already marked as read
-                    }
-                  };
-                }
-                return convo;
-              });
-            });
-          })
-          .subscribe();
-        
-        // Return cleanup function
-        return () => {
-          supabase.removeChannel(channel);
-        };
-      } catch (subError) {
-        console.error("Error setting up real-time subscription:", subError);
-        // Continue even if subscription fails
-      }
+          });
+        })
+        .subscribe();
+      
+      // Return cleanup function
+      return () => {
+        supabase.removeChannel(channel);
+      };
     } catch (error: any) {
       console.error("Error loading messages:", error);
-      
-      // Only show toast for actual errors, not empty states
-      if (error.toString().includes('Failed to fetch') || 
-          error.toString().includes('Network Error')) {
-        toast.error("Failed to load messages. Network issue.");
-      } else {
-        // Set empty messages instead of showing error for other issues
-        setMessages([]);
-      }
+      setMessages([]);
     } finally {
       setIsLoadingMessages(false);
     }
@@ -355,9 +285,6 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
     if (!messageText.trim() || !activeConversationId || !user) return;
     
     try {
-      const convo = conversations.find(c => c.id === activeConversationId);
-      if (!convo) return;
-      
       // Create a temporary message ID for optimistic updates
       const tempId = `temp-${Date.now()}`;
       
@@ -394,23 +321,17 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
       
       // Send the message to the server
       try {
-        await messageService.sendMessage({
-          senderId: user.id,
-          recipientId: convo.otherUser.id,
-          content: messageContent
-        });
+        await messagingService.sendMessage(
+          activeConversationId,
+          user.id,
+          messageContent
+        );
       } catch (error: any) {
         console.error("Error sending message:", error);
+        toast.error("Failed to send message. Please try again.");
         
-        // If table doesn't exist yet, don't show error to user
-        if (error.toString().includes('relation "messages" does not exist')) {
-          toast.info("Messaging system is being set up. Please try again in a moment.");
-        } else {
-          toast.error("Failed to send message. Please try again.");
-          
-          // Remove the optimistic message if it failed to send
-          setMessages(prev => prev.filter(msg => msg.id !== tempId));
-        }
+        // Remove the optimistic message if it failed to send
+        setMessages(prev => prev.filter(msg => msg.id !== tempId));
       }
     } catch (error: any) {
       console.error("Error in send message flow:", error);
@@ -451,94 +372,6 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
 
   const emptyState = getEmptyStateMessage();
 
-  // Effect to select conversation with initial patient ID
-  useEffect(() => {
-    if (!initialPatientId || !user) return;
-    
-    const initiateConversation = async () => {
-      try {
-        // First check if we have loaded conversations
-        if (conversations.length > 0) {
-          // Look for existing conversation with this patient
-          const existingConvo = conversations.find(c => 
-            c.otherUser.id === initialPatientId
-          );
-          
-          if (existingConvo) {
-            // If found, select it
-            handleSelectConversation(existingConvo.id);
-            return;
-          }
-        }
-        
-        // Don't try to create a conversation while still loading
-        if (isLoading) return;
-        
-        if (userRole === 'mood_mentor' && initialPatientId) {
-          // For mood mentors, try to create a new conversation
-          console.log(`Creating conversation with patient ${initialPatientId}`);
-          
-          // Try both messaging systems if needed
-          let conversationId = null;
-          let error = null;
-          
-          try {
-            // First try the full messaging system
-            const result = await messagingService.getOrCreateConversation(
-              user.id,
-              initialPatientId
-            );
-            
-            if (!result.error && result.data) {
-              conversationId = result.data;
-            } else {
-              error = result.error;
-              console.log('First attempt failed, trying direct messaging:', error);
-              
-              // If that fails, try the direct messaging fallback
-              const fallbackResult = await messageService.getOrCreateConversation(
-                user.id,
-                initialPatientId
-              );
-              
-              if (!fallbackResult.error && fallbackResult.data) {
-                conversationId = fallbackResult.data;
-                error = null;
-              } else {
-                error = fallbackResult.error || 'Unknown error creating conversation';
-              }
-            }
-          } catch (err: any) {
-            console.error('Error creating conversation:', err);
-            error = err.message || 'Failed to initialize messaging';
-          }
-          
-          if (error) {
-            console.error("Error creating conversation:", error);
-            toast.error("Failed to create conversation with patient");
-            return;
-          }
-          
-          if (conversationId) {
-            console.log(`Created conversation with ID: ${conversationId}`);
-            
-            // Force reload of conversations in 0.5 seconds
-            // This gives the DB time to register the new conversation
-            setTimeout(() => {
-              // Refresh the page to load the new conversation
-              window.location.reload();
-            }, 500);
-          }
-        }
-      } catch (err) {
-        console.error("Error handling initial patient ID:", err);
-        toast.error("Could not initialize conversation with patient");
-      }
-    };
-    
-    initiateConversation();
-  }, [initialPatientId, conversations, user, isLoading, userRole, handleSelectConversation]);
-
   return (
     <div className="p-4 md:p-6 h-[calc(100vh-134px)]">
       <div className="flex flex-col h-full">
@@ -572,7 +405,13 @@ export function SharedMessagesPage({ userRole, onCreateNewMessage, initialPatien
         
         {isLoading ? (
           <div className="flex items-center justify-center h-full">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex flex-col items-center">
+              <div className="relative">
+                <div className="w-12 h-12 border-4 border-blue-200 border-opacity-50 rounded-full"></div>
+                <div className="absolute top-0 left-0 w-12 h-12 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+              </div>
+              <p className="mt-4 text-gray-600">Loading conversations...</p>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-[calc(100vh-190px)]">

@@ -454,39 +454,19 @@ class SupabaseAppointmentService implements AppointmentService {
         return { error: 'Appointment not found' };
       }
 
-      try {
-        // First try to use the conversational messaging system
-        const { data: conversationId, error } = await messagingService.getOrCreateConversation(
-          appointment.patient_id,
-          appointment.mentor_id,
-          appointmentId
-        );
-        
-        if (!error && conversationId) {
-          return { data: conversationId };
-        }
-        
-        // If that fails, try to use the direct messaging system
-        // Create a unique conversation ID based on the two users
-        const fallbackConversationId = [appointment.patient_id, appointment.mentor_id].sort().join('_');
-        
-        // Check if we can send direct messages
-        const testResult = await messageService.sendMessage({
-          senderId: appointment.patient_id,
-          recipientId: appointment.mentor_id,
-          content: `Chat started for appointment ${appointmentId}`
-        });
-        
-        if (!testResult.error) {
-          return { data: fallbackConversationId };
-        }
-        
-        // If both systems fail, return an appropriate error
-        return { error: 'Messaging system unavailable. Please try again later.' };
-      } catch (msgError: any) {
-        console.error('Error in messaging services:', msgError);
-        return { error: msgError.message || 'Failed to initialize chat' };
+      // Use the conversational messaging system with the new schema
+      const { data: conversationId, error } = await messagingService.getOrCreateConversation(
+        appointment.patient_id,
+        appointment.mentor_id,
+        appointmentId
+      );
+      
+      if (!error && conversationId) {
+        return { data: conversationId };
       }
+      
+      // If there was an error, return it
+      return { error: error || 'Failed to create conversation' };
     } catch (error: any) {
       console.error('Error starting appointment chat:', error);
       return { error: error.message || 'Failed to start appointment chat' };

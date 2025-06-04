@@ -68,13 +68,13 @@ export function ChatButton({
       }
       
       if (conversationId) {
-        // Ensure clean URL format to prevent 404 errors
+        // Use consistent navigation for both user types
         if (isUserMentor) {
-          // Mood mentors go to their dashboard messages
+          // Mood mentors go to their dashboard messages with the patient ID
           navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`);
         } else {
-          // Patients go to the general chat
-          navigate(`/chat/${conversationId}`);
+          // Patients go to their dashboard messages
+          navigate(`/messages`);
         }
       } else {
         toast.error('Could not create a chat session');
