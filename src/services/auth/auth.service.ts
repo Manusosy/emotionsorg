@@ -7,7 +7,7 @@ export interface UserWithMetadata extends User {
   user_metadata: {
     name: string;
     role: UserRole;
-    avatarUrl?: string;
+    avatar_url?: string;
   };
 }
 
@@ -56,7 +56,7 @@ class SupabaseAuthService implements AuthService {
 
       if (error) throw error;
       return { user: data.user as UserWithMetadata | null };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in signIn:', error);
       return { user: null, error: error.message };
     }
@@ -109,7 +109,7 @@ class SupabaseAuthService implements AuthService {
       }
 
       return { user: authData.user as UserWithMetadata | null };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error in signUp:', error);
       return { user: null, error: error.message };
     }
@@ -128,7 +128,7 @@ class SupabaseAuthService implements AuthService {
 
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error resetting password:', error);
       return { error: error.message };
     }
@@ -141,7 +141,7 @@ class SupabaseAuthService implements AuthService {
       });
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating password:', error);
       return { error: error.message };
     }
@@ -152,7 +152,7 @@ class SupabaseAuthService implements AuthService {
       const { error } = await supabase.auth.updateUser(data);
       if (error) throw error;
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating profile:', error);
       return { error: error.message };
     }
@@ -186,7 +186,7 @@ class SupabaseAuthService implements AuthService {
       await supabase.auth.signOut();
       
       return {};
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error deleting account:', error);
       return { error: error.message };
     }
@@ -198,27 +198,12 @@ class SupabaseAuthService implements AuthService {
     error: string | null; 
   }> {
     try {
-      // This uses the newer Supabase client method to update user metadata
-      const { data, error } = await supabase.auth.updateUser({
-        data: metadata
-      });
-
+      const { error } = await supabase.auth.updateUser({ data: metadata });
       if (error) throw error;
-
-      return {
-        success: true,
-        data: data.user,
-        error: null
-      };
-    } catch (error) {
+      return { success: true, data: null, error: null };
+    } catch (error: any) {
       console.error('Error updating user metadata:', error);
-      
-      // Return a detailed error to help with debugging
-      return {
-        success: false,
-        data: null,
-        error: error.message || 'Failed to update user metadata'
-      };
+      return { success: false, data: null, error: error.message };
     }
   }
 }

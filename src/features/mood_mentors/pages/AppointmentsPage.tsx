@@ -1,4 +1,4 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '@/services'
+import { authService, userService, dataService, apiService, patientService, moodMentorService, appointmentService } from '@/services'
 import React, { useState, useEffect, useContext } from "react";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { supabase } from "@/lib/supabase";
@@ -51,6 +51,7 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { ChatButton } from "@/components/messaging/ChatButton";
 import { useAuth } from "@/contexts/authContext";
+import { useVideoSession } from '@/contexts/VideoSessionContext';
 
 interface AppointmentDisplay {
   id: string;
@@ -77,6 +78,7 @@ export default function AppointmentsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const { activeSession } = useVideoSession();
   
   // Parse URL parameters for date filtering
   useEffect(() => {
@@ -192,7 +194,51 @@ export default function AppointmentsPage() {
     }
   };
 
-  const handleJoinSession = (appointment: AppointmentDisplay) => {
+  const handleJoinSession = async (appointment: AppointmentDisplay) => {
+    // If session is already in progress (status is "scheduled"), end it
+    if (appointment.status.toLowerCase() === "scheduled") {
+      try {
+        // Update appointment status to 'completed'
+        const { error } = await supabase
+          .from("appointments")
+          .update({ status: "completed" })
+          .eq("id", appointment.id);
+
+        if (error) {
+          toast.error("Failed to end session: " + error.message);
+          return;
+        }
+        
+        toast.success("Session ended successfully");
+        fetchAppointments(); // Refresh the appointments list
+        return;
+      } catch (error: any) {
+        toast.error("Failed to end session: " + error.message);
+        return;
+      }
+    }
+    
+    // For video and audio appointments, update status to 'scheduled' first
+    if (appointment.type.toLowerCase() === 'video' || appointment.type.toLowerCase() === 'audio') {
+      try {
+        // Update appointment status to 'scheduled'
+        const { error } = await supabase
+          .from("appointments")
+          .update({ status: "scheduled" })
+          .eq("id", appointment.id);
+
+        if (error) {
+          toast.error("Failed to start session: " + error.message);
+          return;
+        }
+        
+        toast.success("Session started successfully");
+      } catch (error: any) {
+        toast.error("Failed to start session: " + error.message);
+        return;
+      }
+    }
+    
     // Route based on appointment type
     switch (appointment.type.toLowerCase()) {
       case 'video':
@@ -266,12 +312,11 @@ export default function AppointmentsPage() {
 
   const getStatusBadge = (status: string) => {
     const statusConfig = {
-      upcoming: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
-      scheduled: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
+      scheduled: { color: "bg-yellow-100 text-yellow-800", label: "In Progress" },
       pending: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
       completed: { color: "bg-green-100 text-green-800", label: "Completed" },
       cancelled: { color: "bg-red-100 text-red-800", label: "Cancelled" },
-      "in-progress": { color: "bg-yellow-100 text-yellow-800", label: "In Progress" },
+      upcoming: { color: "bg-blue-100 text-blue-800", label: "Upcoming" },
     };
 
     const config = statusConfig[status.toLowerCase() as keyof typeof statusConfig] || statusConfig.upcoming;
@@ -306,27 +351,10 @@ export default function AppointmentsPage() {
     );
   });
 
-  // Update the isAppointmentActive function
-  const isAppointmentActive = (appointmentDate: string, appointmentTime: string) => {
-    try {
-      const now = new Date();
-      const [startHour, startMinute] = appointmentTime.split(':').map(Number);
-      
-      // Create appointment start time
-      const appointmentStart = new Date(appointmentDate);
-      appointmentStart.setHours(startHour, startMinute, 0, 0);
-      
-      // Calculate time difference in minutes
-      const timeDiffMinutes = (appointmentStart.getTime() - now.getTime()) / (1000 * 60);
-      
-      console.log(`Appointment time difference: ${timeDiffMinutes} minutes for ${appointmentDate} ${appointmentTime}`);
-      
-      // Return true if the appointment is within 5 minutes before or 60 minutes after
-      return timeDiffMinutes <= 5 && timeDiffMinutes >= -60;
-    } catch (error) {
-      console.error('Error checking appointment time:', error);
-      return false;
-    }
+  // Update the isAppointmentActive function to always allow mentors to start sessions
+  const isAppointmentActive = () => {
+    // Mentors can start sessions at any time
+    return true;
   };
 
   return (
@@ -359,7 +387,7 @@ export default function AppointmentsPage() {
                     <SelectGroup>
                       <SelectItem value="all">All Status</SelectItem>
                       <SelectItem value="upcoming">Upcoming</SelectItem>
-                      <SelectItem value="in-progress">In Progress</SelectItem>
+                      <SelectItem value="scheduled">In Progress</SelectItem>
                       <SelectItem value="completed">Completed</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                     </SelectGroup>
@@ -458,23 +486,35 @@ export default function AppointmentsPage() {
                               appointment.status.toLowerCase() === "scheduled" || 
                               appointment.status.toLowerCase() === "pending") && (
                               <>
-                                {isAppointmentActive(appointment.date, appointment.time.split(' - ')[0]) ? (
+                                {isAppointmentActive() ? (
                                   <Button
                                     size="sm"
                                     onClick={() => handleJoinSession(appointment)}
-                                    className="bg-green-600 hover:bg-green-700 text-white"
+                                    className={
+                                      appointment.status.toLowerCase() === "scheduled" || 
+                                      (activeSession && activeSession.appointmentId === appointment.id)
+                                        ? "bg-red-600 hover:bg-red-700 text-white" 
+                                        : "bg-green-600 hover:bg-green-700 text-white"
+                                    }
                                   >
-                                    {appointment.type.toLowerCase() === 'video' && (
-                                      <><Video className="w-3 h-3 mr-1" /> Join Video</>
-                                    )}
-                                    {appointment.type.toLowerCase() === 'chat' && (
-                                      <><MessageSquare className="w-3 h-3 mr-1" /> Open Chat</>
-                                    )}
-                                    {appointment.type.toLowerCase() === 'audio' && (
-                                      <><Phone className="w-3 h-3 mr-1" /> Join Audio</>
-                                    )}
-                                    {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
-                                      <><Clock className="w-3 h-3 mr-1" /> Join Now</>
+                                    {appointment.status.toLowerCase() === "scheduled" || 
+                                     (activeSession && activeSession.appointmentId === appointment.id) ? (
+                                      <><X className="w-3 h-3 mr-1" /> End Session</>
+                                    ) : (
+                                      <>
+                                        {appointment.type.toLowerCase() === 'video' && (
+                                          <><Video className="w-3 h-3 mr-1" /> Start Session</>
+                                        )}
+                                        {appointment.type.toLowerCase() === 'chat' && (
+                                          <><MessageSquare className="w-3 h-3 mr-1" /> Start Session</>
+                                        )}
+                                        {appointment.type.toLowerCase() === 'audio' && (
+                                          <><Phone className="w-3 h-3 mr-1" /> Start Session</>
+                                        )}
+                                        {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
+                                          <><Clock className="w-3 h-3 mr-1" /> Start Session</>
+                                        )}
+                                      </>
                                     )}
                                   </Button>
                                 ) : (
@@ -495,17 +535,24 @@ export default function AppointmentsPage() {
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent align="end">
                                     <DropdownMenuItem onClick={() => handleJoinSession(appointment)}>
-                                      {appointment.type.toLowerCase() === 'video' && (
-                                        <><Video className="w-4 h-4 mr-2" /> View Video Session</>
-                                      )}
-                                      {appointment.type.toLowerCase() === 'chat' && (
-                                        <><MessageSquare className="w-4 h-4 mr-2" /> Open Chat</>
-                                      )}
-                                      {appointment.type.toLowerCase() === 'audio' && (
-                                        <><Phone className="w-4 h-4 mr-2" /> View Audio Session</>
-                                      )}
-                                      {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
-                                        <><FileText className="w-4 h-4 mr-2" /> View Session</>
+                                      {appointment.status.toLowerCase() === "scheduled" || 
+                                       (activeSession && activeSession.appointmentId === appointment.id) ? (
+                                        <><X className="w-4 h-4 mr-2" /> End Session</>
+                                      ) : (
+                                        <>
+                                          {appointment.type.toLowerCase() === 'video' && (
+                                            <><Video className="w-4 h-4 mr-2" /> Start Session</>
+                                          )}
+                                          {appointment.type.toLowerCase() === 'chat' && (
+                                            <><MessageSquare className="w-4 h-4 mr-2" /> Start Session</>
+                                          )}
+                                          {appointment.type.toLowerCase() === 'audio' && (
+                                            <><Phone className="w-4 h-4 mr-2" /> Start Session</>
+                                          )}
+                                          {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
+                                            <><FileText className="w-4 h-4 mr-2" /> Start Session</>
+                                          )}
+                                        </>
                                       )}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
@@ -513,45 +560,6 @@ export default function AppointmentsPage() {
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "cancelled")}>
                                       <X className="w-4 h-4 mr-2" /> Cancel Appointment
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleExportAppointment(appointment)}>
-                                      <FileText className="w-4 h-4 mr-2" /> Export Details
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </>
-                            )}
-                            
-                            {/* In-Progress Appointments */}
-                            {appointment.status.toLowerCase() === "in-progress" && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleJoinSession(appointment)}
-                                  className="bg-green-600 hover:bg-green-700 text-white"
-                                >
-                                  {appointment.type.toLowerCase() === 'video' && (
-                                    <><Video className="w-3 h-3 mr-1" /> Continue Video</>
-                                  )}
-                                  {appointment.type.toLowerCase() === 'chat' && (
-                                    <><MessageSquare className="w-3 h-3 mr-1" /> Continue Chat</>
-                                  )}
-                                  {appointment.type.toLowerCase() === 'audio' && (
-                                    <><Phone className="w-3 h-3 mr-1" /> Continue Audio</>
-                                  )}
-                                  {!['video', 'chat', 'audio'].includes(appointment.type.toLowerCase()) && (
-                                    <><Video className="w-3 h-3 mr-1" /> Continue Session</>
-                                  )}
-                                </Button>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon">
-                                      <MoreVertical className="w-4 h-4" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleStatusChange(appointment.id, "completed")}>
-                                      <Check className="w-4 h-4 mr-2" /> Mark as Completed
                                     </DropdownMenuItem>
                                     <DropdownMenuItem onClick={() => handleExportAppointment(appointment)}>
                                       <FileText className="w-4 h-4 mr-2" /> Export Details
@@ -612,7 +620,9 @@ export default function AppointmentsPage() {
                             {/* Chat Button for all chat appointments */}
                             {appointment.type.toLowerCase() === 'chat' && (
                               <ChatButton
-                                appointmentId={appointment.id}
+                                userId={user?.id || ''}
+                                targetUserId={appointment.patient_id}
+                                userRole="mood_mentor"
                                 variant="outline"
                                 size="sm"
                               />

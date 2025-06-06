@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageSquare, ArrowLeft, Phone, Mail, MapPin, Calendar, Info, AlertCircle, User } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/lib/utils";
+import { useAuth } from "@/contexts/authContext";
+import { ChatButton } from "@/components/messaging/ChatButton";
 
 // Interface matching the patient_profiles table
 interface PatientProfile {
@@ -49,6 +51,7 @@ const getInitials = (name: string) => {
 export default function PatientProfilePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [patient, setPatient] = useState<PatientProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -249,10 +252,12 @@ export default function PatientProfilePage() {
           </div>
           {patient && (
             <div className="flex gap-2">
-              <Button variant="outline" onClick={handleStartChat}>
-                <MessageSquare className="h-4 w-4 mr-2" />
-                Start Chat
-              </Button>
+              <ChatButton
+                userId={user?.id || ''}
+                targetUserId={patient.user_id}
+                userRole="mood_mentor"
+                variant="outline"
+              />
             </div>
           )}
         </div>

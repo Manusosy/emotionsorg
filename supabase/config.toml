@@ -306,3 +306,8 @@ s3_region = "env(S3_REGION)"
 s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
+
+# Add Agora environment variables
+[functions.agora-token.environment]
+AGORA_APP_ID = "f87255c9501e4db89944550d630c5b99"
+AGORA_APP_CERTIFICATE = "116c4e6416d5474c8b11fee8d3819e51"

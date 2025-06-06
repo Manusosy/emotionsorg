@@ -222,58 +222,35 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     setCurrentPath(location.pathname);
   }, [location]);
   
-  // Add debugging for user avatar URLs and fetch profile avatar
+  // Add proper null checks for user metadata logging
   useEffect(() => {
     if (user) {
-      console.log('User metadata:', user.user_metadata);
+      console.log('User metadata:', user?.user_metadata || {});
       console.log('Avatar URLs available:', {
-        avatarUrl: user.user_metadata?.avatarUrl,
-        avatar_url: user.user_metadata?.avatar_url,
-        profileImage: user.user_metadata?.profileImage,
-        profile_image: user.user_metadata?.profile_image,
-        profile_image_url: user.user_metadata?.profile_image_url,
+        avatarUrl: user?.user_metadata?.avatar_url,
+        avatar_url: user?.user_metadata?.avatar_url,
+        name: user?.user_metadata?.name
       });
       
       // Get the URL from patient profile if it exists
       const fetchPatientProfile = async () => {
         try {
-          const { data: patientProfile, error } = await supabase
+          if (!user?.id) return;
+          
+          const { data: patientProfile, error: profileError } = await supabase
             .from('patient_profiles')
             .select('avatar_url')
             .eq('user_id', user.id)
             .single();
             
-          if (patientProfile && patientProfile.avatar_url) {
-            console.log('Patient profile avatar_url:', patientProfile.avatar_url);
+          if (profileError) {
+            console.log('No patient profile found or error:', profileError.message);
+            return;
+          }
+          
+          if (patientProfile?.avatar_url) {
+            console.log('Found patient profile avatar URL:', patientProfile.avatar_url);
             setProfileAvatarUrl(patientProfile.avatar_url);
-            
-            // Log detailed information about this URL
-            console.log('Using avatar URL from patient_profiles:', {
-              url: patientProfile.avatar_url,
-              complete: patientProfile.avatar_url.startsWith('http') 
-                ? patientProfile.avatar_url 
-                : `https://hibeorkevqjgnkinaafy.supabase.co${patientProfile.avatar_url.startsWith('/') ? '' : '/'}${patientProfile.avatar_url}`
-            });
-            
-            // If URL is not complete (doesn't start with http), try to complete it
-            if (!patientProfile.avatar_url.startsWith('http')) {
-              const completeUrl = `https://hibeorkevqjgnkinaafy.supabase.co${patientProfile.avatar_url.startsWith('/') ? '' : '/'}${patientProfile.avatar_url}`;
-              setProfileAvatarUrl(completeUrl);
-              console.log('Converted to complete URL:', completeUrl);
-            }
-          } else {
-            // Try to get URL from settings
-            const { data: settingsData, error: settingsError } = await supabase
-              .from('settings')
-              .select('value')
-              .eq('user_id', user.id)
-              .eq('key', 'avatar_url')
-              .single();
-              
-            if (settingsData && settingsData.value) {
-              console.log('Found avatar URL in settings:', settingsData.value);
-              setProfileAvatarUrl(settingsData.value);
-            }
           }
         } catch (err) {
           console.error('Error fetching patient profile for avatar check:', err);
@@ -412,7 +389,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       }));
       
       setNotifications(mappedNotifications);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error fetching notifications:', error);
       // Only show error toast if it's not a missing table error
       if (error.code !== '42P01') {
@@ -667,7 +644,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
 
           {/* Sidebar Navigation */}
-          <div className="p-4 space-y-6 overflow-y-auto h-[calc(100vh-64px)]">
+          <div className="p-4 space-y-6 overflow-y-auto h-[calc(100vh-64px)] flex flex-col">
             {userNavigation.map((section) => (
               <div key={section.section}>
                 <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
@@ -707,6 +684,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 </ul>
               </div>
             ))}
+            
+            {/* Return to Home button */}
+            <div className="mt-auto pt-6 border-t border-gray-200">
+              <Link
+                to="/"
+                className="flex items-center px-2 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 rounded-md transition-all"
+              >
+                <ChevronLeft className="mr-3 h-5 w-5 text-gray-500" />
+                Return to Home
+              </Link>
+            </div>
           </div>
         </div>
 
@@ -796,11 +784,15 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                      <FallbackAvatar
-                        src={profileAvatarUrl || user?.user_metadata?.avatar_url || user?.user_metadata?.avatarUrl || user?.user_metadata?.profile_image_url || "https://hibeorkevqjgnkinaafy.supabase.co/storage/v1/object/public/avatars/profile.jpg"}
-                        name={user?.user_metadata?.name || user?.user_metadata?.full_name || "User"}
-                        className="h-8 w-8"
-                      />
+                      <Avatar>
+                        <AvatarImage 
+                          src={user?.user_metadata?.avatar_url || '/avatars/default-avatar.png'} 
+                          alt={user?.user_metadata?.name || 'User'} 
+                        />
+                        <AvatarFallback>
+                          {user?.user_metadata?.name ? user.user_metadata.name.charAt(0) : 'U'}
+                        </AvatarFallback>
+                      </Avatar>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className="w-56" align="end" forceMount>
@@ -822,6 +814,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                       <span>Settings</span>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => navigate('/')}>
+                      <ChevronLeft className="mr-2 h-4 w-4" />
+                      <span>Return to Home</span>
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={handleSignOut} disabled={signOutLoading}>
                       <LogOut className="mr-2 h-4 w-4" />
                       <span>{signOutLoading ? 'Signing out...' : 'Sign out'}</span>

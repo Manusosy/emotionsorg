@@ -9,6 +9,8 @@ import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Star, GraduationCap, Briefcase, MapPin, Languages, Calendar, Clock, DollarSign } from 'lucide-react';
 import BookingButton from '@/features/booking/components/BookingButton';
+import { useAuth } from '@/contexts/authContext';
+import { toast } from 'sonner';
 
 // Mood Mentor profile interface for the UI
 interface MoodMentorProfile {
@@ -49,6 +51,7 @@ export default function MoodMentorProfile() {
   const [searchParams] = useSearchParams();
   const mentorId = searchParams.get('id');
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [mentor, setMentor] = useState<MoodMentorProfile | null>(null);
   const [reviews, setReviews] = useState<any[]>([]);
@@ -158,6 +161,22 @@ export default function MoodMentorProfile() {
     fetchMentorData();
   }, [name, mentorId, navigate]);
 
+  const handleBooking = () => {
+    // Check if user is a mood mentor
+    if (user?.user_metadata?.role === 'mood_mentor') {
+      toast.error("As a mood mentor, you cannot book appointments with other mentors");
+      return;
+    }
+
+    // Proceed with booking for patients
+    navigate('/booking', {
+      state: {
+        mentorId: mentor?.userId,
+        callType: 'video'
+      }
+    });
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen">
@@ -252,13 +271,26 @@ export default function MoodMentorProfile() {
                   )}
                   
                   <div className="w-full mt-4">
-                    <BookingButton 
-                      moodMentorId={mentor.id}
-                      moodMentorName={mentor.fullName}
-                      nameSlug={mentor.nameSlug}
-                      variant="default"
-                      className="w-full"
-                    />
+                    {user?.user_metadata?.role === 'mood_mentor' ? (
+                      <div className="space-y-2">
+                        <Button 
+                          disabled
+                          className="w-full bg-gray-100 text-gray-500 cursor-not-allowed"
+                        >
+                          Book Appointment
+                        </Button>
+                        <p className="text-sm text-gray-500 text-center">
+                          As a mood mentor, you cannot book appointments with other mentors
+                        </p>
+                      </div>
+                    ) : (
+                      <Button 
+                        onClick={handleBooking}
+                        className="w-full bg-[#20C0F3] hover:bg-[#20C0F3]/90 text-white"
+                      >
+                        Book Appointment
+                      </Button>
+                    )}
                   </div>
                   
                   <Separator className="my-4" />

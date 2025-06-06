@@ -1,12 +1,13 @@
-import { appointmentService } from '@/services'
+import { appointmentService, availabilityService } from '@/services';
 import { useAuth } from '@/contexts/authContext';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { format } from 'date-fns';
+import { format, parse, addMinutes } from 'date-fns';
 import { Calendar as CalendarIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import * as z from 'zod';
+import type { AvailableTimeSlot } from '@/services/mood-mentor/availability.interface';
 
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -54,11 +55,6 @@ const formSchema = z.object({
   }),
 });
 
-const timeSlots = [
-  '09:00', '10:00', '11:00', '12:00', '13:00',
-  '14:00', '15:00', '16:00', '17:00'
-];
-
 const meetingTypes = [
   { value: 'video', label: 'Video Call' },
   { value: 'audio', label: 'Audio Call' },
@@ -79,6 +75,8 @@ export function BookingModal({
   moodMentorName,
 }: BookingModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [availableTimeSlots, setAvailableTimeSlots] = useState<string[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -89,6 +87,48 @@ export function BookingModal({
   });
 
   const { user } = useAuth();
+  const selectedDate = form.watch('date');
+
+  // Fetch available time slots when date changes
+  useEffect(() => {
+    const fetchAvailableSlots = async () => {
+      if (!selectedDate || !moodMentorId) return;
+
+      setIsLoadingSlots(true);
+      try {
+        const { data: slots, error } = await availabilityService.getAvailableTimeSlots(
+          moodMentorId,
+          format(selectedDate, 'yyyy-MM-dd')
+        );
+
+        if (error) {
+          console.error('Error fetching time slots:', error);
+          toast.error('Failed to load available time slots');
+          return;
+        }
+
+        // Filter and format available slots
+        const availableTimes = (slots || [])
+          .filter((slot: AvailableTimeSlot) => slot.is_available)
+          .map((slot: AvailableTimeSlot) => slot.time);
+
+        setAvailableTimeSlots(availableTimes);
+
+        // Reset time selection if current selection is no longer available
+        const currentTime = form.getValues('time');
+        if (currentTime && !availableTimes.includes(currentTime)) {
+          form.setValue('time', '');
+        }
+      } catch (error) {
+        console.error('Error fetching time slots:', error);
+        toast.error('Failed to load available time slots');
+      } finally {
+        setIsLoadingSlots(false);
+      }
+    };
+
+    fetchAvailableSlots();
+  }, [selectedDate, moodMentorId, form]);
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
@@ -99,10 +139,9 @@ export function BookingModal({
         return;
       }
 
-      // Calculate end time (1 hour after start time)
-      const [hours, minutes] = values.time.split(':');
-      const endHour = (parseInt(hours) + 1) % 24;
-      const endTime = `${endHour.toString().padStart(2, '0')}:${minutes}`;
+      // Calculate end time (30 minutes after start time)
+      const startTime = parse(values.time, 'HH:mm', new Date());
+      const endTime = format(addMinutes(startTime, 30), 'HH:mm');
 
       // Use the appointment service to book the appointment
       const response = await appointmentService.bookAppointment({
@@ -140,35 +179,11 @@ export function BookingModal({
         <DialogHeader>
           <DialogTitle>Book a Session with {moodMentorName}</DialogTitle>
           <DialogDescription>
-            Fill in the details below to schedule your session.
+            Choose your preferred date and time for the session.
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <FormField
-              control={form.control}
-              name="meeting_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Meeting Type</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select meeting type" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {meetingTypes.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          {type.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
             <FormField
               control={form.control}
               name="date"
@@ -211,16 +226,46 @@ export function BookingModal({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Time</FormLabel>
-                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger>
-                        <SelectValue placeholder="Select a time" />
+                        <SelectValue placeholder={isLoadingSlots ? "Loading..." : "Select a time"} />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      {timeSlots.map((time) => (
-                        <SelectItem key={time} value={time}>
-                          {time}
+                      {isLoadingSlots ? (
+                        <SelectItem value="loading" disabled>Loading available times...</SelectItem>
+                      ) : availableTimeSlots.length > 0 ? (
+                        availableTimeSlots.map((time) => (
+                          <SelectItem key={time} value={time}>
+                            {format(parse(time, 'HH:mm', new Date()), 'h:mm a')}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <SelectItem value="none" disabled>No available times</SelectItem>
+                      )}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="meeting_type"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Meeting Type</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select meeting type" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {meetingTypes.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -247,7 +292,7 @@ export function BookingModal({
               )}
             />
             <DialogFooter>
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" disabled={isSubmitting || isLoadingSlots || !availableTimeSlots.length}>
                 {isSubmitting ? 'Booking...' : 'Book Session'}
               </Button>
             </DialogFooter>

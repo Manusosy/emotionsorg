@@ -216,6 +216,11 @@ export default function AppointmentDetailDialog({
     
     switch (appointment.status) {
       case 'scheduled':
+        return (
+          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+            <Video className="mr-1 h-3 w-3" /> In Progress
+          </Badge>
+        );
       case 'pending':
         return (
           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
@@ -232,12 +237,6 @@ export default function AppointmentDetailDialog({
         return (
           <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
             <X className="mr-1 h-3 w-3" /> Cancelled
-          </Badge>
-        );
-      case 'in-progress':
-        return (
-          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-            <Video className="mr-1 h-3 w-3" /> In Progress
           </Badge>
         );
       default:
@@ -372,7 +371,7 @@ export default function AppointmentDetailDialog({
                     Cancel
                   </Button>
                 ) : null}
-                {(appointment.status === 'scheduled' || appointment.status === 'in-progress') && (
+                {(appointment.status === 'scheduled') && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -398,7 +397,7 @@ export default function AppointmentDetailDialog({
                 }
               >
                 <Video className="h-4 w-4 mr-2" />
-                {isStartingSoon() ? 'Join Session' : 'Session Unavailable'}
+                {isStartingSoon() ? 'Start Session' : 'Session Unavailable'}
               </Button>
             </DialogFooter>
           </>

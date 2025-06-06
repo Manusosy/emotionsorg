@@ -5,6 +5,8 @@ import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { appointmentService } from '@/services';
 import { AuthContext } from '@/contexts/authContext';
+import { AppointmentCall } from '@/components/calls/AppointmentCall';
+import { useVideoSession } from '@/contexts/VideoSessionContext';
 
 // UI Components
 import { Button } from '@/components/ui/button';
@@ -37,6 +39,7 @@ export default function AppointmentSessionPage() {
   const { appointmentId } = useParams<{ appointmentId: string }>();
   const navigate = useNavigate();
   const { user } = useContext(AuthContext) || {};
+  const { startSession: startVideoSession, endSession: endVideoSession, setIsOnSessionPage, activeSession, isSessionActiveForAppointment } = useVideoSession();
   
   const [loading, setLoading] = useState(true);
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -45,12 +48,74 @@ export default function AppointmentSessionPage() {
   const [notes, setNotes] = useState('');
   const [sessionStarted, setSessionStarted] = useState(false);
   const [sessionData, setSessionData] = useState<any>(null);
+  const [isVideoActive, setIsVideoActive] = useState(false);
+  const [patientJoined, setPatientJoined] = useState(false);
+  
+  // Add a function to clean up camera access
+  const cleanupCameraAccess = () => {
+    // Get all media devices and stop them
+    navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+      .then(stream => {
+        const tracks = stream.getTracks();
+        tracks.forEach(track => {
+          track.stop();
+          console.log(`MentorSession: Stopped ${track.kind} track`);
+        });
+      })
+      .catch(err => {
+        console.warn('MentorSession: Could not get media devices to clean up:', err);
+      });
+  };
   
   useEffect(() => {
+    // Mark that we're on the session page when component mounts
+    setIsOnSessionPage(true);
+    
+    // Check if there's already an active session for this appointment
+    if (appointmentId && isSessionActiveForAppointment(appointmentId)) {
+      setIsVideoActive(true);
+      setSessionStarted(true);
+    }
+    
     if (appointmentId) {
       fetchAppointmentDetails();
+      
+      // Subscribe to session events to know when patient joins
+      const sessionChannel = supabase
+        .channel(`patient-join:${appointmentId}`)
+        .on('postgres_changes', { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'session_events',
+          filter: `appointment_id=eq.${appointmentId} AND event_type=eq.patient_joined`
+        }, (payload) => {
+          if (payload.new) {
+            console.log('Patient joined event received:', payload.new);
+            setPatientJoined(true);
+            toast.success('Patient has joined the session');
+          }
+        })
+        .subscribe();
+      
+      return () => {
+        supabase.removeChannel(sessionChannel);
+        
+        // Clean up camera access when leaving the page
+        cleanupCameraAccess();
+        
+        // Mark that we're no longer on the session page when component unmounts
+        setIsOnSessionPage(false);
+      };
     }
-  }, [appointmentId]);
+    
+    // When component unmounts, mark that we're no longer on the session page
+    return () => {
+      // Clean up camera access when leaving the page
+      cleanupCameraAccess();
+      
+      setIsOnSessionPage(false);
+    };
+  }, [appointmentId, setIsOnSessionPage, isSessionActiveForAppointment]);
   
   const fetchAppointmentDetails = async () => {
     try {
@@ -137,6 +202,7 @@ export default function AppointmentSessionPage() {
     try {
       setSessionLoading(true);
       
+      // Use the appointment service to start the session
       const result = await appointmentService.startAppointmentSession(appointmentId || '');
       
       if (result.error) {
@@ -146,15 +212,21 @@ export default function AppointmentSessionPage() {
       
       setSessionData(result.data);
       setSessionStarted(true);
+      setIsVideoActive(true);
       toast.success('Session started successfully');
       
-      // Update local appointment status if needed
-      if (appointment && appointment.status !== 'in-progress') {
-        setAppointment({
-          ...appointment,
-          status: 'in-progress'
-        });
-      }
+      // Start persistent video session
+      startVideoSession({
+        appointmentId: appointmentId || '',
+        patientName: appointment.patient_name || patient?.full_name || 'Patient',
+        isAudioOnly: appointment.meeting_type?.toLowerCase() === 'audio'
+      });
+      
+      // Update local appointment status
+      setAppointment({
+        ...appointment,
+        status: 'scheduled'
+      });
     } catch (error) {
       console.error('Error starting session:', error);
       toast.error('Failed to start appointment session');
@@ -187,6 +259,25 @@ export default function AppointmentSessionPage() {
         return;
       }
       
+      // Notify any connected patients that the session has ended
+      try {
+        // Use Supabase Realtime to notify patients
+        const { error: notifyError } = await supabase
+          .from('session_events')
+          .insert({
+            appointment_id: appointmentId,
+            event_type: 'session_ended',
+            initiated_by: 'mentor',
+            message: 'The mentor has ended this session. Thank you for participating!'
+          });
+          
+        if (notifyError && !notifyError.message.includes('does not exist')) {
+          console.warn('Error notifying session end:', notifyError);
+        }
+      } catch (notifyError) {
+        console.warn('Error sending session end notification:', notifyError);
+      }
+      
       toast.success('Appointment completed successfully');
       
       // Update local appointment status
@@ -196,6 +287,18 @@ export default function AppointmentSessionPage() {
         notes
       });
       
+      // End video session - make sure this happens regardless of any errors above
+      setIsVideoActive(false);
+      
+      // Clean up camera access
+      cleanupCameraAccess();
+      
+      // Make sure to properly end the video session context
+      if (endVideoSession) {
+        console.log('Ending video session from mentor side');
+        endVideoSession();
+      }
+      
       // Redirect after a short delay
       setTimeout(() => {
         navigate('/mood-mentor-dashboard');
@@ -203,6 +306,14 @@ export default function AppointmentSessionPage() {
     } catch (error) {
       console.error('Error completing session:', error);
       toast.error('Failed to complete appointment session');
+      
+      // Even on error, try to clean up video resources
+      setIsVideoActive(false);
+      cleanupCameraAccess();
+      
+      if (endVideoSession) {
+        endVideoSession();
+      }
     } finally {
       setSessionLoading(false);
     }
@@ -239,25 +350,10 @@ export default function AppointmentSessionPage() {
     }
   };
   
-  // Check if appointment is ready to start
+  // Check if appointment is ready to start - always return true for mentors
   const canStartSession = () => {
-    if (!appointment) return false;
-    
-    try {
-      const now = new Date();
-      const appointmentDate = parseISO(appointment.date);
-      const [hours, minutes] = appointment.start_time.split(':').map(Number);
-      appointmentDate.setHours(hours, minutes, 0, 0);
-      
-      // Calculate difference in minutes
-      const diffInMinutes = (appointmentDate.getTime() - now.getTime()) / (1000 * 60);
-      
-      // Return true if appointment is within 15 minutes (and not more than 60 min in the past)
-      return diffInMinutes >= -60 && diffInMinutes <= 15;
-    } catch (error) {
-      console.error('Error checking appointment time:', error);
-      return false;
-    }
+    // Mentors can start sessions at any time
+    return true;
   };
   
   // Get status badge with appropriate styling
@@ -266,6 +362,11 @@ export default function AppointmentSessionPage() {
     
     switch (appointment.status) {
       case 'scheduled':
+        return (
+          <Badge variant="outline" className="bg-green-100 text-green-700 border-green-200 px-3 py-1">
+            <Video className="mr-1.5 h-3.5 w-3.5" /> In Progress
+          </Badge>
+        );
       case 'pending':
         return (
           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
@@ -284,12 +385,6 @@ export default function AppointmentSessionPage() {
             <X className="mr-1 h-3 w-3" /> Cancelled
           </Badge>
         );
-      case 'in-progress':
-        return (
-          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-            <Video className="mr-1 h-3 w-3" /> In Progress
-          </Badge>
-        );
       default:
         return (
           <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">
@@ -297,6 +392,24 @@ export default function AppointmentSessionPage() {
           </Badge>
         );
     }
+  };
+  
+  // Add a PatientStatus component to show if patient has joined
+  const PatientStatus = () => {
+    if (!sessionStarted) return null;
+    
+    return (
+      <div className="mb-4 p-3 rounded-lg bg-gray-50 border border-gray-100">
+        <div className="flex items-center">
+          <div className={`h-2.5 w-2.5 rounded-full mr-2 ${patientJoined ? 'bg-green-500' : 'bg-amber-500'}`}></div>
+          <span className="font-medium">
+            {patientJoined 
+              ? 'Patient has joined the session' 
+              : 'Waiting for patient to join...'}
+          </span>
+        </div>
+      </div>
+    );
   };
   
   // Render loading state
@@ -462,50 +575,64 @@ export default function AppointmentSessionPage() {
         </div>
         
         <div className="lg:w-2/3">
-          <Card className="h-full">
+          <Card className="h-full flex flex-col">
             <CardHeader>
               <CardTitle>Appointment Session</CardTitle>
               <CardDescription>
-                {sessionStarted ? 'Your session is in progress' : 'Start your session with the patient'}
+                {sessionStarted ? 'Your session with the patient is in progress' : 'Start your session with the patient'}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="flex-grow">
               {sessionStarted ? (
-                <div className="space-y-6">
+                <div className="h-full flex flex-col">
                   {/* Meeting section based on type */}
-                  <div className="bg-blue-50 p-4 rounded-lg text-center">
-                    {appointment.meeting_type?.toLowerCase() === 'video' && (
-                      <>
-                        <h3 className="font-medium text-blue-800 mb-3">Video Meeting</h3>
-                        <p className="text-blue-700 mb-4">
-                          Your video meeting is active. Use the button below to join the video call.
-                        </p>
-                        <Button 
-                          size="lg"
-                          onClick={() => window.open(sessionData?.meetingLink || '#', '_blank')}
-                        >
-                          <Video className="mr-2 h-5 w-5" />
-                          Join Video Call
-                        </Button>
-                      </>
-                    )}
-                    
-                    {appointment.meeting_type?.toLowerCase() === 'audio' && (
-                      <>
-                        <h3 className="font-medium text-blue-800 mb-3">Audio Call</h3>
-                        <p className="text-blue-700 mb-4">
-                          Your audio call is active. Use the button below to join the audio call.
-                        </p>
-                        <Button 
-                          size="lg"
-                          onClick={() => window.open(sessionData?.meetingLink || '#', '_blank')}
-                        >
-                          <Phone className="mr-2 h-5 w-5" />
-                          Join Audio Call
-                        </Button>
-                      </>
-                    )}
-                  </div>
+                  {appointment.meeting_type?.toLowerCase() === 'video' && (
+                    <div className="rounded-lg mb-6">
+                      <h3 className="font-medium text-blue-800 mb-3">Video Meeting</h3>
+                      
+                      <PatientStatus />
+                      
+                      <div className="w-full h-[500px]">
+                        {isVideoActive && (
+                          <AppointmentCall 
+                            appointmentId={appointmentId || ''}
+                            isAudioOnly={false}
+                            isMentor={true}
+                            redirectPath="/mood-mentor-dashboard"
+                            onEndCall={() => {
+                              console.log('Call ended from AppointmentCall component');
+                              setIsVideoActive(false);
+                              completeSession();
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {appointment.meeting_type?.toLowerCase() === 'audio' && (
+                    <div className="rounded-lg mb-6">
+                      <h3 className="font-medium text-blue-800 mb-3">Audio Call</h3>
+                      
+                      <PatientStatus />
+                      
+                      <div className="w-full h-[500px]">
+                        {isVideoActive && (
+                          <AppointmentCall 
+                            appointmentId={appointmentId || ''}
+                            isAudioOnly={true}
+                            isMentor={true}
+                            redirectPath="/mood-mentor-dashboard"
+                            onEndCall={() => {
+                              console.log('Call ended from AppointmentCall component');
+                              setIsVideoActive(false);
+                              completeSession();
+                            }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Session notes */}
                   <div>
@@ -533,14 +660,12 @@ export default function AppointmentSessionPage() {
                     )}
                     <h2 className="text-xl font-semibold text-blue-800 mb-2">Ready to Start?</h2>
                     <p className="text-blue-700 mb-6">
-                      {canStartSession() 
-                        ? `You can now start your ${appointment.meeting_type} session with the patient.`
-                        : `This appointment is not yet ready to start. You can start the session 15 minutes before the scheduled time.`}
+                      You can start your {appointment.meeting_type} session with the patient at any time.
                     </p>
                     <Button 
                       size="lg" 
                       onClick={startSession}
-                      disabled={!canStartSession() || sessionLoading || appointment.status === 'cancelled' || appointment.status === 'completed'}
+                      disabled={sessionLoading || appointment.status === 'cancelled' || appointment.status === 'completed'}
                       className="w-full"
                     >
                       {appointment.meeting_type?.toLowerCase() === 'video' ? (
@@ -552,13 +677,6 @@ export default function AppointmentSessionPage() {
                       )}
                     </Button>
                   </div>
-                  
-                  {!canStartSession() && (
-                    <div className="text-amber-600 flex items-center text-sm">
-                      <AlertCircle className="h-4 w-4 mr-2" />
-                      You can start the session 15 minutes before the scheduled time.
-                    </div>
-                  )}
                 </div>
               )}
             </CardContent>
@@ -567,7 +685,24 @@ export default function AppointmentSessionPage() {
                 <>
                   <Button 
                     variant="outline"
-                    onClick={() => navigate('/mood-mentor-dashboard')}
+                    onClick={() => {
+                      // Save notes if changed
+                      if (notes !== appointment.notes) {
+                        supabase
+                          .from('appointments')
+                          .update({ notes })
+                          .eq('id', appointmentId)
+                          .then(({ error }) => {
+                            if (error) {
+                              console.warn('Error saving notes:', error);
+                            } else {
+                              toast.success('Notes saved successfully');
+                            }
+                          });
+                      }
+                      // Navigate without ending the session
+                      navigate('/mood-mentor-dashboard');
+                    }}
                     disabled={sessionLoading}
                   >
                     Save and Exit

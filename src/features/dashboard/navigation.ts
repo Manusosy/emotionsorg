@@ -15,7 +15,8 @@ import {
   BarChart2,
   UserCheck,
   Star,
-  LayoutDashboard
+  LayoutDashboard,
+  CalendarClock
 } from "lucide-react";
 import { NavigationSection, SearchResult } from "./types";
 
@@ -61,6 +62,7 @@ export const moodMentorNavigation: NavigationSection[] = [
     items: [
       { name: "Overview", href: "/mood-mentor-dashboard", icon: LayoutDashboard },
       { name: "Appointments", href: "/mood-mentor-dashboard/appointments", icon: Calendar },
+      { name: "Availability", href: "/mood-mentor-dashboard/availability", icon: CalendarClock },
       { name: "Patients", href: "/mood-mentor-dashboard/patients", icon: Users },
       { name: "Support Groups", href: "/mood-mentor-dashboard/groups", icon: UserCheck },
       { name: "Messages", href: "/mood-mentor-dashboard/messages", icon: MessageSquare },

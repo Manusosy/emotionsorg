@@ -1,57 +1,68 @@
-import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/contexts/authContext";
+import { toast } from "sonner";
 
 interface BookingButtonProps {
   moodMentorId: string;
-  moodMentorName?: string;
+  moodMentorName: string;
+  nameSlug?: string;
+  disabled?: boolean;
+  size?: "default" | "sm" | "lg" | "icon";
+  variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
   className?: string;
   buttonText?: string;
-  variant?: "default" | "outline" | "ghost";
-  size?: "default" | "sm" | "lg" | "icon";
-  showIcon?: boolean;
-  disabled?: boolean;
-  nameSlug?: string;
 }
 
-const BookingButton = ({ 
+export default function BookingButton({
   moodMentorId,
   moodMentorName,
-  className = "",
-  buttonText = "BOOK APPOINTMENT",
-  variant = "default",
-  size = "default",
-  showIcon = true,
+  nameSlug,
   disabled = false,
-  nameSlug
-}: BookingButtonProps) => {
+  size = "default",
+  variant = "default",
+  className = "",
+  buttonText = "Book Appointment"
+}: BookingButtonProps) {
   const navigate = useNavigate();
-  
-  const handleBookNow = () => {
-    if (disabled) return;
-    
-    // Generate nameSlug from name if not provided
-    const mentorSlug = nameSlug || (moodMentorName ? moodMentorName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : '');
-    
-    // Immediately redirect to booking page with slug and ID
-    navigate(`/booking?moodMentorId=${moodMentorId}&mentorSlug=${mentorSlug}${moodMentorName ? `&mentorName=${encodeURIComponent(moodMentorName)}` : ''}`);
+  const { user } = useAuth();
+
+  const handleBooking = () => {
+    // Check if user is a mood mentor
+    if (user?.user_metadata?.role === 'mood_mentor') {
+      toast.error("As a mood mentor, you cannot book appointments with other mentors");
+      return;
+    }
+
+    // If not logged in, redirect to login
+    if (!user) {
+      toast.error("Please sign in to book an appointment");
+      navigate('/signin');
+      return;
+    }
+
+    // Proceed with booking for patients
+    navigate('/booking', {
+      state: {
+        mentorId: moodMentorId,
+        callType: 'video'
+      }
+    });
   };
 
+  // Check if user is a mood mentor to disable the button
+  const isMoodMentor = user?.user_metadata?.role === 'mood_mentor';
+
   return (
-    <Button 
-      onClick={handleBookNow}
-      variant={variant}
+    <Button
+      onClick={handleBooking}
+      disabled={disabled || isMoodMentor}
       size={size}
-      disabled={disabled}
-      className={`${variant === "default" ? "bg-gradient-to-r from-[#0069FF] to-[#00AEFF] hover:from-[#005CE0] hover:to-[#0091D6]" : ""} 
-                 ${disabled ? "opacity-50 cursor-not-allowed" : ""}
-                 font-medium transition-all duration-300 ease-in-out transform hover:-translate-y-1
-                 ${className}`}
+      variant={variant}
+      className={`${className} ${isMoodMentor ? 'opacity-50 cursor-not-allowed' : ''}`}
+      title={isMoodMentor ? "Mood mentors cannot book appointments with other mentors" : ""}
     >
-      {showIcon && <Calendar className={`w-4 h-4 ${buttonText ? "mr-2" : ""}`} />}
-      {buttonText && <span>{buttonText}</span>}
+      {buttonText}
     </Button>
   );
-};
-
-export default BookingButton;
+}

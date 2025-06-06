@@ -4,10 +4,13 @@ import DashboardLayout from "../components/DashboardLayout";
 import { SharedMessagesPage } from "@/components/messaging/SharedMessagesPage";
 import { useAuth } from "@/contexts/authContext";
 import { toast } from "sonner";
-import { messagingService } from "@/services";
+import SupabaseMessagingService from "@/features/messaging/services/messaging.service";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle, Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+// Create an instance of the messaging service
+const messagingService = new SupabaseMessagingService();
 
 export default function MessagesPage() {
   const { mentorId } = useParams();

@@ -7,11 +7,15 @@ import { Separator } from '@/components/ui/separator';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import FallbackAvatar from '@/components/ui/fallback-avatar';
 import { useAuth } from '@/contexts/authContext';
-import { messagingService, moodMentorService } from '@/services';
+import { moodMentorService } from '@/services';
+import SupabaseMessagingService from '@/features/messaging/services/messaging.service';
 import { toast } from 'sonner';
 import { Search, MessageSquare } from 'lucide-react';
 import { Spinner } from '@/components/ui/spinner';
 import { MoodMentorUI } from '@/services/mood-mentor/mood-mentor.interface';
+
+// Create an instance of the messaging service
+const messagingService = new SupabaseMessagingService();
 
 interface MoodMentor {
   id: string;

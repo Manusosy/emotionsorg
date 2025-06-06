@@ -65,6 +65,7 @@ import FallbackAvatar from "@/components/ui/fallback-avatar";
 import { appointmentService } from "@/services";
 import { ChatButton } from "@/components/messaging/ChatButton";
 import { useAuth } from "@/contexts/authContext";
+import { useVideoSession } from '@/contexts/VideoSessionContext';
 
 // Define the Appointment type
 interface Appointment {
@@ -72,7 +73,7 @@ interface Appointment {
   date: string;
   time: string;
   type: 'video' | 'audio' | 'chat';
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  status: 'pending' | 'scheduled' | 'confirmed' | 'cancelled' | 'completed';
   concerns?: string;
   notes?: string;
   duration?: string;
@@ -190,6 +191,17 @@ export default function AppointmentsPage() {
   const [cancellationReason, setCancellationReason] = useState<string>('');
 
   const [loadingMoodMentors, setLoadingMoodMentors] = useState(false);
+
+  const { activeSession, isSessionActiveForAppointment } = useVideoSession();
+
+  // Update the canJoinSession function to use the new helper
+  const canJoinSession = (appointment: any) => {
+    // Patient can only join if:
+    // 1. The appointment is in 'scheduled' status (mentor has started the session), OR
+    // 2. There is an active session for this appointment in the VideoSessionContext
+    return appointment.status === 'scheduled' || 
+           isSessionActiveForAppointment(appointment.id);
+  };
 
   useEffect(() => {
     fetchAppointments();
@@ -476,9 +488,9 @@ export default function AppointmentsPage() {
       
       switch(status.toLowerCase()) {
         case 'pending':
+          return "bg-blue-100 text-blue-700 hover:bg-blue-200";
         case 'scheduled':
-        case 'confirmed':
-          return "bg-indigo-100 text-indigo-700 hover:bg-indigo-200";
+          return "bg-green-100 text-green-700 hover:bg-green-200";
         case 'completed':
           return "bg-purple-100 text-purple-700 hover:bg-purple-200";
         case 'cancelled':
@@ -494,9 +506,9 @@ export default function AppointmentsPage() {
       
       switch(status.toLowerCase()) {
         case 'pending':
+          return "bg-blue-500";
         case 'scheduled':
-        case 'confirmed':
-          return "bg-indigo-500";
+          return "bg-green-500";
         case 'completed':
           return "bg-purple-500";
         case 'cancelled':
@@ -510,11 +522,18 @@ export default function AppointmentsPage() {
     const getDisplayStatus = (status: string) => {
       if (!status) return "Unknown";
       
-      if (status.toLowerCase() === 'pending' || status.toLowerCase() === 'scheduled') {
-        return "Upcoming";
+      switch (status.toLowerCase()) {
+        case 'pending':
+          return "Upcoming";
+        case 'scheduled':
+          return "In Progress";
+        case 'completed':
+          return "Completed";
+        case 'cancelled':
+          return "Cancelled";
+        default:
+          return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
       }
-      
-      return status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
     };
 
     return (
@@ -524,13 +543,13 @@ export default function AppointmentsPage() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr style={{ backgroundColor: '#20C0F3' }} className="rounded-t-lg">
-                    <th className="text-left text-sm font-medium text-white p-4 first:rounded-tl-lg">ID</th>
-                    <th className="text-left text-sm font-medium text-white p-4">Mood Mentor</th>
-                    <th className="text-left text-sm font-medium text-white p-4">Date & Time</th>
-                    <th className="text-left text-sm font-medium text-white p-4">Type</th>
-                    <th className="text-left text-sm font-medium text-white p-4">Status</th>
-                    <th className="text-right text-sm font-medium text-white p-4 last:rounded-tr-lg">Actions</th>
+                  <tr style={{ backgroundColor: '#1E88E5' }} className="rounded-t-lg">
+                    <th className="text-left text-sm font-semibold text-white p-4 first:rounded-tl-lg">ID</th>
+                    <th className="text-left text-sm font-semibold text-white p-4">Mood Mentor</th>
+                    <th className="text-left text-sm font-semibold text-white p-4">Date & Time</th>
+                    <th className="text-left text-sm font-semibold text-white p-4">Type</th>
+                    <th className="text-left text-sm font-semibold text-white p-4">Status</th>
+                    <th className="text-right text-sm font-semibold text-white p-4 last:rounded-tr-lg">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200">
@@ -584,15 +603,7 @@ export default function AppointmentsPage() {
                         <div className="flex items-center justify-end gap-2">
                           {activeTab === "upcoming" && (
                             <>
-                              <Button 
-                                variant="outline"
-                                size="sm"
-                                className="h-8 px-3 rounded-full"
-                                onClick={() => navigate(`/mood-mentor-dashboard/messages/${appointment.mentor?.id}`)}
-                              >
-                                <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
-                                Chat
-                              </Button>
+                              {/* Cancel button - always show for upcoming appointments */}
                               <Button 
                                 variant="outline"
                                 size="sm"
@@ -602,21 +613,44 @@ export default function AppointmentsPage() {
                                 <X className="h-3.5 w-3.5 mr-1.5" />
                                 Cancel
                               </Button>
-                              <Button 
-                                size="sm"
-                                className="h-8 px-3 bg-blue-600 hover:bg-blue-700 rounded-full"
-                                onClick={() => navigate(`/session/${appointment.id}`)}
-                              >
-                                <Video className="h-3.5 w-3.5 mr-1.5" />
-                                Join
-                              </Button>
+                              
+                              {/* For chat appointments, only show Message button */}
                               {appointment.type === 'chat' && (
-                                <ChatButton 
-                                  appointmentId={appointment.id} 
-                                  variant="outline" 
-                                  size="sm" 
-                                  className="ml-2"
-                                />
+                                <Button 
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 px-3 rounded-full"
+                                  onClick={() => navigate(`/patient-dashboard/messages/${appointment.mentor?.id}`)}
+                                >
+                                  <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
+                                  Message
+                                </Button>
+                              )}
+                              
+                              {/* For video/audio appointments, show Join button only if status is 'scheduled' */}
+                              {(appointment.type === 'video' || appointment.type === 'audio') && (
+                                <Button 
+                                  size="sm"
+                                  className={
+                                    canJoinSession(appointment)
+                                      ? "bg-green-600 hover:bg-green-700 text-white"
+                                      : "bg-gray-300 text-gray-600 cursor-not-allowed"
+                                  }
+                                  onClick={() => {
+                                    if (canJoinSession(appointment)) {
+                                      navigate(`/patient-dashboard/session/${appointment.id}`);
+                                    } else {
+                                      toast.info("Please wait for your mentor to start the session before joining.");
+                                    }
+                                  }}
+                                  disabled={!canJoinSession(appointment)}
+                                >
+                                  {activeSession && isSessionActiveForAppointment(appointment.id)
+                                    ? "Return to Session"
+                                    : canJoinSession(appointment)
+                                      ? "Join Session"
+                                      : "Waiting for Mentor"}
+                                </Button>
                               )}
                             </>
                           )}

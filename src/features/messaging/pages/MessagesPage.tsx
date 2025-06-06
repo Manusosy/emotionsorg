@@ -19,6 +19,7 @@ import MessagingSetupInstructions from '@/features/messaging/components/Messagin
 import SupabaseMessagingService from '@/features/messaging/services/messaging.service';
 import { patientService, moodMentorService } from '@/services';
 import { supabase } from '@/lib/supabase';
+import { useToast } from '@/components/ui/use-toast';
 
 // Create an instance of the messaging service
 const messagingService = new SupabaseMessagingService();
@@ -41,6 +42,7 @@ export default function MessagesPage({ className = '', initialConversationId }: 
   const { conversationId: urlConversationId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   const [contactInfo, setContactInfo] = useState<ContactInfo | null>(null);
   const [availableContacts, setAvailableContacts] = useState<ContactInfo[]>([]);
@@ -457,6 +459,58 @@ export default function MessagesPage({ className = '', initialConversationId }: 
     }
   };
 
+  // Add this effect to determine user role
+  const [userRole, setUserRole] = useState<'patient' | 'mood_mentor' | null>(null);
+  useEffect(() => {
+    const checkUserRole = async () => {
+      try {
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user?.id)
+          .single();
+
+        if (error) throw error;
+        setUserRole(profile.role);
+      } catch (error) {
+        console.error('Error checking user role:', error);
+      }
+    };
+
+    if (user) {
+      checkUserRole();
+    }
+  }, [user]);
+
+  const handleCallButton = async (type: 'video' | 'audio') => {
+    if (!displayParticipant) {
+      toast({
+        title: "No participant selected",
+        description: "Please select someone to call first.",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (userRole === 'patient') {
+      // For patients, redirect to book an appointment
+      navigate('/book-appointment', {
+        state: { mentorId: displayParticipant.id, callType: type }
+      });
+      toast({
+        title: "Book an Appointment",
+        description: `Please schedule an appointment for a ${type} call with your mood mentor.`
+      });
+    } else if (userRole === 'mood_mentor') {
+      // For mentors, show message about appointment-only calls
+      toast({
+        title: "Appointment Required",
+        description: "Video and audio calls are only available during scheduled appointments.",
+        variant: "destructive"
+      });
+    }
+  };
+
   if (!user) {
     return (
       <div className="flex justify-center items-center h-full">
@@ -542,10 +596,20 @@ export default function MessagesPage({ className = '', initialConversationId }: 
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button variant="ghost" size="icon" title="Audio call">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  title="Audio call"
+                  onClick={() => handleCallButton('audio')}
+                >
                   <Phone className="h-5 w-5" />
                 </Button>
-                <Button variant="ghost" size="icon" title="Video call">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  title="Video call"
+                  onClick={() => handleCallButton('video')}
+                >
                   <Video className="h-5 w-5" />
                 </Button>
               </div>

@@ -1,102 +1,98 @@
-import React from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { MessageSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { appointmentService } from '@/services';
 import { toast } from 'sonner';
-import { useAuth } from '@/contexts/authContext';
+import SupabaseMessagingService from '@/features/messaging/services/messaging.service';
+
+// Create an instance of the messaging service
+const messagingService = new SupabaseMessagingService();
 
 interface ChatButtonProps {
-  appointmentId: string;
-  variant?: 'default' | 'outline' | 'secondary';
-  size?: 'default' | 'sm' | 'lg' | 'icon';
+  userId: string;
+  targetUserId: string;
+  userRole?: 'patient' | 'mood_mentor';
   className?: string;
+  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
+  size?: 'default' | 'sm' | 'lg' | 'icon';
 }
 
-export function ChatButton({
-  appointmentId,
-  variant = 'default',
-  size = 'default',
+export function ChatButton({ 
+  userId, 
+  targetUserId, 
+  userRole = 'patient',
   className = '',
+  variant = 'default',
+  size = 'default'
 }: ChatButtonProps) {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [isLoading, setIsLoading] = React.useState(false);
-
-  const handleStartChat = async () => {
-    if (!user) {
-      toast.error('You must be logged in to start a chat');
-      return;
-    }
-    
-    setIsLoading(true);
+  const [isLoading, setIsLoading] = useState(false);
+  
+  const handleClick = async () => {
     try {
-      console.log(`Starting chat for appointment: ${appointmentId}`);
+      setIsLoading(true);
+      console.log("Chat button clicked - starting conversation with:", targetUserId);
       
-      // First get the appointment details to verify it exists
-      const appointmentResult = await appointmentService.getAppointmentById(appointmentId);
-      
-      if (appointmentResult.error || !appointmentResult.data) {
-        toast.error('Could not find appointment details');
+      // Verify users exist
+      if (!userId || !targetUserId) {
+        console.error("Missing user information:", { userId, targetUserId });
+        toast.error('Cannot start chat: Missing user information');
         setIsLoading(false);
         return;
       }
+
+      // Determine the correct path based on user role
+      let basePath = userRole === 'patient' ? '/patient-dashboard/messages' : '/mood-mentor-dashboard/messages';
       
-      const appointment = appointmentResult.data;
-      const isUserMentor = appointment.mentor_id === user.id;
-      const isUserPatient = appointment.patient_id === user.id;
+      // First navigate immediately to show the interface
+      navigate(`${basePath}/${targetUserId}`);
       
-      if (!isUserMentor && !isUserPatient) {
-        toast.error('You are not authorized to start this chat');
-        setIsLoading(false);
-        return;
-      }
-      
-      // Get or create a conversation for this appointment
-      const { data: conversationId, error } = await appointmentService.startAppointmentChat(appointmentId);
-      
-      if (error) {
-        // Special handling for database table not existing yet
-        if (error.includes('relation') && error.includes('does not exist')) {
-          toast.info('Chat system is being set up. Please try again in a moment.');
-        } else {
-          toast.error('Failed to start chat session: ' + error);
-          console.error(error);
+      // Then create/retrieve the conversation in the background
+      setTimeout(async () => {
+        try {
+          const result = await messagingService.getOrCreateConversation(userId, targetUserId);
+          
+          if (!result.data) {
+            console.error("Failed to create conversation:", result.error);
+            // Don't show error to user yet, let them see interface first
+          } else {
+            console.log("Conversation created/retrieved successfully:", result.data);
+            // If we got a different ID than the target user ID, update the URL
+            if (result.data !== targetUserId) {
+              navigate(`${basePath}/${result.data}`, { replace: true });
+            }
+          }
+        } catch (error) {
+          console.error("Error in background conversation creation:", error);
+          // Errors handled by the messaging page component
         }
         setIsLoading(false);
-        return;
-      }
-      
-      if (conversationId) {
-        // Use consistent navigation for both user types
-        if (isUserMentor) {
-          // Mood mentors go to their dashboard messages with the patient ID
-          navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`);
-        } else {
-          // Patients go to their dashboard messages
-          navigate(`/messages`);
-        }
-      } else {
-        toast.error('Could not create a chat session');
-      }
-    } catch (err) {
-      console.error('Error starting chat:', err);
-      toast.error('An error occurred while starting the chat');
-    } finally {
+      }, 100);
+    } catch (error) {
+      console.error("Error in ChatButton:", error);
       setIsLoading(false);
     }
   };
-
+  
   return (
     <Button
+      onClick={handleClick}
+      disabled={isLoading}
+      className={className}
       variant={variant}
       size={size}
-      className={className}
-      onClick={handleStartChat}
-      disabled={isLoading}
     >
-      <MessageSquare className="h-4 w-4 mr-2" />
-      {isLoading ? 'Starting...' : 'Chat'}
+      {isLoading ? (
+        <div className="flex items-center">
+          <div className="animate-spin mr-2 h-4 w-4 border-2 border-current border-t-transparent rounded-full"></div>
+          <span>Opening...</span>
+        </div>
+      ) : (
+        <>
+          <MessageSquare className="h-4 w-4 mr-2" />
+          Message
+        </>
+      )}
     </Button>
   );
 } 

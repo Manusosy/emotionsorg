@@ -22,7 +22,8 @@ import {
   ChevronLeft,
   BookOpen,
   MoreVertical,
-  X
+  X,
+  CalendarClock
 } from "lucide-react";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
 import { AuthContext } from "@/contexts/authContext";
@@ -48,6 +49,8 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import AppointmentDetailDialog from '../components/AppointmentDetailDialog';
+import { ChatButton } from "@/components/messaging/ChatButton";
+import AvailabilityDialog from '@/features/mentor/components/AvailabilityDialog';
 
 // Add interface for dashboard Activities since we don't have a real activity service
 interface Activity {
@@ -125,6 +128,7 @@ export default function MoodMentorDashboard() {
   const [isNewUser, setIsNewUser] = useState(false);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [showAvailabilityDialog, setShowAvailabilityDialog] = useState(false);
   
   // Initial stat cards with zero values - will be populated from database
   const [stats, setStats] = useState<StatCard[]>([
@@ -173,7 +177,7 @@ export default function MoodMentorDashboard() {
   // Ensure user is a mood mentor
   useEffect(() => {
     if (user) {
-      const userRole = user.user_metadata?.role;
+      const userRole = user?.user_metadata?.role;
       if (userRole !== 'mood_mentor') {
         console.error('User with role', userRole, 'attempted to access mood mentor dashboard');
         toast.error('You do not have permission to access this dashboard');
@@ -379,10 +383,10 @@ export default function MoodMentorDashboard() {
         // No profile found, create a basic one
         setProfile({
           id: user.id,
-          fullName: user.user_metadata?.name || '',
+          fullName: user?.user_metadata?.name || '',
           email: user.email || '',
           bio: '',
-          avatarUrl: user.user_metadata?.avatarUrl || '',
+          avatarUrl: user?.user_metadata?.avatar_url || '',
           specialties: [],
           isProfileComplete: false
         });
@@ -398,6 +402,11 @@ export default function MoodMentorDashboard() {
   
   // Check if an appointment is starting soon (within 15 minutes)
   const isAppointmentStartingSoon = (appointmentTime: string, appointmentDate: string) => {
+    // Always allow joining appointments regardless of time
+    return true;
+    
+    // Previous time-based logic (commented out)
+    /*
     if (!appointmentTime || !appointmentDate) return false;
     
     try {
@@ -415,6 +424,7 @@ export default function MoodMentorDashboard() {
       console.error('Error checking appointment time:', error);
       return false;
     }
+    */
   };
   
   // Helper function to get appointment type badge
@@ -587,13 +597,13 @@ export default function MoodMentorDashboard() {
     
     setActivitiesLoading(true);
     try {
-      // Use the new mentor_activities_view
+      // Use the new mentor_activities_view and limit to 3 activities
       const { data: activities, error: activitiesError } = await supabase
         .from('mentor_activities_view')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(3);
       
       if (activitiesError) {
         console.warn('Error fetching from mentor_activities_view:', activitiesError);
@@ -630,9 +640,15 @@ export default function MoodMentorDashboard() {
               iconColorClass = 'text-gray-600';
           }
           
+          // Fix activity title for appointments to show patient name instead of mentor name
+          let title = activity.activity_title;
+          if (activity.activity_type === 'appointment' && activity.metadata?.patient_name) {
+            title = `Session with ${activity.metadata.patient_name}`;
+          }
+          
           return {
             id: activity.activity_id,
-            title: activity.activity_title,
+            title: title,
             time: formatActivityTime(activity.created_at),
             icon,
             iconBgClass,
@@ -973,18 +989,14 @@ export default function MoodMentorDashboard() {
                         
                         {/* Action buttons */}
                         <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
+                          <ChatButton
+                            userId={user?.id || ''}
+                            targetUserId={appointment.patient_id}
+                            userRole="mood_mentor"
+                            variant="outline"
+                            size="sm"
                             className="h-8 px-3 rounded-full"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/mood-mentor-dashboard/messages/${appointment.patient_id}`);
-                            }}
-                          >
-                            <MessageSquare className="h-3.5 w-3.5 mr-1.5" />
-                            Message
-                          </Button>
+                          />
                           
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -1024,12 +1036,9 @@ export default function MoodMentorDashboard() {
                               e.stopPropagation();
                               navigate(`/mood-mentor-dashboard/session/${appointment.id}`);
                             }}
-                            disabled={!isAppointmentStartingSoon(appointment.time, appointment.date)}
                           >
                             <Video className="h-3.5 w-3.5 mr-1.5" />
-                            {isAppointmentStartingSoon(appointment.time, appointment.date) 
-                              ? 'Join Now'
-                              : 'Join'}
+                            Start Session
                           </Button>
                         </div>
                       </div>
@@ -1106,154 +1115,88 @@ export default function MoodMentorDashboard() {
                     {/* Calendar days */}
                     {calendarDays.map((day) => (
                       <div
-                        key={`day-${day}`}
-                        className="relative h-8 flex items-center justify-center"
-                        title={appointmentsByDay[day] ? `${appointmentsByDay[day]} appointment${appointmentsByDay[day] > 1 ? 's' : ''}` : ''}
+                        key={`${currentMonthName}-${day}`}
+                        className={`h-8 w-8 rounded-full ${
+                          hasDayAppointment(day) ? 'bg-blue-500 text-white' : 'text-gray-500'
+                        }`}
                       >
-                        <div
-                          className={`
-                            w-8 h-8 rounded-full flex items-center justify-center text-xs
-                            ${hasDayAppointment(day) ? 'bg-blue-100 text-blue-700 font-medium' : 'text-gray-900'}
-                            ${hasDayAppointment(day) ? 'hover:bg-blue-200 cursor-pointer' : ''}
-                          `}
-                          onClick={() => {
-                            if (hasDayAppointment(day)) {
-                              const selectedDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), day);
-                              navigate(`/mood-mentor-dashboard/appointments?date=${format(selectedDate, 'yyyy-MM-dd')}`);
-                            }
-                          }}
-                        >
-                          {day}
-                          {appointmentsByDay[day] > 1 && (
-                            <span className="absolute -bottom-1 -right-1 bg-blue-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px]">
-                              {appointmentsByDay[day]}
-                            </span>
-                          )}
-                        </div>
+                        {day}
                       </div>
                     ))}
                   </div>
-                  
-                  {/* Legend */}
-                  <div className="flex items-center justify-center text-xs text-gray-500 pt-2">
-                    <div className="w-3 h-3 rounded-full bg-blue-100 mr-1"></div>
-                    <span>Has appointments</span>
-                  </div>
                 </div>
               </CardContent>
-              <CardFooter>
-                <Button 
-                  variant="outline" 
-                  className="w-full"
-                  onClick={() => navigate('/mood-mentor-dashboard/appointments')}
-                >
-                  View Full Schedule
-                </Button>
-              </CardFooter>
             </Card>
           </section>
         </div>
-        
-        {/* Recent Activity Section */}
-        <section>
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle>Recent Activity</CardTitle>
-              <CardDescription>Latest interactions and updates</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {activitiesLoading ? (
-                <div className="space-y-4">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="flex items-start animate-pulse">
-                      <div className="w-8 h-8 rounded-full bg-gray-200 mr-4"></div>
-                      <div className="flex-1">
-                        <div className="h-4 bg-gray-200 rounded w-3/4 mb-2"></div>
-                        <div className="h-3 bg-gray-100 rounded w-1/4"></div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : recentActivities.length > 0 ? (
-                <div className="space-y-4">
-                  {recentActivities.map((activity) => (
-                    <div key={activity.id} className="flex items-start">
-                      <div className={`w-8 h-8 rounded-full ${activity.iconBgClass} ${activity.iconColorClass} flex items-center justify-center mr-4 flex-shrink-0`}>
-                        {activity.icon}
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-900">{activity.title}</p>
-                        <p className="text-xs text-gray-500 mt-1">{activity.time}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-6">
-                  <Bell className="mx-auto h-10 w-10 text-gray-400 mb-2" />
-                  <h3 className="text-sm font-medium text-gray-900">No recent activity</h3>
-                  <p className="text-sm text-gray-500 mt-1">
-                    Your activity feed will show up here
-                  </p>
-                </div>
-              )}
-            </CardContent>
-            {recentActivities.length > 0 && (
-              <CardFooter>
-                <Button 
-                  variant="ghost" 
-                  className="w-full text-blue-600 hover:text-blue-700 hover:bg-blue-50"
-                >
-                  View All Activity
-                </Button>
-              </CardFooter>
-            )}
-          </Card>
-        </section>
-        
-        {/* Quick Actions Section */}
-        <section>
-          <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-center justify-center"
-              onClick={() => navigate('/mood-mentor-dashboard/profile')}
-            >
-              <User className="h-6 w-6 mb-2 text-blue-600" />
-              <span>Update Profile</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-center justify-center"
-              onClick={() => navigate('/mood-mentor-dashboard/resources')}
-            >
-              <BookOpen className="h-6 w-6 mb-2 text-purple-600" />
-              <span>Manage Resources</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-center justify-center"
-              onClick={() => navigate('/mood-mentor-dashboard/messages')}
-            >
-              <MessageSquare className="h-6 w-6 mb-2 text-green-600" />
-              <span>Check Messages</span>
-            </Button>
-            <Button
-              variant="outline"
-              className="h-auto py-6 flex flex-col items-center justify-center"
-              onClick={() => navigate('/mood-mentor-dashboard/availability')}
-            >
-              <Calendar className="h-6 w-6 mb-2 text-amber-600" />
-              <span>Set Availability</span>
-            </Button>
-          </div>
-        </section>
-        
-        {/* Profile status card */}
-        <ProfileStatusCard />
       </div>
       
+      {/* Quick Actions Section */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Quick Actions</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="hover:shadow-md transition-all cursor-pointer" onClick={() => setShowAvailabilityDialog(true)}>
+            <CardContent className="p-4 flex items-center space-x-4">
+              <div className="bg-[#20C0F3]/10 p-3 rounded-full">
+                <CalendarClock className="h-5 w-5 text-[#20C0F3]" />
+              </div>
+              <div>
+                <h3 className="font-medium">Set Availability</h3>
+                <p className="text-sm text-gray-500">Manage your schedule</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card 
+            className="hover:shadow-md transition-all cursor-pointer" 
+            onClick={() => navigate('/mood-mentor-dashboard/profile')}
+          >
+            <CardContent className="p-4 flex items-center space-x-4">
+              <div className="bg-blue-100 p-3 rounded-full">
+                <User className="h-5 w-5 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-medium">Update Profile</h3>
+                <p className="text-sm text-gray-500">Edit your details</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card 
+            className="hover:shadow-md transition-all cursor-pointer" 
+            onClick={() => navigate('/mood-mentor-dashboard/resources')}
+          >
+            <CardContent className="p-4 flex items-center space-x-4">
+              <div className="bg-purple-100 p-3 rounded-full">
+                <BookOpen className="h-5 w-5 text-purple-600" />
+              </div>
+              <div>
+                <h3 className="font-medium">Manage Resources</h3>
+                <p className="text-sm text-gray-500">View resource library</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card 
+            className="hover:shadow-md transition-all cursor-pointer" 
+            onClick={() => navigate('/mood-mentor-dashboard/messages')}
+          >
+            <CardContent className="p-4 flex items-center space-x-4">
+              <div className="bg-green-100 p-3 rounded-full">
+                <MessageSquare className="h-5 w-5 text-green-600" />
+              </div>
+              <div>
+                <h3 className="font-medium">Check Messages</h3>
+                <p className="text-sm text-gray-500">View your inbox</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+      
+      {/* Profile status card */}
+      <ProfileStatusCard />
+
       {/* Add the appointment detail dialog */}
       {selectedAppointmentId && (
         <AppointmentDetailDialog
@@ -1312,8 +1255,12 @@ export default function MoodMentorDashboard() {
           }}
         />
       )}
+
+      {/* Availability Dialog */}
+      <AvailabilityDialog 
+        open={showAvailabilityDialog} 
+        onOpenChange={setShowAvailabilityDialog} 
+      />
     </DashboardLayout>
   );
-} 
-
-
+}

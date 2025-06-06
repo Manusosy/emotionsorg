@@ -212,47 +212,150 @@ export class PatientService implements IPatientService {
     error: string | null;
   }> {
     try {
+      console.log(`Searching for patient with ID: ${id}`);
+      
       if (!id) {
+        console.error('getPatientById called with empty ID');
         throw new Error('ID is required');
       }
 
-      // First try to find by user_id
-      const { data: userData, error: userError } = await supabase
-        .from('patient_profiles')
-        .select('*')
-        .eq('user_id', id)
-        .maybeSingle();
+      // Try multiple approaches to find the patient
 
-      if (userData) {
-        return {
-          success: true,
-          data: convertObjectToCamelCase(userData) as PatientProfile,
-          error: null
-        };
+      // Approach 1: Try patient_profiles table with user_id
+      try {
+        console.log('Trying patient_profiles table with user_id');
+        const { data: userData, error: userError } = await supabase
+          .from('patient_profiles')
+          .select('*')
+          .eq('user_id', id)
+          .maybeSingle();
+
+        if (userError) {
+          console.warn('Error querying patient_profiles by user_id:', userError);
+        } else if (userData) {
+          console.log('Found patient in patient_profiles by user_id');
+          return {
+            success: true,
+            data: convertObjectToCamelCase(userData) as PatientProfile,
+            error: null
+          };
+        }
+      } catch (err) {
+        console.warn('Exception querying patient_profiles by user_id:', err);
       }
 
-      // If not found by user_id, try by id
-      const { data: idData, error: idError } = await supabase
-        .from('patient_profiles')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
+      // Approach 2: Try patient_profiles table with id
+      try {
+        console.log('Trying patient_profiles table with id');
+        const { data: idData, error: idError } = await supabase
+          .from('patient_profiles')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
 
-      if (idError) {
-        throw idError;
+        if (idError) {
+          console.warn('Error querying patient_profiles by id:', idError);
+        } else if (idData) {
+          console.log('Found patient in patient_profiles by id');
+          return {
+            success: true,
+            data: convertObjectToCamelCase(idData) as PatientProfile,
+            error: null
+          };
+        }
+      } catch (err) {
+        console.warn('Exception querying patient_profiles by id:', err);
       }
 
+      // Approach 3: Try profiles table
+      try {
+        console.log('Trying profiles table');
+        const { data: profileData, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle();
+
+        if (profileError) {
+          console.warn('Error querying profiles table:', profileError);
+        } else if (profileData && profileData.role === 'patient') {
+          console.log('Found patient in profiles table');
+          
+          // Map profile data to PatientProfile format
+          const patientData: PatientProfile = {
+            id: profileData.id,
+            userId: profileData.user_id || profileData.id,
+            fullName: profileData.full_name || `${profileData.first_name || ''} ${profileData.last_name || ''}`.trim() || 'Unknown',
+            email: profileData.email || '',
+            phoneNumber: profileData.phone_number || '',
+            dateOfBirth: profileData.date_of_birth || '',
+            gender: profileData.gender || '',
+            location: profileData.country || '',
+            city: profileData.city || '',
+            state: profileData.state || '',
+            avatarUrl: profileData.avatar_url,
+            isActive: true,
+            createdAt: profileData.created_at,
+            updatedAt: profileData.updated_at || profileData.created_at
+          };
+          
+          return {
+            success: true,
+            data: patientData,
+            error: null
+          };
+        }
+      } catch (err) {
+        console.warn('Exception querying profiles table:', err);
+      }
+
+      // Approach 4: Try auth.users
+      try {
+        console.log('Trying auth.users');
+        const { data: authData, error: authError } = await supabase.auth.admin.getUserById(id);
+
+        if (authError) {
+          console.warn('Error querying auth.users:', authError);
+        } else if (authData && authData.user) {
+          console.log('Found user in auth.users');
+          
+          // Map auth data to PatientProfile format
+          const patientData: PatientProfile = {
+            id: authData.user.id,
+            userId: authData.user.id,
+            fullName: authData.user.user_metadata?.full_name || 
+                     `${authData.user.user_metadata?.first_name || ''} ${authData.user.user_metadata?.last_name || ''}`.trim() || 
+                     authData.user.email?.split('@')[0] || 'Unknown',
+            email: authData.user.email || '',
+            phoneNumber: authData.user.user_metadata?.phone_number || '',
+            avatarUrl: authData.user.user_metadata?.avatar_url,
+            isActive: true,
+            createdAt: authData.user.created_at,
+            updatedAt: authData.user.updated_at || authData.user.created_at
+          };
+          
+          return {
+            success: true,
+            data: patientData,
+            error: null
+          };
+        }
+      } catch (err) {
+        console.warn('Exception querying auth.users:', err);
+      }
+
+      console.log(`No patient found with ID: ${id}`);
       return {
-        success: true,
-        data: idData ? convertObjectToCamelCase(idData) as PatientProfile : null,
-        error: null
+        success: false,
+        data: null,
+        error: 'Patient not found'
       };
     } catch (error: any) {
       console.error('Error in getPatientById:', error);
       return {
         success: false,
         data: null,
-        error: error.message
+        error: error.message || 'Error fetching patient data'
       };
     }
   }

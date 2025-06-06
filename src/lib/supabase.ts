@@ -10,16 +10,18 @@ import type { Database } from '../types/database.types';
 declare global {
   interface Window {
     ENV_CONFIG?: {
-      VITE_SUPABASE_URL: string;
-      VITE_SUPABASE_ANON_KEY: string;
-      VITE_SUPABASE_SERVICE_KEY: string;
-      [key: string]: string; // Add index signature to allow string indexing
+      VITE_SUPABASE_URL?: string;
+      VITE_SUPABASE_ANON_KEY?: string;
+      VITE_SUPABASE_SERVICE_KEY?: string;
+      VITE_AGORA_APP_ID?: string;
+      VITE_AGORA_APP_CERTIFICATE?: string;
+      [key: string]: string | undefined; // Add index signature to allow string indexing
     }
   }
 }
 
 // Try to get credentials from multiple sources for better reliability
-const getEnvValue = (key: string, silent: boolean = false): string => {
+export const getEnvValue = (key: string, silent: boolean = false): string => {
   // Try window.ENV_CONFIG first (runtime config)
   if (window.ENV_CONFIG?.[key]) {
     console.log(`Using ${key} from window.ENV_CONFIG`);

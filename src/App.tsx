@@ -1,8 +1,8 @@
-import { moodMentorService, authService, userService, dataService, apiService, messageService, patientService, appointmentService } from '@/services';
+import { moodMentorService, authService, userService, dataService, apiService, patientService, appointmentService } from '@/services';
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { BrowserRouter, Routes, Route, useLocation, Navigate, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useEffect, useState, useContext } from "react";
 import MoodTracker from "@/features/mood-tracking/pages/MoodTracker";
 import SignIn from "@/features/auth/pages/SignIn";
@@ -28,6 +28,7 @@ import DashboardResourcesPage from "@/features/dashboard/pages/ResourcesPage";
 import BookingPage from "@/features/booking/pages/BookingPage";
 import PatientDashboard from "@/features/dashboard/pages/PatientDashboard";
 import PatientAppointmentsPage from "@/features/dashboard/pages/AppointmentsPage";
+import PatientAppointmentSessionPage from "@/features/dashboard/pages/PatientAppointmentSessionPage";
 import FavoritesPage from "@/features/dashboard/pages/FavoritesPage";
 import Settings from "@/features/dashboard/pages/Settings";
 import Profile from "@/features/dashboard/pages/Profile";
@@ -51,26 +52,26 @@ import Contact from "./pages/Contact";
 import FAQs from "./pages/FAQs";
 import About from "./pages/About";
 import MoodMentorReviewsPage from "@/features/mood_mentors/pages/ReviewsPage";
-import MoodMentorAvailabilityPage from "@/features/mood_mentors/pages/AvailabilityPage";
 import './styles/App.css';
 import { Spinner } from "@/components/ui/spinner";
 import JournalEntryPage from "@/features/journal/pages/JournalEntryPage";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import HelpCenterPage from "@/features/dashboard/pages/HelpCenterPage";
-import MessagesPage from "@/features/dashboard/pages/MessagesPage";
+import MessagesPage from "@/features/messaging/pages/MessagesPage";
+import DashboardMessagesPage from "@/features/dashboard/pages/MessagesPage";
 import MoodMentorMessagesPage from "@/features/mood_mentors/pages/MessagesPage";
 import ScrollToTop from "@/components/layout/ScrollToTop";
 import AuthCallbackPage from "@/app/auth/callback/page";
 import MoodMentorProfile from "@/features/mood_mentors/pages/MoodMentorProfile";
-import ChatPage from "@/features/chat/pages/ChatPage";
-import NewConversation from "@/features/chat/components/NewConversation";
 import { useAuth } from "@/contexts/authContext";
 import AppointmentSessionPage from "@/features/mood_mentors/pages/AppointmentSessionPage";
-import { ThemeProvider } from './contexts/themeContext';
 import { setupDatabaseFunctions } from './lib/supabase';
 import PatientsPage from "./features/mood_mentors/pages/PatientsPage";
 import PatientProfilePage from "./features/mood_mentors/pages/PatientProfilePage";
+import { AppointmentCall } from "./components/calls/AppointmentCall";
+import { VideoSessionProvider } from './contexts/VideoSessionContext';
+import { PersistentVideoSession } from './components/calls/PersistentVideoSession';
 
 // Type definition for UserRole
 type UserRole = 'patient' | 'mood_mentor';
@@ -141,6 +142,23 @@ const ProtectedErrorBoundary = ({ children, dashboardPath = '/' }: { children: R
   );
 };
 
+// AppointmentCallPage component
+const AppointmentCallPage = () => {
+  const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const type = searchParams.get('type');
+  
+  return (
+    <div className="container mx-auto py-8">
+      <AppointmentCall
+        appointmentId={id || ''}
+        isAudioOnly={type === 'audio'}
+        redirectPath="/patient-dashboard/appointments"
+      />
+    </div>
+  );
+};
+
 const AppContent = () => {
   const [showHeaderFooter, setShowHeaderFooter] = useState(true);
   const location = useLocation();
@@ -163,6 +181,36 @@ const AppContent = () => {
                                  location.pathname === "/terms" ||
                                  location.pathname === "/faqs" ||
                                  location.pathname === "/about";
+
+  // Add a function to clean up any lingering camera access when the app loads
+  useEffect(() => {
+    const cleanupLingering = () => {
+      console.log('Cleaning up any lingering camera/microphone access on app load');
+      
+      // Get all media devices and stop them
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => {
+          const tracks = stream.getTracks();
+          tracks.forEach(track => {
+            track.stop();
+            console.log(`App: Stopped lingering ${track.kind} track on load`);
+          });
+        })
+        .catch(err => {
+          console.log('No lingering media tracks to clean up');
+        });
+    };
+    
+    // Clean up on app load
+    cleanupLingering();
+    
+    // Also clean up when the window is about to unload
+    window.addEventListener('beforeunload', cleanupLingering);
+    
+    return () => {
+      window.removeEventListener('beforeunload', cleanupLingering);
+    };
+  }, []);
 
   return (
     <>
@@ -268,7 +316,12 @@ const AppContent = () => {
               } />
               <Route path="/patient-dashboard/messages" element={
                 <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
-                  <MessagesPage />
+                  <DashboardMessagesPage />
+                </ProtectedErrorBoundary>
+              } />
+              <Route path="/patient-dashboard/messages/:conversationId" element={
+                <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
+                  <DashboardMessagesPage />
                 </ProtectedErrorBoundary>
               } />
               <Route path="/patient-dashboard/journal" element={
@@ -292,20 +345,9 @@ const AppContent = () => {
                 </ProtectedErrorBoundary>
               } />
               
-              {/* Chat Routes */}
-              <Route path="/chat" element={
+              <Route path="/patient-dashboard/session/:appointmentId" element={
                 <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
-                  <ChatPage />
-                </ProtectedErrorBoundary>
-              } />
-              <Route path="/chat/:conversationId" element={
-                <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
-                  <ChatPage />
-                </ProtectedErrorBoundary>
-              } />
-              <Route path="/chat/new" element={
-                <ProtectedErrorBoundary dashboardPath="/patient-dashboard">
-                  <NewConversation />
+                  <PatientAppointmentSessionPage />
                 </ProtectedErrorBoundary>
               } />
               
@@ -370,7 +412,7 @@ const AppContent = () => {
                   <MoodMentorMessagesPage />
                 </ProtectedErrorBoundary>
               } />
-              <Route path="/mood-mentor-dashboard/messages/:patientId" element={
+              <Route path="/mood-mentor-dashboard/messages/:conversationId" element={
                 <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
                   <MoodMentorMessagesPage />
                 </ProtectedErrorBoundary>
@@ -380,14 +422,28 @@ const AppContent = () => {
                   <MoodMentorReviewsPage />
                 </ProtectedErrorBoundary>
               } />
-              <Route path="/mood-mentor-dashboard/availability" element={
-                <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
-                  <MoodMentorAvailabilityPage />
-                </ProtectedErrorBoundary>
-              } />
               <Route path="/mood-mentor-dashboard/analytics" element={
                 <ProtectedErrorBoundary dashboardPath="/mood-mentor-dashboard">
                   <MoodMentorAnalyticsPage />
+                </ProtectedErrorBoundary>
+              } />
+              
+              {/* Standalone messaging routes */}
+              <Route path="/messages" element={
+                <ProtectedErrorBoundary dashboardPath="/">
+                  <MessagesPage />
+                </ProtectedErrorBoundary>
+              } />
+              <Route path="/messages/:conversationId" element={
+                <ProtectedErrorBoundary dashboardPath="/">
+                  <MessagesPage />
+                </ProtectedErrorBoundary>
+              } />
+              
+              {/* Appointment call route */}
+              <Route path="/appointments/:id/call" element={
+                <ProtectedErrorBoundary dashboardPath="/">
+                  <AppointmentCallPage />
                 </ProtectedErrorBoundary>
               } />
               
@@ -453,7 +509,10 @@ const App = () => {
     <BrowserRouter>
       <AuthProvider>
         <ScrollToTop />
-        <AppContent />
+        <VideoSessionProvider>
+          <PersistentVideoSession />
+          <AppContent />
+        </VideoSessionProvider>
       </AuthProvider>
     </BrowserRouter>
   );

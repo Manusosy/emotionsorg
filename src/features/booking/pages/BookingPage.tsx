@@ -1,11 +1,13 @@
-import { authService, userService, dataService, apiService, messageService, patientService, moodMentorService, appointmentService } from '../../../services'
+import { authService, userService, dataService, apiService, patientService, moodMentorService, appointmentService } from '../../../services'
+import { availabilityService } from '../../../services/mood-mentor/availability.service';
+import { AvailableTimeSlot } from '../../../services/mood-mentor/availability.interface';
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { Calendar } from "@/components/ui/calendar";
-import { format } from "date-fns";
+import { format, parse } from "date-fns";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -34,11 +36,6 @@ const steps = [
   { id: 6, name: "Confirmation" },
 ];
 
-const timeSlots = [
-  "09:00 AM", "10:00 AM", "11:00 AM", "12:00 PM", 
-  "01:00 PM", "02:00 PM", "03:00 PM", "04:00 PM", "05:00 PM"
-];
-
 const appointmentTypes = [
   { id: "video", name: "Video Call", description: "Talk face-to-face via video conference", icon: "📹" },
   { id: "audio", name: "Audio Call", description: "Voice call without video", icon: "🎧" },
@@ -48,13 +45,20 @@ const appointmentTypes = [
 const BookingPage = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [searchParams] = useSearchParams();
-  const moodMentorId = searchParams.get("mentor") || searchParams.get("moodMentorId"); // Support both parameter names
+  const location = useLocation();
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
   
+  // Get mentor ID from either search params or location state
+  const moodMentorId = searchParams.get("mentor") || searchParams.get("moodMentorId") || 
+    (location.state as any)?.mentorId;
+  
+  // Get call type from location state
+  const initialCallType = (location.state as any)?.callType;
+  
   // State for form fields
   const [selectedSpecialty, setSelectedSpecialty] = useState("Mental Health");
-  const [selectedAppointmentType, setSelectedAppointmentType] = useState("");
+  const [selectedAppointmentType, setSelectedAppointmentType] = useState(initialCallType || "");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
   const [selectedTime, setSelectedTime] = useState("");
   const [formData, setFormData] = useState({
@@ -67,6 +71,8 @@ const BookingPage = () => {
   const [moodMentor, setMoodMentor] = useState<MoodMentorUI | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAuthDialog, setShowAuthDialog] = useState(false);
+  const [availableTimeSlots, setAvailableTimeSlots] = useState<AvailableTimeSlot[]>([]);
+  const [isLoadingSlots, setIsLoadingSlots] = useState(false);
   
   useEffect(() => {
     const initPage = async () => {
@@ -120,6 +126,35 @@ const BookingPage = () => {
     
     initPage();
   }, [moodMentorId, isAuthenticated, user, navigate]);
+  
+  // If we have an initial call type, start at step 3 (date & time)
+  useEffect(() => {
+    if (initialCallType && currentStep === 1) {
+      setCurrentStep(3);
+    }
+  }, [initialCallType]);
+  
+  // Update the useEffect that handles date selection
+  useEffect(() => {
+    const fetchAvailableSlots = async () => {
+      if (!selectedDate || !moodMentor?.userId) return;
+
+      setIsLoadingSlots(true);
+      const formattedDate = format(selectedDate, 'yyyy-MM-dd');
+      const { data: slots, error } = await availabilityService.getAvailableTimeSlots(moodMentor.userId, formattedDate);
+
+      if (error) {
+        console.error('Error fetching available slots:', error);
+        toast.error('Failed to load available time slots');
+        setAvailableTimeSlots([]);
+      } else {
+        setAvailableTimeSlots(slots || []);
+      }
+      setIsLoadingSlots(false);
+    };
+
+    fetchAvailableSlots();
+  }, [selectedDate, moodMentor?.userId]);
   
   // Handle step navigation
   const nextStep = () => {
@@ -259,10 +294,20 @@ const BookingPage = () => {
     navigate("/patient-signup");
   };
   
+  // Update the calendar to allow same-day bookings
+  const disabledDates = {
+    before: new Date(),
+  };
+  
   // Render current step content
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
+        // If we have initialCallType, skip to step 3
+        if (initialCallType) {
+          setCurrentStep(3);
+          return null;
+        }
         return (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-center mb-8">Selected Mood Mentor</h2>
@@ -344,6 +389,11 @@ const BookingPage = () => {
         );
         
       case 2:
+        // If we have initialCallType, skip to step 3
+        if (initialCallType) {
+          setCurrentStep(3);
+          return null;
+        }
         return (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-center mb-8">Choose Appointment Type</h2>
@@ -395,7 +445,7 @@ const BookingPage = () => {
                     mode="single"
                     selected={selectedDate}
                     onSelect={setSelectedDate}
-                    disabled={(date) => date < new Date()}
+                    disabled={disabledDates}
                     className="rounded-md border"
                     classNames={{
                       day_selected: "bg-[#20C0F3] text-white hover:bg-[#20C0F3] hover:text-white focus:bg-[#20C0F3] focus:text-white",
@@ -411,22 +461,34 @@ const BookingPage = () => {
                     <Clock className="h-5 w-5 text-[#20C0F3]" />
                     <span>Select Time</span>
                   </h3>
+                  {isLoadingSlots ? (
+                    <div className="flex justify-center items-center py-12">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#20C0F3]"></div>
+                    </div>
+                  ) : availableTimeSlots.length > 0 ? (
                   <div className="grid grid-cols-3 gap-2">
-                    {timeSlots.map((time) => (
+                      {availableTimeSlots.map((slot) => (
                       <Button
-                        key={time}
+                          key={slot.time}
                         variant="outline"
                         className={`${
-                          selectedTime === time 
+                            selectedTime === slot.time
                           ? "bg-[#20C0F3]/10 border-[#20C0F3] text-[#20C0F3]" 
                           : "hover:border-[#20C0F3] hover:text-[#20C0F3]"
                         }`}
-                        onClick={() => setSelectedTime(time)}
+                          onClick={() => setSelectedTime(slot.time)}
+                          disabled={!slot.is_available}
                       >
-                        {time}
+                          {format(parse(slot.time, 'HH:mm', new Date()), 'hh:mm a')}
                       </Button>
                     ))}
                   </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      No available time slots for the selected date.
+                      Please try another date.
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

@@ -10,15 +10,16 @@ import { PatientService } from './patient/patient.service';
 import type { IPatientService } from './patient/patient.interface';
 
 // Import the messaging service
-import { MessagingService } from './messaging/messaging.interface';
-import SupabaseMessagingService from './messaging/messaging.service';
+// import { MessagingService } from './messaging/messaging.interface'; // Removed
+// import SupabaseMessagingService from './messaging/messaging.service'; // Removed
 
 // Export implemented services
 export { authService } from './auth/auth.service';
 export { appointmentService } from './appointments/appointment.service';
-export { messageService } from './messages/message.service';
+// export { messageService } from './messages/message.service'; // Removed, new messaging service is in features/messaging
 export { userService } from './users/user.service';
 export { notificationService } from './notifications/notification.service';
+export { availabilityService } from './mood-mentor/availability.service';
 
 // Service Interfaces
 export interface ServiceResponse<T> {
@@ -116,6 +117,7 @@ export type { IPatientService };
 export { moodMentorService };
 export const patientService = new PatientService();
 
+// export const messagingService: MessagingService = new SupabaseMessagingService(); // Removed, new messaging service is in features/messaging
 export const dataService: DataService = {
   async saveStressAssessment(assessment: any) {
     try {
@@ -339,5 +341,4 @@ export const dataService: DataService = {
   }
 };
 
-export const apiService: ApiService = {};
-export const messagingService: MessagingService = new SupabaseMessagingService(); 
+export const apiService: ApiService = {}; 

@@ -14,6 +14,8 @@ import { supabase } from "@/lib/supabase";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Link } from "react-router-dom";
+import { useAuth } from "@/contexts/authContext";
+import { ChatButton } from "@/components/messaging/ChatButton";
 
 // Interface matching the patient_profiles table
 interface PatientProfile {
@@ -47,6 +49,7 @@ export default function PatientsPage() {
   const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
 
   const fetchPatients = async () => {
     try {
@@ -187,6 +190,18 @@ export default function PatientsPage() {
       subscription.unsubscribe();
     };
   }, []);
+  
+  // Log patient data for debugging
+  useEffect(() => {
+    if (patients.length > 0 && user) {
+      console.log("Current mood mentor ID:", user.id);
+      console.log("Patient list for debugging:", patients.map(p => ({
+        patient_id: p.id,
+        patient_user_id: p.user_id,
+        patient_name: p.full_name
+      })));
+    }
+  }, [patients, user]);
 
   return (
     <DashboardLayout>
@@ -243,14 +258,13 @@ export default function PatientsPage() {
                             View
                           </Link>
                         </Button>
-                        <Button 
-                          variant="outline" 
+                        <ChatButton
+                          userId={user?.id || ''}
+                          targetUserId={patient.user_id}
+                          userRole="mood_mentor"
+                          variant="outline"
                           size="sm"
-                          onClick={() => handleStartChat(patient)}
-                        >
-                          <MessageSquare className="h-4 w-4 mr-1" />
-                          Chat
-                        </Button>
+                        />
                       </div>
                     </TableCell>
                   </TableRow>
