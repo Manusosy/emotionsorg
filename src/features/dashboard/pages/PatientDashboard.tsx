@@ -35,7 +35,8 @@ import {
   BarChart,
   HeartPulse,
   Download,
-  HeartHandshake
+  HeartHandshake,
+  Star
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import FallbackAvatar from "@/components/ui/fallback-avatar";
@@ -54,6 +55,7 @@ import NotificationManager from '../components/NotificationManager';
 import StressAssessmentModal from "../components/StressAssessmentModal";
 import { PostgrestSingleResponse } from '@supabase/supabase-js';
 import { dataService } from '@/services';
+import BookingButton from "@/features/booking/components/BookingButton";
 
 // Add this interface before the MoodMentor interface
 interface UserProfile {
@@ -1180,6 +1182,120 @@ export default function PatientDashboard() {
                 </Card>
               ))
             )}
+          </div>
+        </div>
+
+        {/* Mood Mentors Section - Target for "Book Appointment" buttons */}
+        <div id="mood-mentors-section">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-medium">Available Mood Mentors</h2>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="text-blue-600"
+              onClick={() => navigate('/mood-mentors')}
+            >
+              View All Mentors
+            </Button>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {/* Placeholder for mentor data that will be fetched elsewhere */}
+            <Card className="hover:border-blue-200 transition-colors h-full">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <FallbackAvatar
+                    src="/avatars/mentor1.jpg"
+                    name="Dr. Emily Johnson"
+                    className="h-14 w-14"
+                  />
+                  <div>
+                    <h3 className="font-medium">Dr. Emily Johnson</h3>
+                    <p className="text-sm text-slate-500">Clinical Psychologist</p>
+                    <div className="flex items-center mt-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star key={star} className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                      ))}
+                      <span className="text-xs text-slate-500 ml-1">(42)</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-sm text-slate-600 mb-4 line-clamp-3">
+                  Specializes in cognitive behavioral therapy with 8+ years of experience helping patients with anxiety and depression.
+                </p>
+                
+                <BookingButton 
+                  moodMentorId="mentor1"
+                  moodMentorName="Dr. Emily Johnson"
+                  className="w-full"
+                />
+              </CardContent>
+            </Card>
+            
+            <Card className="hover:border-blue-200 transition-colors h-full">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <FallbackAvatar
+                    src="/avatars/mentor2.jpg"
+                    name="Dr. Michael Chen"
+                    className="h-14 w-14"
+                  />
+                  <div>
+                    <h3 className="font-medium">Dr. Michael Chen</h3>
+                    <p className="text-sm text-slate-500">Mental Health Counselor</p>
+                    <div className="flex items-center mt-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star key={star} className={`h-3 w-3 ${star <= 4 ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`} />
+                      ))}
+                      <span className="text-xs text-slate-500 ml-1">(36)</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-sm text-slate-600 mb-4 line-clamp-3">
+                  Focuses on stress management and mindfulness techniques to help improve overall mental wellbeing.
+                </p>
+                
+                <BookingButton 
+                  moodMentorId="mentor2"
+                  moodMentorName="Dr. Michael Chen"
+                  className="w-full"
+                />
+              </CardContent>
+            </Card>
+            
+            <Card className="hover:border-blue-200 transition-colors h-full">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <FallbackAvatar
+                    src="/avatars/mentor3.jpg"
+                    name="Sarah Williams"
+                    className="h-14 w-14"
+                  />
+                  <div>
+                    <h3 className="font-medium">Sarah Williams</h3>
+                    <p className="text-sm text-slate-500">Therapist</p>
+                    <div className="flex items-center mt-1">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star key={star} className={`h-3 w-3 ${star <= 5 ? 'fill-yellow-400 text-yellow-400' : 'text-gray-300'}`} />
+                      ))}
+                      <span className="text-xs text-slate-500 ml-1">(51)</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-sm text-slate-600 mb-4 line-clamp-3">
+                  Experienced in helping clients navigate life transitions, relationship issues, and personal growth challenges.
+                </p>
+                
+                <BookingButton 
+                  moodMentorId="mentor3"
+                  moodMentorName="Sarah Williams"
+                  className="w-full"
+                />
+              </CardContent>
+            </Card>
           </div>
         </div>
       </div>

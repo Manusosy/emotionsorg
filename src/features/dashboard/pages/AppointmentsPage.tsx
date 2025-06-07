@@ -1,10 +1,11 @@
 import { useEffect, useState, useContext, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { 
   Calendar as CalendarIcon, 
   Clock, 
@@ -28,7 +29,10 @@ import {
   CheckCircle2,
   GraduationCap,
   UserRound,
-  CalendarRange
+  CalendarRange,
+  ChevronDown,
+  FileText,
+  Download
 } from "lucide-react";
 import { AuthContext } from "@/contexts/authContext";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -66,6 +70,7 @@ import { appointmentService } from "@/services";
 import { ChatButton } from "@/components/messaging/ChatButton";
 import { useAuth } from "@/contexts/authContext";
 import { useVideoSession } from '@/contexts/VideoSessionContext';
+import BookingButton from "@/features/booking/components/BookingButton";
 
 // Define the Appointment type
 interface Appointment {
@@ -466,7 +471,21 @@ export default function AppointmentsPage() {
                 : "You don't have any completed appointments yet. After completing sessions, they will appear here for your records."}
             </p>
             <Button 
-              onClick={() => navigate("/booking")}
+              onClick={() => {
+                if (location.pathname.includes('patient-dashboard')) {
+                  // If on patient dashboard, scroll to mentors section
+                  const mentorsSection = document.getElementById('mood-mentors-section');
+                  if (mentorsSection) {
+                    mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  } else {
+                    // Fall back to navigating to mood mentors page
+                    navigate('/mood-mentors');
+                  }
+                } else {
+                  // If not on dashboard, navigate to mood mentors page
+                  navigate('/mood-mentors');
+                }
+              }}
               className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-full font-medium"
             >
               <CalendarPlus className="w-4 h-4 mr-2" />
@@ -698,11 +717,25 @@ export default function AppointmentsPage() {
         {/* Add a button to book new appointments */}
         <div className="flex justify-center mt-8">
           <Button
-            onClick={() => navigate("/booking")}
+            onClick={() => {
+              if (location.pathname.includes('patient-dashboard')) {
+                // If on patient dashboard, scroll to mentors section
+                const mentorsSection = document.getElementById('mood-mentors-section');
+                if (mentorsSection) {
+                  mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                  // Fall back to navigating to mood mentors page
+                  navigate('/mood-mentors');
+                }
+              } else {
+                // If not on dashboard, navigate to mood mentors page
+                navigate('/mood-mentors');
+              }
+            }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-full font-medium"
           >
             <CalendarPlus className="w-4 h-4 mr-2" />
-            Book New Appointment
+            Book Appointment
           </Button>
         </div>
       </>
@@ -791,14 +824,13 @@ export default function AppointmentsPage() {
                   View Profile
                 </Button>
                 
-                <Button
-                  className="w-full justify-start"
-                  onClick={() => handleBookWithMentor(mentor.id)}
-                  disabled={!mentor.available}
-                >
-                  <CalendarRange className="mr-2 h-4 w-4" />
-                  {mentor.available ? 'Book Session' : 'Currently Unavailable'}
-                </Button>
+                <BookingButton 
+                  moodMentorId={mentor.id}
+                  moodMentorName={mentor.name}
+                  className="w-full py-2 px-3"
+                  scrollToMentors={true}
+                  buttonText="Book Appointment"
+                />
               </div>
             </CardContent>
           </Card>
@@ -862,7 +894,21 @@ export default function AppointmentsPage() {
           </div>
           <Button
             className="bg-blue-600 hover:bg-blue-700 rounded-lg text-white"
-            onClick={() => navigate("/booking")}
+            onClick={() => {
+              if (location.pathname.includes('patient-dashboard')) {
+                // If on patient dashboard, scroll to mentors section
+                const mentorsSection = document.getElementById('mood-mentors-section');
+                if (mentorsSection) {
+                  mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else {
+                  // Fall back to navigating to mood mentors page
+                  navigate('/mood-mentors');
+                }
+              } else {
+                // If not on dashboard, navigate to mood mentors page
+                navigate('/mood-mentors');
+              }
+            }}
           >
             <CalendarPlus className="w-4 h-4 mr-2" />
             Book Appointment

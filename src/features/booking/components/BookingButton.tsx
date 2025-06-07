@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/authContext";
 import { toast } from "sonner";
 
@@ -12,6 +12,7 @@ interface BookingButtonProps {
   variant?: "default" | "destructive" | "outline" | "secondary" | "ghost" | "link";
   className?: string;
   buttonText?: string;
+  scrollToMentors?: boolean;
 }
 
 export default function BookingButton({
@@ -22,9 +23,11 @@ export default function BookingButton({
   size = "default",
   variant = "default",
   className = "",
-  buttonText = "Book Appointment"
+  buttonText = "Book Appointment",
+  scrollToMentors = false
 }: BookingButtonProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
 
   const handleBooking = () => {
@@ -41,13 +44,28 @@ export default function BookingButton({
       return;
     }
 
-    // Proceed with booking for patients
-    navigate('/booking', {
-      state: {
-        mentorId: moodMentorId,
-        callType: 'video'
+    // If scrollToMentors is true and we're on the patient dashboard, scroll to the mood mentors section
+    if (scrollToMentors && location.pathname.includes('patient-dashboard')) {
+      // If we're already on the dashboard, scroll to the mentors section
+      const mentorsSection = document.getElementById('mood-mentors-section');
+      if (mentorsSection) {
+        mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        console.warn("Mood mentors section not found, navigating to /mood-mentors instead");
+        navigate('/mood-mentors');
       }
-    });
+    } else if (scrollToMentors) {
+      // If we're not on the dashboard, navigate to the mood mentors page
+      navigate('/mood-mentors');
+    } else {
+      // Default behavior - proceed with booking for patients
+      navigate('/booking', {
+        state: {
+          mentorId: moodMentorId,
+          callType: 'video'
+        }
+      });
+    }
   };
 
   // Check if user is a mood mentor to disable the button
