@@ -40,13 +40,30 @@ export default function BookingButton({
     // If not logged in, redirect to login
     if (!user) {
       toast.error("Please sign in to book an appointment");
-      navigate('/signin');
+      navigate('/patient-signin', { 
+        state: { 
+          redirectAfterLogin: '/booking',
+          bookingInfo: {
+            mentorId: moodMentorId,
+            callType: 'video'
+          }
+        } 
+      });
       return;
     }
 
-    // If scrollToMentors is true and we're on the patient dashboard, scroll to the mood mentors section
-    if (scrollToMentors && location.pathname.includes('patient-dashboard')) {
-      // If we're already on the dashboard, scroll to the mentors section
+    // If scrollToMentors is true and we're on the patient appointments page,
+    // this means we should redirect to the booking page with the selected mentor
+    if (location.pathname.includes('patient-dashboard/appointments') || location.pathname.includes('dashboard/appointments')) {
+      // On appointments page, proceed directly to booking with the selected mentor
+      navigate('/booking', {
+        state: {
+          mentorId: moodMentorId,
+          callType: 'video'
+        }
+      });
+    } else if (scrollToMentors && location.pathname.includes('patient-dashboard')) {
+      // If on a different dashboard page, scroll to the mentors section
       const mentorsSection = document.getElementById('mood-mentors-section');
       if (mentorsSection) {
         mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -54,9 +71,6 @@ export default function BookingButton({
         console.warn("Mood mentors section not found, navigating to /mood-mentors instead");
         navigate('/mood-mentors');
       }
-    } else if (scrollToMentors) {
-      // If we're not on the dashboard, navigate to the mood mentors page
-      navigate('/mood-mentors');
     } else {
       // Default behavior - proceed with booking for patients
       navigate('/booking', {

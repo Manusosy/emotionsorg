@@ -876,19 +876,18 @@ export default function AppointmentsPage() {
               Manage your appointments with mental health mentors
             </p>
           </div>
-          <Button
+          <BookingButton
+            moodMentorId={moodMentors.length > 0 ? moodMentors[0].id : ""}
+            moodMentorName=""
             className="bg-blue-600 hover:bg-blue-700 rounded-lg text-white"
-            onClick={() => {
-              // Scroll to the mood mentors section on the same page
-              const mentorsSection = document.getElementById('mood-mentors-section');
-              if (mentorsSection) {
-                mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }
-            }}
-          >
-            <CalendarPlus className="w-4 h-4 mr-2" />
-            Book Appointment
-          </Button>
+            scrollToMentors={true}
+            buttonText={
+              <>
+                <CalendarPlus className="w-4 h-4 mr-2" />
+                Book Appointment
+              </>
+            }
+          />
         </div>
 
         {/* Status tabs and Filter section */}
