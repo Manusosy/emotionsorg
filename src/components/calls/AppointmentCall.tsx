@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { VideoCall } from './VideoCall';
+import { GoogleMeetFrame, createGoogleMeetLink } from './GoogleMeetFrame';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -18,6 +18,7 @@ interface AppointmentCallProps {
   onEndCall?: () => void;
   onInitialized?: () => void;
   shouldInitialize?: boolean;
+  meetingUrl?: string;
 }
 
 export function AppointmentCall({ 
@@ -30,21 +31,36 @@ export function AppointmentCall({
   mentorName = 'Mentor',
   onEndCall,
   onInitialized,
-  shouldInitialize = true
+  shouldInitialize = true,
+  meetingUrl = ''
 }: AppointmentCallProps) {
   const navigate = useNavigate();
   const [isCallActive, setIsCallActive] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [wasExplicitlyEnded, setWasExplicitlyEnded] = useState(false);
   const [callMinimumTimeElapsed, setCallMinimumTimeElapsed] = useState(false);
+  const [appointmentMeetingUrl, setAppointmentMeetingUrl] = useState<string>(meetingUrl);
+
+  // Prevent external navigation from Google Meet
+  useEffect(() => {
+    const preventNavigation = (event: BeforeUnloadEvent) => {
+      if (isCallActive && !wasExplicitlyEnded) {
+        event.preventDefault();
+        event.returnValue = '';
+      }
+    };
+
+    window.addEventListener('beforeunload', preventNavigation);
+    return () => window.removeEventListener('beforeunload', preventNavigation);
+  }, [isCallActive, wasExplicitlyEnded]);
 
   // Auto-start the call if this is the mentor
   useEffect(() => {
-    if (isMentor) {
+    if (isMentor && shouldInitialize) {
       console.log('Mentor view - auto-starting the call');
       handleStartCall();
     }
-  }, [isMentor]);
+  }, [isMentor, shouldInitialize]);
 
   useEffect(() => {
     // If not a mentor, listen for session end events
@@ -81,63 +97,104 @@ export function AppointmentCall({
   // Add minimum time requirement for call
   useEffect(() => {
     if (isCallActive) {
-      // Set a timer to ensure calls last for at least 5 minutes
+      // Set a timer to ensure calls last for at least 2 minutes
       // This prevents accidental quick closures
       const timer = setTimeout(() => {
         setCallMinimumTimeElapsed(true);
-      }, 300000); // 5 minutes (300,000 ms)
+      }, 120000); // 2 minutes (120,000 ms)
       
       return () => clearTimeout(timer);
     }
   }, [isCallActive]);
 
-  // Add a function to clean up camera access
-  const cleanupCameraAccess = () => {
-    // Only clean up if call is actually active
-    if (isCallActive) {
-      console.log('Cleaning up camera access from active call');
-      // Get all media devices and stop them
-      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-        .then(stream => {
-          const tracks = stream.getTracks();
-          tracks.forEach(track => {
-            track.stop();
-            console.log(`AppointmentCall: Stopped ${track.kind} track`);
-          });
-        })
-        .catch(err => {
-          console.warn('AppointmentCall: Could not get media devices to clean up:', err);
-        });
-    } else {
-      console.log('No active call to clean up camera access for');
-    }
-  };
-
-  // Update the useEffect cleanup
+  // Fetch meeting URL if not provided
   useEffect(() => {
-    // Return a cleanup function
-    return () => {
-      console.log('AppointmentCall component unmounting, cleaning up resources');
-      
-      // Clean up camera access
-      cleanupCameraAccess();
-      
-      // Do not call onEndCall here - this prevents auto-completion when the component unmounts
-      // onEndCall should only be called when the user explicitly ends the call
+    const fetchMeetingUrl = async () => {
+      if ((!meetingUrl || meetingUrl.trim() === '') && appointmentId) {
+        try {
+          const { data, error } = await supabase
+            .from('appointments')
+            .select('meeting_link, patient_id, mentor_id')
+            .eq('id', appointmentId)
+            .single();
+            
+          if (error) throw error;
+          
+          if (data?.meeting_link) {
+            console.log('Using existing meeting link:', data.meeting_link);
+            setAppointmentMeetingUrl(data.meeting_link);
+          } else if (isMentor) {
+            // If mentor and no meeting link exists, create one
+            const newMeetingUrl = createGoogleMeetLink();
+            console.log('Created new meeting link for appointment:', newMeetingUrl);
+            
+            // Save the new meeting URL to the appointment
+            const { error: updateError } = await supabase
+              .from('appointments')
+              .update({ meeting_link: newMeetingUrl })
+              .eq('id', appointmentId);
+              
+            if (updateError) {
+              console.error('Error updating appointment with new meeting link:', updateError);
+            }
+            
+            setAppointmentMeetingUrl(newMeetingUrl);
+          }
+        } catch (err) {
+          console.error('Error fetching meeting URL:', err);
+          // Don't show error toast, we'll handle missing URL gracefully
+        }
+      } else if (meetingUrl && meetingUrl.trim() !== '') {
+        setAppointmentMeetingUrl(meetingUrl);
+      }
     };
-  }, []);
+    
+    fetchMeetingUrl();
+  }, [appointmentId, meetingUrl, isMentor]);
 
   const handleStartCall = async () => {
     console.log('handleStartCall called - starting call initialization');
     setIsJoining(true);
     
     try {
-      // In a production app, we might want to verify the call status with the server
-      // For now, we'll just set a short timeout to simulate connection
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // If no meeting URL exists, create one
+      if (!appointmentMeetingUrl) {
+        const newMeetingUrl = createGoogleMeetLink();
+        console.log('Created new meeting link during start call:', newMeetingUrl);
+        
+        // Save the new meeting URL to the appointment
+        const { error: updateError } = await supabase
+          .from('appointments')
+          .update({ meeting_link: newMeetingUrl })
+          .eq('id', appointmentId);
+          
+        if (updateError) {
+          console.error('Error updating appointment with new meeting link:', updateError);
+        }
+        
+        setAppointmentMeetingUrl(newMeetingUrl);
+      }
+      
+      // Update appointment status to scheduled
+      const { error: statusError } = await supabase
+        .from('appointments')
+        .update({ 
+          status: 'scheduled',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', appointmentId);
+        
+      if (statusError) {
+        console.error('Error updating appointment status:', statusError);
+      }
       
       setIsCallActive(true);
       console.log('Call activated successfully');
+      
+      // Notify parent component that call is initialized
+      if (onInitialized) {
+        onInitialized();
+      }
     } catch (error) {
       toast.error("Failed to join the call. Please try again.");
       console.error("Error joining call:", error);
@@ -158,9 +215,6 @@ export function AppointmentCall({
       }
     }
     
-    // Clean up camera access
-    cleanupCameraAccess();
-    
     // If we're in a floating window, dispatch an event to close it
     if (window.opener) {
       try {
@@ -177,6 +231,24 @@ export function AppointmentCall({
     // Mark that the call was explicitly ended by the user
     setWasExplicitlyEnded(true);
     
+    // Update appointment status to completed if mentor is ending the call
+    if (isMentor) {
+      supabase
+        .from('appointments')
+        .update({ 
+          status: 'completed',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', appointmentId)
+        .then(({ error }) => {
+          if (error) {
+            console.error('Error updating appointment status to completed:', error);
+          } else {
+            toast.success("Session completed successfully");
+          }
+        });
+    }
+    
     // Call the onEndCall callback if provided
     if (onEndCall) {
       console.log('Calling onEndCall callback from handleEndCall');
@@ -191,7 +263,7 @@ export function AppointmentCall({
 
   if (!isCallActive) {
     // For mentors, show a loading state instead of a button since it will auto-join
-    if (isMentor) {
+    if (isMentor && shouldInitialize) {
       return (
         <Card className="p-6 flex flex-col items-center justify-center h-full">
           <div className="text-center max-w-md">
@@ -206,7 +278,7 @@ export function AppointmentCall({
             </h2>
             
             <p className="mb-6 text-gray-600">
-              Preparing your call session. Your video will appear shortly.
+              Preparing your call session with {patientName}. Your call will begin shortly.
             </p>
             
             <div className="flex items-center justify-center">
@@ -248,17 +320,16 @@ export function AppointmentCall({
           >
             {isJoining ? (
               <>
-                <span className="mr-2 inline-block h-4 w-4 animate-spin rounded-full border-2 border-solid border-current border-r-transparent"></span>
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-solid border-current border-r-transparent mr-2"></span>
                 Joining...
               </>
             ) : (
               <>
                 {isAudioOnly ? (
-                  <Phone className="mr-2 h-5 w-5" />
+                  <><Phone className="mr-2 h-5 w-5" /> Join Audio Call</>
                 ) : (
-                  <Video className="mr-2 h-5 w-5" />
+                  <><Video className="mr-2 h-5 w-5" /> Join Video Call</>
                 )}
-                Join {isAudioOnly ? 'Audio' : 'Video'} Call
               </>
             )}
           </Button>
@@ -267,16 +338,13 @@ export function AppointmentCall({
     );
   }
 
+  // Show the Google Meet frame when call is active
   return (
-    <div className="w-full h-full">
-      <VideoCall
-        channelName={`appointment-${appointmentId}`}
-        isAudioOnly={isAudioOnly}
-        onEndCall={handleEndCall}
+    <div className="h-full">
+      <GoogleMeetFrame 
+        meetingUrl={appointmentMeetingUrl}
         isFloating={isFloating}
-        participantName={isMentor ? patientName : mentorName}
-        onInitialized={onInitialized}
-        shouldInitialize={shouldInitialize}
+        onClose={handleEndCall}
       />
     </div>
   );

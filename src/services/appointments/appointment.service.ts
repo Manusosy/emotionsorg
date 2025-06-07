@@ -372,7 +372,9 @@ class SupabaseAppointmentService implements AppointmentService {
   }
 
   createMeetingLink(patientId: string, mentorId: string): string {
-    return `https://meet.emotionsapp.com/${patientId}/${mentorId}`;
+    // Generate a random meeting ID for Google Meet
+    const meetingId = Math.random().toString(36).substring(2, 12);
+    return `https://meet.google.com/${meetingId}`;
   }
 
   async getAppointmentById(appointmentId: string): Promise<ServiceResponse<any>> {
