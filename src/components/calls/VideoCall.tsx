@@ -31,6 +31,22 @@ const client: IAgoraRTCClient = AgoraRTC.createClient({
 let audioTrack: IMicrophoneAudioTrack | null = null;
 let videoTrack: ICameraVideoTrack | null = null;
 
+// Add a function to force device enumeration before initialization
+async function enumerateDevices() {
+  console.log('Forcing device enumeration to wake up browser APIs');
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const hasVideoInput = devices.some(device => device.kind === 'videoinput');
+    const hasAudioInput = devices.some(device => device.kind === 'audioinput');
+    
+    console.log(`Available devices: video=${hasVideoInput}, audio=${hasAudioInput}`);
+    return { hasVideoInput, hasAudioInput };
+  } catch (err) {
+    console.error('Error enumerating devices:', err);
+    return { hasVideoInput: false, hasAudioInput: false };
+  }
+}
+
 export function VideoCall({ 
   channelName, 
   isAudioOnly = false, 
@@ -105,16 +121,28 @@ export function VideoCall({
     setPermissionRequested(true);
     
     try {
-      // Request permissions explicitly
+      // Force device enumeration first to wake up browser APIs
+      await enumerateDevices();
+      
+      // Request permissions explicitly with more specific constraints
       const constraints = isAudioOnly 
         ? { audio: true } 
-        : { audio: true, video: true };
+        : { 
+            audio: true, 
+            video: { 
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+              facingMode: "user"
+            } 
+          };
+      
+      console.log('Requesting media with constraints:', constraints);
       
       // Set a timeout to detect if permissions are taking too long
       const permissionTimeout = new Promise((_, reject) => {
         cameraTimeoutRef.current = setTimeout(() => {
           reject(new Error('Permission request timed out. Browser may be waiting for user input.'));
-        }, 5000); // 5 second timeout
+        }, 10000); // 10 second timeout - increased from 5s
       });
       
       // Race between the permission request and the timeout
@@ -131,9 +159,39 @@ export function VideoCall({
       
       // If we got here, permissions were granted
       console.log('Media permissions granted successfully');
+      console.log('Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.label} (${t.readyState})`));
+      
+      // Test the video track if available
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack && !isAudioOnly) {
+        console.log('Testing video track capabilities...');
+        try {
+          // Create a test element to verify the track works
+          const testEl = document.createElement('video');
+          testEl.srcObject = new MediaStream([videoTrack]);
+          testEl.muted = true;
+          testEl.style.display = 'none';
+          document.body.appendChild(testEl);
+          
+          // Try to play the video to ensure it's working
+          await testEl.play();
+          console.log('Video track test successful');
+          
+          // Clean up the test element
+          setTimeout(() => {
+            testEl.pause();
+            document.body.removeChild(testEl);
+          }, 500);
+        } catch (e) {
+          console.warn('Video track test failed:', e);
+        }
+      }
       
       // Stop the tracks immediately - we'll create proper ones later
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(track => {
+        console.log(`Stopping test track: ${track.kind}`);
+        track.stop();
+      });
       
       setPermissionStatus('granted');
       setHasPermissions(true);
@@ -415,14 +473,42 @@ export function VideoCall({
         
         try {
           // First try to create audio track as it's usually more reliable
-          localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+          console.log('Creating audio track...');
+          localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack({
+            AEC: true,
+            AGC: true,
+            ANS: true
+          });
           console.log('Created audio track successfully');
           
           // Then try to create video track if not audio only
           if (!isAudioOnly) {
             console.log('Creating video track...');
-            localVideoTrack = await AgoraRTC.createCameraVideoTrack();
+            // First force enumerate devices to ensure camera is ready
+            await enumerateDevices();
+            
+            // Create video track with specific settings
+            localVideoTrack = await AgoraRTC.createCameraVideoTrack({
+              encoderConfig: "high_quality",
+              facingMode: "user",
+              optimizationMode: "detail"
+            });
             console.log('Created video track successfully');
+            
+            // Test the video track immediately
+            try {
+              console.log('Testing if video track can play...');
+              const testElement = document.createElement('video');
+              testElement.srcObject = new MediaStream([localVideoTrack.getMediaStreamTrack()]);
+              testElement.muted = true;
+              testElement.style.display = 'none';
+              document.body.appendChild(testElement);
+              await testElement.play();
+              console.log('Video track test successful');
+              document.body.removeChild(testElement);
+            } catch (e) {
+              console.warn('Video track test failed:', e);
+            }
           }
         } catch (mediaError: any) {
           console.error('Error creating media tracks:', mediaError);
@@ -457,9 +543,44 @@ export function VideoCall({
           await client.publish(localVideoTrack);
           console.log('Published video track successfully');
           
-          // Play local video
+          // Play local video with a more direct approach
           console.log('Playing local video');
-          localVideoTrack.play('local-video');
+          try {
+            // Get the container element
+            const localVideoContainer = document.getElementById('local-video');
+            if (localVideoContainer) {
+              // Create a video element
+              const videoElement = document.createElement('video');
+              videoElement.id = 'local-video-element';
+              videoElement.style.width = '100%';
+              videoElement.style.height = '100%';
+              videoElement.style.objectFit = 'cover';
+              videoElement.muted = true;
+              videoElement.playsInline = true;
+              videoElement.autoplay = true;
+              
+              // Add the video element to the container
+              localVideoContainer.innerHTML = '';
+              localVideoContainer.appendChild(videoElement);
+              
+              // Set the video source and play
+              videoElement.srcObject = new MediaStream([localVideoTrack.getMediaStreamTrack()]);
+              await videoElement.play();
+              console.log('Local video playing successfully');
+            } else {
+              console.error('Could not find local-video container');
+              // Fall back to the Agora play method
+              localVideoTrack.play('local-video');
+            }
+          } catch (playError) {
+            console.error('Error playing local video:', playError);
+            // Fall back to the Agora play method
+            try {
+              localVideoTrack.play('local-video');
+            } catch (e) {
+              console.error('Fallback play also failed:', e);
+            }
+          }
         }
         
         // Set local tracks state
@@ -718,6 +839,9 @@ export function VideoCall({
     // Reset initialization flag to allow retry
     isInitializedRef.current = false;
     
+    // Reset permission status
+    setPermissionStatus('checking');
+    
     // Increment retry counter
     setJoinRetryCount(prev => prev + 1);
     
@@ -735,6 +859,23 @@ export function VideoCall({
     // Reset local tracks
     setLocalTracks({});
     
+    // Force browser to clear any cached permissions
+    if (navigator.permissions && navigator.permissions.query) {
+      try {
+        navigator.permissions.query({ name: 'camera' as PermissionName })
+          .then(result => console.log('Current camera permission state:', result.state));
+        navigator.permissions.query({ name: 'microphone' as PermissionName })
+          .then(result => console.log('Current microphone permission state:', result.state));
+      } catch (e) {
+        console.warn('Error querying permissions:', e);
+      }
+    }
+    
+    // Force a device enumeration to wake up the browser APIs
+    enumerateDevices().then(() => {
+      console.log('Devices enumerated before retry');
+    });
+    
     // Leave the channel if already joined
     client.leave().then(() => {
       console.log('Left channel for retry');
@@ -746,6 +887,12 @@ export function VideoCall({
     setTimeout(() => {
       // This will trigger the useEffect to run again
       isInitializedRef.current = false;
+      console.log('Restarting initialization process...');
+      
+      // Directly request permissions again
+      requestMediaPermissions().then(granted => {
+        console.log('Permissions re-requested, granted:', granted);
+      });
     }, 500);
   };
 
