@@ -3,11 +3,13 @@ import AgoraRTC, { IAgoraRTCClient, IAgoraRTCRemoteUser, ICameraVideoTrack, IMic
 import { agoraConfig } from '@/config/agora';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize, Minimize, ScreenShare, MonitorStop } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize, Minimize, ScreenShare, MonitorStop, AlertCircle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { generateToken, generateUID } from '@/utils/tokenGenerator';
+import { toast } from 'sonner';
+import './video-call.css'; // Import styles for the video call component
 
 interface VideoCallProps {
   channelName: string;
@@ -46,14 +48,17 @@ export function VideoCall({
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [connectionState, setConnectionState] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const [initError, setInitError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<'permission' | 'connection' | 'unknown' | null>(null);
   const [permissionRequested, setPermissionRequested] = useState(false);
   const [wasExplicitlyEnded, setWasExplicitlyEnded] = useState(false);
   const [waitingForRemoteUser, setWaitingForRemoteUser] = useState(true);
   const [joinRetryCount, setJoinRetryCount] = useState(0);
+  const [hasPermissions, setHasPermissions] = useState<boolean | null>(null);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const isInitializedRef = useRef(false);
   const joinTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const permissionCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const maxRetryAttempts = 3;
   
   // Styling classes
@@ -77,14 +82,153 @@ export function VideoCall({
   const localVideoClasses = cn(
     'bg-gray-800 overflow-hidden',
     {
-      'w-full h-full object-cover': remoteUsers.length === 0,
-      'absolute bottom-4 right-4 w-32 h-24 rounded shadow-md z-10': remoteUsers.length >= 1
+      'w-full h-full object-cover mirror-mode': remoteUsers.length === 0,
+      'absolute bottom-4 right-4 w-32 h-24 rounded shadow-md z-10 mirror-mode': remoteUsers.length >= 1
     }
   );
   
   const controlsContainerClasses = cn(
     'p-3 bg-gray-900 flex items-center justify-between'
   );
+
+  // Add a function to check for existing permissions
+  const checkPermissions = async () => {
+    try {
+      // Check if permissions are already granted using the permissions API
+      if (navigator.permissions && navigator.permissions.query) {
+        // Check camera permission
+        const cameraResult = await navigator.permissions.query({ name: 'camera' as PermissionName });
+        const micResult = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        
+        const hasAllPermissions = 
+          (cameraResult.state === 'granted' || isAudioOnly) && 
+          micResult.state === 'granted';
+        
+        setHasPermissions(hasAllPermissions);
+        
+        if (!hasAllPermissions && (cameraResult.state === 'denied' || micResult.state === 'denied')) {
+          // If explicitly denied, show a message to the user
+          setInitError('Camera or microphone access has been blocked. Please update your browser settings to allow access.');
+          setErrorType('permission');
+          return false;
+        }
+        
+        return hasAllPermissions;
+      } else {
+        // Fallback for browsers that don't support the permissions API
+        // We'll try to access the devices directly as a permissions check
+        try {
+          const constraints = isAudioOnly 
+            ? { audio: true } 
+            : { audio: true, video: true };
+            
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          
+          // Stop tracks immediately after check
+          stream.getTracks().forEach(track => track.stop());
+          
+          setHasPermissions(true);
+          return true;
+        } catch (err: any) {
+          console.error('Permission check failed:', err);
+          
+          // Different browsers return different error types
+          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            setInitError('Camera or microphone access was denied. Please grant permission when prompted.');
+            setErrorType('permission');
+          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            setInitError('No camera or microphone found. Please connect a device and try again.');
+            setErrorType('permission');
+          } else {
+            setInitError('An error occurred while accessing your camera and microphone.');
+            setErrorType('unknown');
+          }
+          
+          setHasPermissions(false);
+          return false;
+        }
+      }
+    } catch (error) {
+      console.error('Error checking permissions:', error);
+      setHasPermissions(false);
+      return false;
+    }
+  };
+
+  // Use an effect to check permissions initially
+  useEffect(() => {
+    if (shouldInitialize) {
+      checkPermissions();
+    }
+  }, [shouldInitialize, isAudioOnly]);
+
+  // Set up permission change listeners
+  useEffect(() => {
+    if (navigator.permissions && navigator.permissions.query) {
+      const setupPermissionListeners = async () => {
+        try {
+          // Set up listeners for permission changes
+          const cameraPermission = await navigator.permissions.query({ name: 'camera' as PermissionName });
+          const micPermission = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          
+          const handlePermissionChange = () => {
+            console.log('Permission state changed, rechecking permissions');
+            checkPermissions().then(hasPermissions => {
+              if (hasPermissions && initError && errorType === 'permission') {
+                // If permissions are now granted and we had a permission error, retry
+                console.log('Permissions granted, retrying initialization');
+                handleRetry();
+              }
+            });
+          };
+          
+          cameraPermission.addEventListener('change', handlePermissionChange);
+          micPermission.addEventListener('change', handlePermissionChange);
+          
+          return () => {
+            cameraPermission.removeEventListener('change', handlePermissionChange);
+            micPermission.removeEventListener('change', handlePermissionChange);
+          };
+        } catch (err) {
+          console.warn('Could not set up permission change listeners:', err);
+        }
+      };
+      
+      setupPermissionListeners();
+    } else {
+      // For browsers without the permissions API, poll for permission changes
+      // This helps recover if the user grants permissions after initially denying
+      if (permissionCheckIntervalRef.current) {
+        clearInterval(permissionCheckIntervalRef.current);
+      }
+      
+      if (initError && errorType === 'permission') {
+        // Only set up polling if we have a permission error
+        permissionCheckIntervalRef.current = setInterval(() => {
+          checkPermissions().then(hasPermissions => {
+            if (hasPermissions) {
+              // If permissions are now granted, retry
+              console.log('Permissions now detected via polling, retrying');
+              handleRetry();
+              
+              // Clear the interval once permissions are granted
+              if (permissionCheckIntervalRef.current) {
+                clearInterval(permissionCheckIntervalRef.current);
+                permissionCheckIntervalRef.current = null;
+              }
+            }
+          });
+        }, 2000); // Check every 2 seconds
+      }
+      
+      return () => {
+        if (permissionCheckIntervalRef.current) {
+          clearInterval(permissionCheckIntervalRef.current);
+          permissionCheckIntervalRef.current = null;
+        }
+      };
+    }
+  }, [initError, errorType]);
 
   useEffect(() => {
     let audioTrack: IMicrophoneAudioTrack | undefined;
@@ -103,6 +247,14 @@ export function VideoCall({
     
     const init = async () => {
       try {
+        // Check permissions first
+        const permissionsGranted = await checkPermissions();
+        if (!permissionsGranted) {
+          console.log('Permissions not granted, showing prompt');
+          // Don't throw here - we'll show UI for the user to grant permissions
+          return;
+        }
+        
         client.on('user-published', async (user, mediaType) => {
           await client.subscribe(user, mediaType);
           console.log('Remote user published:', user.uid, mediaType);
@@ -179,14 +331,34 @@ export function VideoCall({
         console.log('Joined channel successfully');
         
         // Create and publish the tracks
-        if (!isAudioOnly) {
-          videoTrack = await AgoraRTC.createCameraVideoTrack();
-          await client.publish(videoTrack);
-          videoTrack.play('local-video');
+        try {
+          if (!isAudioOnly) {
+            videoTrack = await AgoraRTC.createCameraVideoTrack();
+            await client.publish(videoTrack);
+            videoTrack.play('local-video');
+          }
+          
+          audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+          await client.publish(audioTrack);
+        } catch (mediaError: any) {
+          console.error('Error creating media tracks:', mediaError);
+          
+          // Handle specific media errors
+          if (mediaError.name === 'NotAllowedError' || mediaError.name === 'PermissionDeniedError') {
+            setInitError('Camera or microphone access was denied. Please grant permission when prompted.');
+            setErrorType('permission');
+            throw mediaError;
+          } else if (mediaError.name === 'NotFoundError' || mediaError.name === 'DevicesNotFoundError') {
+            setInitError('No camera or microphone found. Please connect a device and try again.');
+            setErrorType('permission');
+            throw mediaError;
+          }
+          
+          // For other errors, continue with just audio if video fails
+          if (!isAudioOnly && !videoTrack) {
+            toast.warning('Could not access camera. Continuing with audio only.');
+          }
         }
-        
-        audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-        await client.publish(audioTrack);
         
         // Set local tracks state
         setLocalTracks({
@@ -199,6 +371,8 @@ export function VideoCall({
         // Update state to connected
         setConnectionState('connected');
         setPermissionRequested(false);
+        setInitError(null);
+        setErrorType(null);
         
         // Set up a timeout to check if any remote users have joined
         // If not, we'll display a "waiting for participant" message
@@ -214,10 +388,24 @@ export function VideoCall({
           console.log('Calling onInitialized callback');
           onInitialized();
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error initializing video call:', error);
         setConnectionState('disconnected');
-        setInitError('Failed to initialize video call. Please check your camera and microphone permissions.');
+        
+        // Set specific error messages based on the error type
+        if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+          setInitError('Camera or microphone access was denied. Please grant permission when prompted.');
+          setErrorType('permission');
+        } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+          setInitError('No camera or microphone found. Please connect a device and try again.');
+          setErrorType('permission');
+        } else if (error.type === 'NETWORK_ERROR' || error.message?.includes('network')) {
+          setInitError('Network error. Please check your internet connection and try again.');
+          setErrorType('connection');
+        } else {
+          setInitError('Failed to initialize video call. Please check your camera and microphone permissions.');
+          setErrorType('unknown');
+        }
         
         // Clean up any tracks that might have been created
         if (audioTrack) {
@@ -232,11 +420,6 @@ export function VideoCall({
         
         // Reset initialization flag to allow retry
         isInitializedRef.current = false;
-        
-        // Don't automatically end call on initialization error
-        // Instead, show an error message in the UI (handled in render)
-        // This prevents appointments from being marked as completed automatically
-        // onEndCall();
       }
     };
 
@@ -259,29 +442,25 @@ export function VideoCall({
       }
       
       if (localTracks.screenTrack) {
-        if (Array.isArray(localTracks.screenTrack)) {
-          localTracks.screenTrack[0].stop();
-          localTracks.screenTrack[0].close();
-        } else {
-          localTracks.screenTrack.stop();
-          localTracks.screenTrack.close();
-        }
+        localTracks.screenTrack.stop();
+        localTracks.screenTrack.close();
       }
       
-      // Clear any pending timeouts
+      // Leave the channel
+      if (client) {
+        client.leave();
+      }
+      
+      // Clear any timeouts
       if (joinTimeoutRef.current) {
         clearTimeout(joinTimeoutRef.current);
         joinTimeoutRef.current = null;
       }
       
-      // Leave the channel
-      client.leave().catch(err => {
-        console.error('Error leaving channel:', err);
-      });
-      
-      // Do not call onEndCall here - this prevents auto-completion when the component unmounts
-      // onEndCall should only be called when the user explicitly ends the call
-      console.log('VideoCall component unmounting, cleanup complete');
+      if (permissionCheckIntervalRef.current) {
+        clearInterval(permissionCheckIntervalRef.current);
+        permissionCheckIntervalRef.current = null;
+      }
     };
   }, [channelName, isAudioOnly, onInitialized, shouldInitialize]);
 
@@ -387,69 +566,80 @@ export function VideoCall({
   };
 
   const handleEndCall = async () => {
-    console.log('VideoCall.handleEndCall called - user explicitly ended the call');
+    console.log('Ending call from VideoCall component');
+    setWasExplicitlyEnded(true);
     
+    // Clean up local tracks
+    if (localTracks.audioTrack) {
+      localTracks.audioTrack.stop();
+      localTracks.audioTrack.close();
+    }
+    
+    if (localTracks.videoTrack) {
+      localTracks.videoTrack.stop();
+      localTracks.videoTrack.close();
+    }
+    
+    if (localTracks.screenTrack) {
+      localTracks.screenTrack.stop();
+      localTracks.screenTrack.close();
+    }
+    
+    // Reset local tracks
+    setLocalTracks({});
+    
+    // Leave the channel
     try {
-      // Stop and close all local tracks
-      if (localTracks.audioTrack) {
-        localTracks.audioTrack.stop();
-        localTracks.audioTrack.close();
-      }
-      
-      if (localTracks.videoTrack) {
-        localTracks.videoTrack.stop();
-        localTracks.videoTrack.close();
-      }
-      
-      if (localTracks.screenTrack) {
-        if (Array.isArray(localTracks.screenTrack)) {
-          localTracks.screenTrack[0].stop();
-          localTracks.screenTrack[0].close();
-        } else {
-          localTracks.screenTrack.stop();
-          localTracks.screenTrack.close();
-        }
-      }
-      
-      // Leave the channel
       await client.leave();
       console.log('Left channel successfully');
-      
-      // Reset state
-      setLocalTracks({});
-      setRemoteUsers([]);
-      
-      // Mark that the call was explicitly ended by the user
-      setWasExplicitlyEnded(true);
-      
-      // Notify parent component
-      console.log('Calling onEndCall callback from VideoCall.handleEndCall');
-      onEndCall();
-    } catch (err) {
-      console.error('Error ending call:', err);
-      // Still notify parent even if there's an error
-      setWasExplicitlyEnded(true);
-      console.log('Calling onEndCall callback from VideoCall.handleEndCall (error path)');
-      onEndCall();
+    } catch (error) {
+      console.warn('Error leaving channel:', error);
     }
+    
+    // Call the onEndCall callback
+    onEndCall();
   };
   
-  // Add a retry function to reinitialize the call
+  // Update the retry handler to be more robust
   const handleRetry = () => {
-    console.log('Retrying video call initialization');
+    console.log('Retry attempt:', joinRetryCount + 1);
+    
+    // Clear any previous errors
     setInitError(null);
-    setConnectionState('connecting');
+    setErrorType(null);
+    
+    // Reset initialization flag to allow retry
     isInitializedRef.current = false;
     
-    // Increment retry count
+    // Increment retry counter
     setJoinRetryCount(prev => prev + 1);
     
-    // Only retry if we haven't exceeded max retry attempts
-    if (joinRetryCount < maxRetryAttempts) {
-      // The useEffect will reinitialize the call
-    } else {
-      setInitError('Maximum retry attempts reached. Please try again later or check your connection.');
+    // Clean up any existing tracks
+    if (localTracks.audioTrack) {
+      localTracks.audioTrack.stop();
+      localTracks.audioTrack.close();
     }
+    
+    if (localTracks.videoTrack) {
+      localTracks.videoTrack.stop();
+      localTracks.videoTrack.close();
+    }
+    
+    // Reset local tracks
+    setLocalTracks({});
+    
+    // Leave the channel if already joined
+    client.leave().then(() => {
+      console.log('Left channel for retry');
+    }).catch(err => {
+      console.warn('Error leaving channel for retry:', err);
+    });
+    
+    // Force a re-render to restart the initialization process
+    setTimeout(() => {
+      // This will trigger the useEffect to run again
+      isInitializedRef.current = false;
+    }, 500);
   };
 
   // Effect to handle remote video playback
@@ -498,6 +688,48 @@ export function VideoCall({
     };
   }, []);
 
+  // If there's an initialization error, show error UI
+  if (initError) {
+    return (
+      <div className={containerClasses} ref={containerRef}>
+        <div className="flex-1 flex items-center justify-center bg-gray-900 p-6 text-white text-center">
+          <div className="max-w-md">
+            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold mb-2">Failed to initialize video call.</h3>
+            <p className="mb-4">{initError}</p>
+            
+            {errorType === 'permission' && (
+              <div className="p-3 bg-blue-900/30 rounded-lg mb-4 text-sm">
+                <p>To fix this issue:</p>
+                <ol className="list-decimal pl-5 text-left mt-2 space-y-1">
+                  <li>Click the camera icon in your browser's address bar</li>
+                  <li>Select "Allow" for both camera and microphone</li>
+                  <li>Click the "Retry" button below</li>
+                </ol>
+              </div>
+            )}
+            
+            <div className="flex space-x-3 justify-center">
+              <Button 
+                onClick={handleRetry}
+                disabled={joinRetryCount >= maxRetryAttempts}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                Retry
+              </Button>
+              <Button 
+                onClick={handleEndCall}
+                variant="destructive"
+              >
+                End Call
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <Card className={containerClasses} ref={containerRef}>
       {connectionState === 'connecting' && !initError && !permissionRequested && (
@@ -518,34 +750,6 @@ export function VideoCall({
             <p className="mb-4 font-medium text-lg">Camera and Microphone Access Required</p>
             <p className="mb-4">Please allow access to your camera and microphone when prompted by your browser.</p>
             <div className="w-8 h-8 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin"></div>
-          </div>
-        </div>
-      )}
-      
-      {initError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-900/80 z-10 text-white">
-          <div className="flex flex-col items-center text-center max-w-sm px-4">
-            <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center mb-3">
-              <PhoneOff className="h-6 w-6 text-red-500" />
-            </div>
-            <p className="mb-4">{initError}</p>
-            <div className="flex gap-3">
-              <Button 
-                variant="outline" 
-                onClick={handleRetry}
-                className="bg-blue-600 hover:bg-blue-700 border-none text-white"
-                disabled={joinRetryCount >= maxRetryAttempts}
-              >
-                Retry
-              </Button>
-              <Button 
-                variant="outline" 
-                onClick={handleEndCall}
-                className="bg-red-600 hover:bg-red-700 border-none text-white"
-              >
-                End Call
-              </Button>
-            </div>
           </div>
         </div>
       )}
