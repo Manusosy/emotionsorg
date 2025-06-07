@@ -21,6 +21,13 @@ interface VideoCallProps {
   shouldInitialize?: boolean;
 }
 
+// Add TypeScript declaration for the temporary media stream
+declare global {
+  interface Window {
+    _tempMediaStream?: MediaStream;
+  }
+}
+
 // Create client outside component to avoid recreating it on re-renders
 const client: IAgoraRTCClient = AgoraRTC.createClient({ 
   mode: 'rtc', 
@@ -161,37 +168,9 @@ export function VideoCall({
       console.log('Media permissions granted successfully');
       console.log('Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.label} (${t.readyState})`));
       
-      // Test the video track if available
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack && !isAudioOnly) {
-        console.log('Testing video track capabilities...');
-        try {
-          // Create a test element to verify the track works
-          const testEl = document.createElement('video');
-          testEl.srcObject = new MediaStream([videoTrack]);
-          testEl.muted = true;
-          testEl.style.display = 'none';
-          document.body.appendChild(testEl);
-          
-          // Try to play the video to ensure it's working
-          await testEl.play();
-          console.log('Video track test successful');
-          
-          // Clean up the test element
-          setTimeout(() => {
-            testEl.pause();
-            document.body.removeChild(testEl);
-          }, 500);
-        } catch (e) {
-          console.warn('Video track test failed:', e);
-        }
-      }
-      
-      // Stop the tracks immediately - we'll create proper ones later
-      stream.getTracks().forEach(track => {
-        console.log(`Stopping test track: ${track.kind}`);
-        track.stop();
-      });
+      // Store the stream for later cleanup - we won't use it directly
+      // Just keeping it active to prevent the browser from turning off the camera
+      window._tempMediaStream = stream;
       
       setPermissionStatus('granted');
       setHasPermissions(true);
@@ -474,6 +453,17 @@ export function VideoCall({
         try {
           // First try to create audio track as it's usually more reliable
           console.log('Creating audio track...');
+          
+          // Clean up any temporary media stream - we'll create fresh tracks
+          if (window._tempMediaStream) {
+            console.log('Cleaning up temporary media stream');
+            window._tempMediaStream.getTracks().forEach(track => {
+              track.stop();
+            });
+            window._tempMediaStream = undefined;
+          }
+          
+          // Create fresh tracks - don't try to reuse existing ones
           localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack({
             AEC: true,
             AGC: true,
@@ -494,22 +484,8 @@ export function VideoCall({
               optimizationMode: "detail"
             });
             console.log('Created video track successfully');
-            
-            // Test the video track immediately
-            try {
-              console.log('Testing if video track can play...');
-              const testElement = document.createElement('video');
-              testElement.srcObject = new MediaStream([localVideoTrack.getMediaStreamTrack()]);
-              testElement.muted = true;
-              testElement.style.display = 'none';
-              document.body.appendChild(testElement);
-              await testElement.play();
-              console.log('Video track test successful');
-              document.body.removeChild(testElement);
-            } catch (e) {
-              console.warn('Video track test failed:', e);
-            }
           }
+          
         } catch (mediaError: any) {
           console.error('Error creating media tracks:', mediaError);
           
@@ -555,6 +531,7 @@ export function VideoCall({
               videoElement.style.width = '100%';
               videoElement.style.height = '100%';
               videoElement.style.objectFit = 'cover';
+              videoElement.style.transform = 'scaleX(-1)'; // Mirror mode
               videoElement.muted = true;
               videoElement.playsInline = true;
               videoElement.autoplay = true;
@@ -669,6 +646,16 @@ export function VideoCall({
       if (localTracks.screenTrack) {
         localTracks.screenTrack.stop();
         localTracks.screenTrack.close();
+      }
+      
+      // Clean up any temporary media stream
+      if (window._tempMediaStream) {
+        console.log('Cleaning up temporary media stream');
+        window._tempMediaStream.getTracks().forEach(track => {
+          track.stop();
+          console.log(`Stopped temporary ${track.kind} track`);
+        });
+        window._tempMediaStream = undefined;
       }
       
       // Clean up any timeouts
@@ -858,6 +845,15 @@ export function VideoCall({
     
     // Reset local tracks
     setLocalTracks({});
+    
+    // Clean up any temporary media stream but don't create a new one yet
+    if (window._tempMediaStream) {
+      console.log('Cleaning up temporary media stream before retry');
+      window._tempMediaStream.getTracks().forEach(track => {
+        track.stop();
+      });
+      window._tempMediaStream = undefined;
+    }
     
     // Force browser to clear any cached permissions
     if (navigator.permissions && navigator.permissions.query) {
