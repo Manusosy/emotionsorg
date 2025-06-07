@@ -351,6 +351,14 @@ export function VideoCall({
     console.log('Starting video call initialization...');
     isInitializedRef.current = true;
     
+    // Auto-retry initialization after a delay if it fails
+    const autoRetryTimeout = setTimeout(() => {
+      if (initError && joinRetryCount === 0) {
+        console.log('Auto-retrying initialization after timeout...');
+        handleRetry();
+      }
+    }, 3000);
+    
     let localAudioTrack: IMicrophoneAudioTrack | null = null;
     let localVideoTrack: ICameraVideoTrack | null = null;
     
@@ -631,6 +639,9 @@ export function VideoCall({
     return () => {
       // Reset initialization flag on unmount to allow re-initialization if needed
       isInitializedRef.current = false;
+      
+      // Clear the auto-retry timeout
+      clearTimeout(autoRetryTimeout);
       
       // Clean up local tracks
       if (localTracks.audioTrack) {
@@ -940,6 +951,26 @@ export function VideoCall({
 
   // If there's an initialization error, show error UI
   if (initError) {
+    // Auto-retry once if there's an error and we haven't reached the max retry attempts
+    if (joinRetryCount < 1) {
+      console.log('Auto-retrying initialization...');
+      setTimeout(() => {
+        handleRetry();
+      }, 1000);
+      
+      // Show a loading state instead of the error while auto-retrying
+      return (
+        <div className={containerClasses} ref={containerRef}>
+          <div className="flex-1 flex items-center justify-center bg-gray-900/80 z-10 text-white">
+            <div className="flex flex-col items-center">
+              <div className="w-8 h-8 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin mb-3"></div>
+              <p>Connecting to call...</p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    
     return (
       <div className={containerClasses} ref={containerRef}>
         <div className="flex-1 flex items-center justify-center bg-gray-900 p-6 text-white text-center">
