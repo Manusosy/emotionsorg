@@ -13,8 +13,6 @@ declare global {
       VITE_SUPABASE_URL?: string;
       VITE_SUPABASE_ANON_KEY?: string;
       VITE_SUPABASE_SERVICE_KEY?: string;
-      VITE_AGORA_APP_ID?: string;
-      VITE_AGORA_APP_CERTIFICATE?: string;
       [key: string]: string | undefined; // Add index signature to allow string indexing
     }
   }
