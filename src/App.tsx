@@ -72,6 +72,8 @@ import PatientProfilePage from "./features/mood_mentors/pages/PatientProfilePage
 import { AppointmentCall } from "./components/calls/AppointmentCall";
 import { VideoSessionProvider } from './contexts/VideoSessionContext';
 import { PersistentVideoSession } from './components/calls/PersistentVideoSession';
+import CameraTest from "@/pages/test/CameraTest";
+import BrowserPermissionGuide from "@/pages/test/BrowserPermissionGuide";
 
 // Type definition for UserRole
 type UserRole = 'patient' | 'mood_mentor';
@@ -264,6 +266,10 @@ const AppContent = () => {
               <Route path="/contact" element={<Contact />} />
               <Route path="/faqs" element={<FAQs />} />
               <Route path="/about" element={<About />} />
+              
+              {/* Test Pages */}
+              <Route path="/test/camera" element={<CameraTest />} />
+              <Route path="/test/permissions" element={<BrowserPermissionGuide />} />
               
               {/* Patient Dashboard Routes - Protected by ProtectedRoute component */}
               <Route path="/patient-dashboard" element={

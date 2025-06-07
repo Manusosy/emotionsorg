@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
-import { Video, Phone } from 'lucide-react';
+import { Video, Phone, AlertCircle } from 'lucide-react';
 
 interface AppointmentCallProps {
   appointmentId: string;
@@ -40,6 +40,30 @@ export function AppointmentCall({
   const [wasExplicitlyEnded, setWasExplicitlyEnded] = useState(false);
   const [callMinimumTimeElapsed, setCallMinimumTimeElapsed] = useState(false);
   const [appointmentMeetingUrl, setAppointmentMeetingUrl] = useState<string>(meetingUrl);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  // Check for camera permissions before showing join button
+  useEffect(() => {
+    const checkMediaPermissions = async () => {
+      try {
+        // First try to get media devices information
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasCamera = devices.some(device => device.kind === 'videoinput');
+        const hasMicrophone = devices.some(device => device.kind === 'audioinput');
+        
+        if (!hasCamera && !hasMicrophone) {
+          setPermissionError("No camera or microphone detected. Please check your device connections.");
+        }
+        
+        // We don't actually request permissions here, that's handled in GoogleMeetFrame
+      } catch (err) {
+        console.error("Error checking media devices:", err);
+        setPermissionError("Unable to check camera and microphone. Please ensure your browser has permission to access media devices.");
+      }
+    };
+    
+    checkMediaPermissions();
+  }, []);
 
   // Prevent external navigation from Google Meet
   useEffect(() => {
@@ -56,11 +80,11 @@ export function AppointmentCall({
 
   // Auto-start the call if this is the mentor
   useEffect(() => {
-    if (isMentor && shouldInitialize) {
+    if (isMentor && shouldInitialize && !permissionError) {
       console.log('Mentor view - auto-starting the call');
       handleStartCall();
     }
-  }, [isMentor, shouldInitialize]);
+  }, [isMentor, shouldInitialize, permissionError]);
 
   useEffect(() => {
     // If not a mentor, listen for session end events
@@ -89,10 +113,10 @@ export function AppointmentCall({
 
   // Auto-start call if in floating mode
   useEffect(() => {
-    if (isFloating) {
+    if (isFloating && !permissionError) {
       setIsCallActive(true);
     }
-  }, [isFloating]);
+  }, [isFloating, permissionError]);
 
   // Add minimum time requirement for call
   useEffect(() => {
@@ -151,6 +175,15 @@ export function AppointmentCall({
     
     fetchMeetingUrl();
   }, [appointmentId, meetingUrl, isMentor]);
+
+  const handlePermissionError = () => {
+    // Reset permission error
+    setPermissionError(null);
+    
+    // Try to request camera access by activating the call
+    // GoogleMeetFrame will handle the permission requests
+    setIsCallActive(true);
+  };
 
   const handleStartCall = async () => {
     console.log('handleStartCall called - starting call initialization');
@@ -260,6 +293,47 @@ export function AppointmentCall({
       window.location.href = redirectPath;
     }
   };
+
+  // Show permission error if detected
+  if (permissionError) {
+    return (
+      <Card className="p-6 flex flex-col items-center justify-center h-full">
+        <div className="text-red-500 mb-4">
+          <AlertCircle className="h-12 w-12" />
+        </div>
+        <h2 className="text-2xl font-bold mb-2">Media Access Required</h2>
+        <p className="text-gray-600 mb-6 text-center max-w-md">
+          {permissionError}
+        </p>
+        <div className="flex flex-col gap-3 w-full max-w-xs">
+          <Button
+            onClick={handlePermissionError}
+            size="lg"
+            className="w-full"
+          >
+            Continue Anyway
+          </Button>
+          {onEndCall && (
+            <Button
+              variant="outline"
+              onClick={onEndCall}
+              className="w-full"
+            >
+              Cancel
+            </Button>
+          )}
+          <a 
+            href="/test/camera" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 text-sm text-center mt-2"
+          >
+            Troubleshoot camera/microphone issues
+          </a>
+        </div>
+      </Card>
+    );
+  }
 
   if (!isCallActive) {
     // For mentors, show a loading state instead of a button since it will auto-join

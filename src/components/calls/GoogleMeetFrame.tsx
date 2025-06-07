@@ -35,16 +35,21 @@ export function GoogleMeetFrame({
   const [showSimpleView, setShowSimpleView] = useState(true); // Default to simple view
   const [isCameraEnabled, setIsCameraEnabled] = useState(true);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
+  const [permissionRetryCount, setPermissionRetryCount] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   
-  // Check for camera permissions and initialize local video
+  // Check for camera permissions and initialize local video with auto-retry
   useEffect(() => {
     const checkCameraPermission = async () => {
       try {
-        // Try to access the camera
+        // Try to access the camera with lower constraints first
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: true,
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: "user"
+          },
           audio: true 
         });
         
@@ -55,9 +60,36 @@ export function GoogleMeetFrame({
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
+        
+        toast.success("Camera and microphone initialized successfully");
       } catch (err) {
         console.error('Camera permission error:', err);
-        setHasCameraPermission(false);
+        
+        // If we've retried less than 3 times, try again with different constraints
+        if (permissionRetryCount < 3) {
+          setPermissionRetryCount(prev => prev + 1);
+          
+          // Try with just audio if video fails
+          try {
+            const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ 
+              audio: true,
+              video: false
+            });
+            
+            setHasCameraPermission(true);
+            setLocalStream(audioOnlyStream);
+            setIsCameraEnabled(false);
+            
+            toast.info("Audio initialized, but camera access was denied");
+          } catch (audioErr) {
+            console.error('Audio permission error:', audioErr);
+            setHasCameraPermission(false);
+            setError("Failed to access camera and microphone");
+            toast.error("Failed to initialize video call. Please check your camera and microphone permissions.");
+          }
+        } else {
+          setHasCameraPermission(false);
+        }
       }
     };
     
@@ -69,7 +101,7 @@ export function GoogleMeetFrame({
         localStream.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [permissionRetryCount]);
   
   useEffect(() => {
     // If no meeting URL is provided, create a new one
@@ -125,6 +157,12 @@ export function GoogleMeetFrame({
     toast.info('Refreshing video call...');
   };
 
+  const retryMediaAccess = () => {
+    // Increment retry count to trigger the useEffect
+    setPermissionRetryCount(prev => prev + 1);
+    toast.info("Retrying camera and microphone access...");
+  };
+
   const toggleSimpleView = () => {
     setShowSimpleView(!showSimpleView);
   };
@@ -151,7 +189,19 @@ export function GoogleMeetFrame({
   
   const requestCameraPermission = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      // Try with different constraints
+      const constraints = { 
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: "user"
+        }, 
+        audio: true 
+      };
+      
+      console.log("Requesting media with constraints:", constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
       setHasCameraPermission(true);
       setLocalStream(stream);
       
@@ -163,7 +213,18 @@ export function GoogleMeetFrame({
       toast.success('Camera and microphone access granted');
     } catch (err) {
       console.error('Failed to get camera permission:', err);
-      toast.error('Could not access camera or microphone');
+      
+      // Try with just audio
+      try {
+        const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        setLocalStream(audioStream);
+        setHasCameraPermission(true);
+        setIsCameraEnabled(false);
+        toast.info('Audio access granted, but camera was blocked');
+      } catch (audioErr) {
+        console.error('Failed to get audio permission:', audioErr);
+        toast.error('Could not access camera or microphone. Please check your browser settings.');
+      }
     }
   };
   
@@ -189,7 +250,7 @@ export function GoogleMeetFrame({
         </div>
         <h3 className="text-xl font-bold mb-2">Camera Access Required</h3>
         <p className="text-gray-600 mb-4 text-center">
-          To join the video call, please allow access to your camera and microphone.
+          To join the video call, please allow access to your camera and microphone in your browser settings.
         </p>
         <div className="flex flex-col gap-3 w-full max-w-xs">
           <Button 
@@ -198,6 +259,14 @@ export function GoogleMeetFrame({
           >
             <Camera className="mr-2 h-5 w-5" />
             Allow Camera Access
+          </Button>
+          <Button 
+            variant="outline"
+            onClick={() => setHasCameraPermission(true)}
+            className="w-full flex items-center justify-center"
+          >
+            <Mic className="mr-2 h-5 w-5" />
+            Continue with Audio Only
           </Button>
           {onClose && (
             <Button 
@@ -208,6 +277,14 @@ export function GoogleMeetFrame({
               Cancel
             </Button>
           )}
+          <a 
+            href="/test/camera" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-600 hover:text-blue-800 text-sm text-center mt-2"
+          >
+            Test your camera and microphone
+          </a>
         </div>
       </Card>
     );
@@ -254,7 +331,22 @@ export function GoogleMeetFrame({
               <div className="text-center p-4 bg-black bg-opacity-50 rounded-lg">
                 <Users className="h-8 w-8 mx-auto mb-2" />
                 <h4 className="text-lg font-medium">Waiting for patient to join...</h4>
-                <p className="text-sm opacity-80 mt-1">Your video is active and ready</p>
+                <p className="text-sm opacity-80 mt-1">
+                  {localStream 
+                    ? (isCameraEnabled ? "Your video is active and ready" : "Audio only mode (camera disabled)")
+                    : "Initializing your media devices..."}
+                </p>
+                {!localStream && (
+                  <Button 
+                    onClick={retryMediaAccess} 
+                    variant="outline" 
+                    size="sm" 
+                    className="mt-2"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Retry
+                  </Button>
+                )}
               </div>
             </div>
             
@@ -265,6 +357,7 @@ export function GoogleMeetFrame({
                 variant={isMicEnabled ? "secondary" : "destructive"}
                 className="rounded-full h-12 w-12 shadow-lg"
                 onClick={toggleMic}
+                disabled={!localStream}
               >
                 {isMicEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
               </Button>
@@ -273,6 +366,7 @@ export function GoogleMeetFrame({
                 variant={isCameraEnabled ? "secondary" : "destructive"}
                 className="rounded-full h-12 w-12 shadow-lg"
                 onClick={toggleCamera}
+                disabled={!localStream || !localStream.getVideoTracks().length}
               >
                 {isCameraEnabled ? <Camera className="h-5 w-5" /> : <CameraOff className="h-5 w-5" />}
               </Button>
@@ -307,12 +401,23 @@ export function GoogleMeetFrame({
               </Button>
               <Button
                 variant="outline"
-                onClick={handleRefreshFrame}
+                onClick={retryMediaAccess}
                 className="flex items-center justify-center"
               >
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Refresh Video
+                Refresh Media
               </Button>
+            </div>
+            
+            <div className="mt-4 text-center">
+              <a 
+                href="/test/camera" 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="text-blue-600 hover:text-blue-800 text-sm"
+              >
+                Having problems? Test your camera and microphone
+              </a>
             </div>
           </div>
         </div>
