@@ -10,6 +10,7 @@ interface GoogleMeetFrameProps {
   width?: string;
   isFloating?: boolean;
   onClose?: () => void;
+  onError?: () => void;
 }
 
 // Function to create a direct Google Meet link
@@ -25,7 +26,8 @@ export function GoogleMeetFrame({
   height = '100%', 
   width = '100%',
   isFloating = false,
-  onClose
+  onClose,
+  onError
 }: GoogleMeetFrameProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -43,6 +45,44 @@ export function GoogleMeetFrame({
   useEffect(() => {
     const checkCameraPermission = async () => {
       try {
+        // First check if we already have permission
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasLabels = devices.some(device => device.label !== '');
+        
+        // If we already have labels, we likely have permission
+        if (hasLabels) {
+          console.log('Media permissions likely already granted (found labeled devices)');
+          
+          // Still try to get the stream but with more robust error handling
+          try {
+            // Try to access the camera with lower constraints first
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+              video: {
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                facingMode: "user"
+              },
+              audio: true 
+            });
+            
+            setHasCameraPermission(true);
+            setLocalStream(stream);
+            
+            // Connect stream to video element
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+            }
+            
+            toast.success("Camera and microphone initialized successfully");
+          } catch (streamErr) {
+            console.error('Error getting media stream despite having permissions:', streamErr);
+            // Fall back to audio only
+            handleAudioFallback();
+          }
+          return;
+        }
+        
+        // No labels found, need to request permissions
         // Try to access the camera with lower constraints first
         const stream = await navigator.mediaDevices.getUserMedia({ 
           video: {
@@ -70,25 +110,39 @@ export function GoogleMeetFrame({
           setPermissionRetryCount(prev => prev + 1);
           
           // Try with just audio if video fails
-          try {
-            const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ 
-              audio: true,
-              video: false
-            });
-            
-            setHasCameraPermission(true);
-            setLocalStream(audioOnlyStream);
-            setIsCameraEnabled(false);
-            
-            toast.info("Audio initialized, but camera access was denied");
-          } catch (audioErr) {
-            console.error('Audio permission error:', audioErr);
-            setHasCameraPermission(false);
-            setError("Failed to access camera and microphone");
-            toast.error("Failed to initialize video call. Please check your camera and microphone permissions.");
-          }
+          handleAudioFallback();
         } else {
           setHasCameraPermission(false);
+          // Call onError if provided
+          if (onError) {
+            onError();
+          }
+        }
+      }
+    };
+    
+    const handleAudioFallback = async () => {
+      try {
+        console.log('Trying audio-only fallback...');
+        const audioOnlyStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: true,
+          video: false
+        });
+        
+        setHasCameraPermission(true);
+        setLocalStream(audioOnlyStream);
+        setIsCameraEnabled(false);
+        
+        toast.info("Audio initialized, but camera access was denied");
+      } catch (audioErr) {
+        console.error('Audio permission error:', audioErr);
+        setHasCameraPermission(false);
+        setError("Failed to access camera and microphone");
+        toast.error("Failed to initialize video call. Please check your camera and microphone permissions.");
+        
+        // Call onError if provided
+        if (onError) {
+          onError();
         }
       }
     };
@@ -101,7 +155,7 @@ export function GoogleMeetFrame({
         localStream.getTracks().forEach(track => track.stop());
       }
     };
-  }, [permissionRetryCount]);
+  }, [permissionRetryCount, onError]);
   
   useEffect(() => {
     // If no meeting URL is provided, create a new one
@@ -134,6 +188,11 @@ export function GoogleMeetFrame({
     setError('Failed to load Google Meet');
     setShowSimpleView(true);
     setIsLoading(false);
+    
+    // Call onError if provided
+    if (onError) {
+      onError();
+    }
   };
   
   const handleCopyLink = () => {
@@ -189,6 +248,13 @@ export function GoogleMeetFrame({
   
   const requestCameraPermission = async () => {
     try {
+      // First reset any cached state or errors
+      setError(null);
+      
+      // First try to enumerate devices to see if we have permissions
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      console.log("Available devices:", devices);
+      
       // Try with different constraints
       const constraints = { 
         video: {
@@ -223,7 +289,10 @@ export function GoogleMeetFrame({
         toast.info('Audio access granted, but camera was blocked');
       } catch (audioErr) {
         console.error('Failed to get audio permission:', audioErr);
-        toast.error('Could not access camera or microphone. Please check your browser settings.');
+        
+        // Last resort - just continue to the call interface anyway
+        setHasCameraPermission(true);
+        toast.warning('Continuing without media access. You may need to grant permissions in the Google Meet interface.');
       }
     }
   };

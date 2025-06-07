@@ -19,6 +19,7 @@ interface AppointmentCallProps {
   onInitialized?: () => void;
   shouldInitialize?: boolean;
   meetingUrl?: string;
+  onError?: () => void;
 }
 
 export function AppointmentCall({ 
@@ -32,7 +33,8 @@ export function AppointmentCall({
   onEndCall,
   onInitialized,
   shouldInitialize = true,
-  meetingUrl = ''
+  meetingUrl = '',
+  onError
 }: AppointmentCallProps) {
   const navigate = useNavigate();
   const [isCallActive, setIsCallActive] = useState(false);
@@ -51,14 +53,24 @@ export function AppointmentCall({
         const hasCamera = devices.some(device => device.kind === 'videoinput');
         const hasMicrophone = devices.some(device => device.kind === 'audioinput');
         
+        // Check if we already have permission by checking for device labels
+        const hasPermission = devices.some(device => device.label !== '');
+        
         if (!hasCamera && !hasMicrophone) {
           setPermissionError("No camera or microphone detected. Please check your device connections.");
+        } else if (hasPermission) {
+          // We already have permission, no need to show permission error
+          console.log("Camera/microphone permission already granted");
+          setPermissionError(null);
         }
         
         // We don't actually request permissions here, that's handled in GoogleMeetFrame
       } catch (err) {
         console.error("Error checking media devices:", err);
-        setPermissionError("Unable to check camera and microphone. Please ensure your browser has permission to access media devices.");
+        
+        // Don't set permission error yet - the user might have permissions
+        // but the browser just doesn't expose device info until explicitly requested
+        console.warn("Could not check device permissions, will try when joining call");
       }
     };
     
@@ -190,6 +202,9 @@ export function AppointmentCall({
     setIsJoining(true);
     
     try {
+      // Reset any permission errors before starting
+      setPermissionError(null);
+      
       // If no meeting URL exists, create one
       if (!appointmentMeetingUrl) {
         const newMeetingUrl = createGoogleMeetLink();
@@ -221,6 +236,21 @@ export function AppointmentCall({
         console.error('Error updating appointment status:', statusError);
       }
       
+      // Try to request basic camera/mic access before showing the call UI
+      // This helps prime the permissions and detect issues early
+      try {
+        console.log('Pre-checking camera/mic access before activating call UI');
+        await navigator.mediaDevices.getUserMedia({ 
+          video: true, 
+          audio: true 
+        });
+        console.log('Pre-check successful - camera/mic access granted');
+      } catch (mediaErr) {
+        console.warn('Pre-check media access failed:', mediaErr);
+        // Don't block the call, just note that there may be issues
+        // The GoogleMeetFrame will handle this more thoroughly
+      }
+      
       setIsCallActive(true);
       console.log('Call activated successfully');
       
@@ -231,6 +261,11 @@ export function AppointmentCall({
     } catch (error) {
       toast.error("Failed to join the call. Please try again.");
       console.error("Error joining call:", error);
+      
+      // Call the onError callback if provided
+      if (onError) {
+        onError();
+      }
     } finally {
       setIsJoining(false);
     }
@@ -248,6 +283,41 @@ export function AppointmentCall({
       }
     }
     
+    // Mark that the call was explicitly ended by the user
+    setWasExplicitlyEnded(true);
+    setIsCallActive(false);
+    
+    // Manually stop all media tracks
+    try {
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => {
+          stream.getTracks().forEach(track => {
+            track.stop();
+          });
+        })
+        .catch(err => console.warn('Could not get media for cleanup:', err));
+        
+      // Also stop any tracks from video elements
+      document.querySelectorAll('video').forEach(videoElement => {
+        const stream = (videoElement as HTMLVideoElement).srcObject as MediaStream;
+        if (stream) {
+          stream.getTracks().forEach(track => {
+            track.stop();
+          });
+          videoElement.srcObject = null;
+        }
+      });
+    } catch (e) {
+      console.warn('Error cleaning up media tracks:', e);
+    }
+    
+    // Dispatch event to VideoSessionContext to ensure it's aware the call is ended
+    window.dispatchEvent(
+      new CustomEvent('floating-call-closed', {
+        detail: { appointmentId }
+      })
+    );
+    
     // If we're in a floating window, dispatch an event to close it
     if (window.opener) {
       try {
@@ -260,9 +330,6 @@ export function AppointmentCall({
         console.error('Error dispatching event to parent window:', e);
       }
     }
-    
-    // Mark that the call was explicitly ended by the user
-    setWasExplicitlyEnded(true);
     
     // Update appointment status to completed if mentor is ending the call
     if (isMentor) {
@@ -282,16 +349,34 @@ export function AppointmentCall({
         });
     }
     
+    // Log session end event
+    supabase
+      .from('session_events')
+      .insert({
+        appointment_id: appointmentId,
+        event_type: 'session_ended',
+        initiated_by: isMentor ? 'mentor' : 'patient',
+        message: `Session ended by ${isMentor ? 'mentor' : 'patient'}`
+      })
+      .then(({ error }) => {
+        if (error) {
+          console.error('Error logging session end event:', error);
+        }
+      });
+    
     // Call the onEndCall callback if provided
     if (onEndCall) {
       console.log('Calling onEndCall callback from handleEndCall');
       onEndCall();
     }
     
-    // If we have a redirect path, navigate there
-    if (redirectPath) {
-      window.location.href = redirectPath;
-    }
+    // Add a small delay before redirecting to ensure cleanup completes
+    setTimeout(() => {
+      // If we have a redirect path, navigate there
+      if (redirectPath) {
+        window.location.href = redirectPath;
+      }
+    }, 300); // Short delay to allow cleanup to complete
   };
 
   // Show permission error if detected
@@ -419,6 +504,7 @@ export function AppointmentCall({
         meetingUrl={appointmentMeetingUrl}
         isFloating={isFloating}
         onClose={handleEndCall}
+        onError={onError}
       />
     </div>
   );
