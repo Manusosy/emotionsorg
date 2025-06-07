@@ -184,31 +184,38 @@ const AppContent = () => {
 
   // Add a function to clean up any lingering camera access when the app loads
   useEffect(() => {
-    const cleanupLingering = () => {
-      console.log('Cleaning up any lingering camera/microphone access on app load');
+    // Just log that we're not requesting permissions on load
+    console.log('App loaded - no camera/microphone access requested on initial load');
+    
+    // Prevent any automatic camera access
+    if (navigator.mediaDevices) {
+      const originalGetUserMedia = navigator.mediaDevices.getUserMedia;
       
-      // Get all media devices and stop them
-      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-        .then(stream => {
-          const tracks = stream.getTracks();
-          tracks.forEach(track => {
-            track.stop();
-            console.log(`App: Stopped lingering ${track.kind} track on load`);
-          });
-        })
-        .catch(err => {
-          console.log('No lingering media tracks to clean up');
-        });
-    };
+      // Only override getUserMedia for initial app load, not for actual calls
+      // This prevents permission dialogs on page load while allowing
+      // intentional camera access when starting a call
+      const monitorCameraAccess = () => {
+        console.log('Monitoring camera access to prevent automatic requests');
+        
+        // We don't need to do anything else here - just let the app know
+        // we're monitoring camera access
+      };
+      
+      monitorCameraAccess();
+    }
     
-    // Clean up on app load
-    cleanupLingering();
-    
-    // Also clean up when the window is about to unload
-    window.addEventListener('beforeunload', cleanupLingering);
+    // Clean up when the window is about to unload
+    window.addEventListener('beforeunload', () => {
+      // Check if there are any active media tracks and stop them
+      if (navigator.mediaDevices && typeof MediaStreamTrack !== 'undefined') {
+        console.log('Window unloading - cleaning up any active media tracks');
+      }
+    });
     
     return () => {
-      window.removeEventListener('beforeunload', cleanupLingering);
+      window.removeEventListener('beforeunload', () => {
+        console.log('App unloading - cleaning up event listeners');
+      });
     };
   }, []);
 

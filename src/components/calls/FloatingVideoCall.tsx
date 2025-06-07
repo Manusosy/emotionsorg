@@ -69,10 +69,18 @@ export const FloatingVideoCall: React.FC<FloatingVideoCallProps> = ({
     // Navigate to the appropriate session page based on user role
     const path = `/${isMentor ? 'mood-mentor-dashboard' : 'patient-dashboard'}/session/${appointmentId}`;
     
-    // Use window.location for a full page reload to ensure clean state
-    window.location.href = path;
-    
-    toast.info("Returning to full session view...");
+    try {
+      // Use navigate instead of direct location change to preserve context
+      navigate(path);
+      
+      // Show a toast but don't interrupt the flow
+      toast.info("Returning to full session view...");
+    } catch (error) {
+      console.error("Error navigating to session:", error);
+      
+      // Fallback to direct location change only if navigation fails
+      window.location.href = path;
+    }
   };
 
   // Handle maximize - navigate back to full session page

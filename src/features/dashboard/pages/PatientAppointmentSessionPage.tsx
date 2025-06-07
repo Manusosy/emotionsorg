@@ -61,18 +61,24 @@ export default function PatientAppointmentSessionPage() {
   
   // Add a function to clean up camera access
   const cleanupCameraAccess = () => {
-    // Get all media devices and stop them
-    navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-      .then(stream => {
-        const tracks = stream.getTracks();
-        tracks.forEach(track => {
-          track.stop();
-          console.log(`PatientSession: Stopped ${track.kind} track`);
+    // Only clean up if video is actually active
+    if (isVideoActive) {
+      console.log('Cleaning up camera access after patient session');
+      // Get all media devices and stop them
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => {
+          const tracks = stream.getTracks();
+          tracks.forEach(track => {
+            track.stop();
+            console.log(`PatientSession: Stopped ${track.kind} track`);
+          });
+        })
+        .catch(err => {
+          console.warn('PatientSession: Could not get media devices to clean up:', err);
         });
-      })
-      .catch(err => {
-        console.warn('PatientSession: Could not get media devices to clean up:', err);
-      });
+    } else {
+      console.log('No active video in patient session to clean up');
+    }
   };
 
   // Check appointment status periodically and listen for session events
@@ -173,9 +179,16 @@ export default function PatientAppointmentSessionPage() {
       
       // Check if user is the patient for this appointment
       if (user?.id !== data.patient_id) {
-        toast.error('You are not authorized to view this appointment session');
-        navigate('/patient-dashboard/appointments');
-        return;
+        // Before denying access, check if there's an active session for this appointment
+        // This helps with minimized/maximized video windows
+        if (isSessionActiveForAppointment(appointmentId)) {
+          console.log('Patient has active session for this appointment, allowing access despite ID mismatch');
+          // Allow access if there's already an active session
+        } else {
+          toast.error('You are not authorized to view this appointment session');
+          navigate('/patient-dashboard/appointments');
+          return;
+        }
       }
       
       // For chat appointments, redirect to the messages page

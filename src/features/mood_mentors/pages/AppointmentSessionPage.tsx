@@ -50,21 +50,29 @@ export default function AppointmentSessionPage() {
   const [sessionData, setSessionData] = useState<any>(null);
   const [isVideoActive, setIsVideoActive] = useState(false);
   const [patientJoined, setPatientJoined] = useState(false);
+  const [videoInitialized, setVideoInitialized] = useState(false);
+  const [shouldInitializeVideo, setShouldInitializeVideo] = useState(false);
   
   // Add a function to clean up camera access
   const cleanupCameraAccess = () => {
-    // Get all media devices and stop them
-    navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-      .then(stream => {
-        const tracks = stream.getTracks();
-        tracks.forEach(track => {
-          track.stop();
-          console.log(`MentorSession: Stopped ${track.kind} track`);
+    // Only clean up if video is actually active
+    if (isVideoActive) {
+      console.log('Cleaning up camera access after session');
+      // Get all media devices and stop them
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => {
+          const tracks = stream.getTracks();
+          tracks.forEach(track => {
+            track.stop();
+            console.log(`MentorSession: Stopped ${track.kind} track`);
+          });
+        })
+        .catch(err => {
+          console.warn('MentorSession: Could not get media devices to clean up:', err);
         });
-      })
-      .catch(err => {
-        console.warn('MentorSession: Could not get media devices to clean up:', err);
-      });
+    } else {
+      console.log('No active video to clean up');
+    }
   };
   
   useEffect(() => {
@@ -75,6 +83,8 @@ export default function AppointmentSessionPage() {
     if (appointmentId && isSessionActiveForAppointment(appointmentId)) {
       setIsVideoActive(true);
       setSessionStarted(true);
+      // If we're restoring a session, we should allow video initialization
+      setShouldInitializeVideo(true);
     }
     
     if (appointmentId) {
@@ -103,6 +113,10 @@ export default function AppointmentSessionPage() {
         // Clean up camera access when leaving the page
         cleanupCameraAccess();
         
+        // Reset video initialization state
+        setVideoInitialized(false);
+        setShouldInitializeVideo(false);
+        
         // Mark that we're no longer on the session page when component unmounts
         setIsOnSessionPage(false);
       };
@@ -112,6 +126,10 @@ export default function AppointmentSessionPage() {
     return () => {
       // Clean up camera access when leaving the page
       cleanupCameraAccess();
+      
+      // Reset video initialization state
+      setVideoInitialized(false);
+      setShouldInitializeVideo(false);
       
       setIsOnSessionPage(false);
     };
@@ -149,9 +167,16 @@ export default function AppointmentSessionPage() {
       
       // Check if user is the mentor for this appointment
       if (user?.id !== data.mentor_id) {
-        toast.error('You are not authorized to view this appointment session');
-        navigate('/mood-mentor-dashboard');
-        return;
+        // Before denying access, check if there's an active session for this appointment
+        // This helps with minimized/maximized video windows
+        if (isSessionActiveForAppointment(appointmentId)) {
+          console.log('User has active session for this appointment, allowing access despite ID mismatch');
+          // Allow access if there's already an active session
+        } else {
+          toast.error('You are not authorized to view this appointment session');
+          navigate('/mood-mentor-dashboard');
+          return;
+        }
       }
       
       // For chat appointments, redirect to the messages page
@@ -202,6 +227,9 @@ export default function AppointmentSessionPage() {
     try {
       setSessionLoading(true);
       
+      // Reset video initialization state
+      setVideoInitialized(false);
+      
       // Use the appointment service to start the session
       const result = await appointmentService.startAppointmentSession(appointmentId || '');
       
@@ -213,6 +241,10 @@ export default function AppointmentSessionPage() {
       setSessionData(result.data);
       setSessionStarted(true);
       setIsVideoActive(true);
+      
+      // Now allow video initialization to happen
+      setShouldInitializeVideo(true);
+      
       toast.success('Session started successfully');
       
       // Start persistent video session
@@ -237,6 +269,7 @@ export default function AppointmentSessionPage() {
   
   const completeSession = async () => {
     try {
+      console.log('completeSession called - starting appointment completion process');
       setSessionLoading(true);
       
       // First update notes if they've changed
@@ -252,6 +285,7 @@ export default function AppointmentSessionPage() {
       }
       
       // Now complete the appointment
+      console.log('Calling appointmentService.completeAppointment for appointment:', appointmentId);
       const result = await appointmentService.completeAppointment(appointmentId || '');
       
       if (result.error) {
@@ -599,10 +633,33 @@ export default function AppointmentSessionPage() {
                             isAudioOnly={false}
                             isMentor={true}
                             redirectPath="/mood-mentor-dashboard"
+                            shouldInitialize={shouldInitializeVideo}
                             onEndCall={() => {
                               console.log('Call ended from AppointmentCall component');
                               setIsVideoActive(false);
-                              completeSession();
+                              
+                              // Check if patient ever joined the session
+                              if (patientJoined && videoInitialized) {
+                                // Patient joined and video was initialized - prompt for completion
+                                if (window.confirm('Would you like to mark this appointment as completed?')) {
+                                  completeSession();
+                                } else {
+                                  console.log('User chose not to complete the session');
+                                }
+                              } else if (!patientJoined && videoInitialized) {
+                                // Patient never joined but video was initialized
+                                if (window.confirm('The patient never joined the session. Would you like to mark this appointment as completed anyway?')) {
+                                  completeSession();
+                                } else {
+                                  console.log('User chose not to complete the session when patient did not join');
+                                }
+                              } else {
+                                console.log('Video was not successfully initialized, not completing session');
+                              }
+                            }}
+                            onInitialized={() => {
+                              console.log('Video call successfully initialized');
+                              setVideoInitialized(true);
                             }}
                           />
                         )}
@@ -623,10 +680,33 @@ export default function AppointmentSessionPage() {
                             isAudioOnly={true}
                             isMentor={true}
                             redirectPath="/mood-mentor-dashboard"
+                            shouldInitialize={shouldInitializeVideo}
                             onEndCall={() => {
                               console.log('Call ended from AppointmentCall component');
                               setIsVideoActive(false);
-                              completeSession();
+                              
+                              // Check if patient ever joined the session
+                              if (patientJoined && videoInitialized) {
+                                // Patient joined and audio was initialized - prompt for completion
+                                if (window.confirm('Would you like to mark this appointment as completed?')) {
+                                  completeSession();
+                                } else {
+                                  console.log('User chose not to complete the session');
+                                }
+                              } else if (!patientJoined && videoInitialized) {
+                                // Patient never joined but audio was initialized
+                                if (window.confirm('The patient never joined the session. Would you like to mark this appointment as completed anyway?')) {
+                                  completeSession();
+                                } else {
+                                  console.log('User chose not to complete the session when patient did not join');
+                                }
+                              } else {
+                                console.log('Audio was not successfully initialized, not completing session');
+                              }
+                            }}
+                            onInitialized={() => {
+                              console.log('Audio call successfully initialized');
+                              setVideoInitialized(true);
                             }}
                           />
                         )}

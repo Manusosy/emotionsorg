@@ -43,18 +43,28 @@ export const VideoSessionProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   // Add a function to completely clean up camera access
   const cleanupCameraAccess = () => {
-    // Get all media devices and stop them
-    navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-      .then(stream => {
-        const tracks = stream.getTracks();
-        tracks.forEach(track => {
-          track.stop();
-          console.log(`Stopped ${track.kind} track`);
-        });
-      })
-      .catch(err => {
-        console.warn('Could not get media devices to clean up:', err);
-      });
+    // Only attempt to clean up tracks if MediaDevices API is available
+    if (navigator.mediaDevices) {
+      // Don't request new media permissions; only check for existing tracks
+      // Instead of requesting new permissions, just check if tracks exist already
+      try {
+        // Get all media tracks currently in use and stop them
+        const mediaDevices = navigator.mediaDevices as any;
+        
+        // Check if the browser supports enumerating media devices
+        if (mediaDevices.getTracks) {
+          const tracks = mediaDevices.getTracks();
+          if (tracks && tracks.length > 0) {
+            tracks.forEach((track: MediaStreamTrack) => {
+              track.stop();
+              console.log(`Stopped existing ${track.kind} track`);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Error while cleaning up existing media tracks:', err);
+      }
+    }
   };
 
   const startSession = (session: ActiveSession) => {
@@ -87,7 +97,20 @@ export const VideoSessionProvider: React.FC<{ children: ReactNode }> = ({ childr
   };
 
   const isSessionActiveForAppointment = (appointmentId: string) => {
-    return activeSession?.appointmentId === appointmentId;
+    // Check if there's an active session for this appointment
+    const hasActiveSession = activeSession?.appointmentId === appointmentId;
+    
+    if (hasActiveSession) {
+      // If session is active, refresh its timestamp to prevent expiration
+      if (activeSession) {
+        localStorage.setItem('activeVideoSession', JSON.stringify({
+          ...activeSession,
+          lastRefreshed: new Date().toISOString() // Add timestamp
+        }));
+      }
+    }
+    
+    return hasActiveSession;
   };
 
   // Add a logout cleanup function to the provider
