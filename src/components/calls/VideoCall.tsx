@@ -27,6 +27,10 @@ const client: IAgoraRTCClient = AgoraRTC.createClient({
   codec: 'vp8'
 });
 
+// Declare variables outside to avoid scope issues
+let audioTrack: IMicrophoneAudioTrack | null = null;
+let videoTrack: ICameraVideoTrack | null = null;
+
 export function VideoCall({ 
   channelName, 
   isAudioOnly = false, 
@@ -54,11 +58,14 @@ export function VideoCall({
   const [waitingForRemoteUser, setWaitingForRemoteUser] = useState(true);
   const [joinRetryCount, setJoinRetryCount] = useState(0);
   const [hasPermissions, setHasPermissions] = useState<boolean | null>(null);
+  const [permissionStatus, setPermissionStatus] = useState<'checking' | 'granted' | 'denied' | 'prompt'>('checking');
+  const [initializationStep, setInitializationStep] = useState<'initial' | 'checking-permissions' | 'requesting-devices' | 'creating-tracks' | 'joining-channel' | 'publishing-tracks' | 'complete'>('initial');
   
   const containerRef = useRef<HTMLDivElement>(null);
   const isInitializedRef = useRef(false);
   const joinTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const permissionCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cameraTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const maxRetryAttempts = 3;
   
   // Styling classes
@@ -91,78 +98,140 @@ export function VideoCall({
     'p-3 bg-gray-900 flex items-center justify-center relative'
   );
 
-  // Add a function to check for existing permissions
-  const checkPermissions = async () => {
+  // Explicitly request user permissions for camera and microphone
+  const requestMediaPermissions = async () => {
+    console.log('Explicitly requesting media permissions...');
+    setInitializationStep('checking-permissions');
+    setPermissionRequested(true);
+    
     try {
+      // Request permissions explicitly
+      const constraints = isAudioOnly 
+        ? { audio: true } 
+        : { audio: true, video: true };
+      
+      // Set a timeout to detect if permissions are taking too long
+      const permissionTimeout = new Promise((_, reject) => {
+        cameraTimeoutRef.current = setTimeout(() => {
+          reject(new Error('Permission request timed out. Browser may be waiting for user input.'));
+        }, 5000); // 5 second timeout
+      });
+      
+      // Race between the permission request and the timeout
+      const stream = await Promise.race([
+        navigator.mediaDevices.getUserMedia(constraints),
+        permissionTimeout
+      ]) as MediaStream;
+      
+      // Clear the timeout if permissions were granted
+      if (cameraTimeoutRef.current) {
+        clearTimeout(cameraTimeoutRef.current);
+        cameraTimeoutRef.current = null;
+      }
+      
+      // If we got here, permissions were granted
+      console.log('Media permissions granted successfully');
+      
+      // Stop the tracks immediately - we'll create proper ones later
+      stream.getTracks().forEach(track => track.stop());
+      
+      setPermissionStatus('granted');
+      setHasPermissions(true);
+      
+      return true;
+    } catch (err: any) {
+      // Clear the timeout if it was set
+      if (cameraTimeoutRef.current) {
+        clearTimeout(cameraTimeoutRef.current);
+        cameraTimeoutRef.current = null;
+      }
+      
+      console.error('Error requesting media permissions:', err);
+      
+      // Handle timeout error
+      if (err.message && err.message.includes('timed out')) {
+        console.log('Permission request timed out - assuming browser is waiting for user input');
+        // Don't set an error yet, just return false and let the UI show the permission request
+        setPermissionStatus('prompt');
+        return false;
+      }
+      
+      // Handle different permission errors
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setInitError('Camera or microphone access was denied. Please grant permission in your browser settings.');
+        setErrorType('permission');
+        setPermissionStatus('denied');
+        setHasPermissions(false);
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        setInitError('No camera or microphone found. Please connect a device and try again.');
+        setErrorType('permission');
+        setPermissionStatus('denied');
+        setHasPermissions(false);
+      } else {
+        setInitError('An error occurred while accessing your camera and microphone.');
+        setErrorType('unknown');
+        setPermissionStatus('denied');
+        setHasPermissions(false);
+      }
+      
+      return false;
+    } finally {
+      setPermissionRequested(false);
+    }
+  };
+
+  // Check if permissions are already granted
+  const checkPermissions = async () => {
+    setInitializationStep('checking-permissions');
+    try {
+      console.log('Checking existing media permissions...');
+      
       // Check if permissions are already granted using the permissions API
       if (navigator.permissions && navigator.permissions.query) {
-        // Check camera permission
-        const cameraResult = await navigator.permissions.query({ name: 'camera' as PermissionName });
-        const micResult = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-        
-        const hasAllPermissions = 
-          (cameraResult.state === 'granted' || isAudioOnly) && 
-          micResult.state === 'granted';
-        
-        setHasPermissions(hasAllPermissions);
-        
-        if (!hasAllPermissions && (cameraResult.state === 'denied' || micResult.state === 'denied')) {
-          // If explicitly denied, show a message to the user
-          setInitError('Camera or microphone access has been blocked. Please update your browser settings to allow access.');
-          setErrorType('permission');
-          return false;
-        }
-        
-        return hasAllPermissions;
-      } else {
-        // Fallback for browsers that don't support the permissions API
-        // We'll try to access the devices directly as a permissions check
         try {
-          const constraints = isAudioOnly 
-            ? { audio: true } 
-            : { audio: true, video: true };
-            
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          // Check camera permission
+          const cameraResult = await navigator.permissions.query({ name: 'camera' as PermissionName });
+          const micResult = await navigator.permissions.query({ name: 'microphone' as PermissionName });
           
-          // Stop tracks immediately after check
-          stream.getTracks().forEach(track => track.stop());
+          console.log('Camera permission:', cameraResult.state);
+          console.log('Microphone permission:', micResult.state);
           
-          setHasPermissions(true);
-          return true;
-        } catch (err: any) {
-          console.error('Permission check failed:', err);
-          
-          // Different browsers return different error types
-          if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            setInitError('Camera or microphone access was denied. Please grant permission when prompted.');
+          if (cameraResult.state === 'granted' && micResult.state === 'granted') {
+            console.log('Both camera and mic permissions already granted');
+            setPermissionStatus('granted');
+            setHasPermissions(true);
+            return true;
+          } else if (cameraResult.state === 'denied' || micResult.state === 'denied') {
+            console.log('Camera or mic permissions explicitly denied');
+            setInitError('Camera or microphone access has been blocked. Please update your browser settings to allow access.');
             setErrorType('permission');
-          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-            setInitError('No camera or microphone found. Please connect a device and try again.');
-            setErrorType('permission');
+            setPermissionStatus('denied');
+            setHasPermissions(false);
+            return false;
           } else {
-            setInitError('An error occurred while accessing your camera and microphone.');
-            setErrorType('unknown');
+            console.log('Permissions in prompt state, need to request explicitly');
+            setPermissionStatus('prompt');
+            // Permissions haven't been decided yet, need to request explicitly
+            return await requestMediaPermissions();
           }
-          
-          setHasPermissions(false);
-          return false;
+        } catch (err) {
+          console.warn('Error using permissions API:', err);
+          // Fall back to getUserMedia check
+          return await requestMediaPermissions();
         }
+      } else {
+        console.log('Permissions API not supported, falling back to getUserMedia check');
+        // Browser doesn't support permissions API, fall back to getUserMedia
+        return await requestMediaPermissions();
       }
     } catch (error) {
-      console.error('Error checking permissions:', error);
+      console.error('Error in checkPermissions:', error);
       setHasPermissions(false);
       return false;
     }
   };
 
-  // Use an effect to check permissions initially
-  useEffect(() => {
-    if (shouldInitialize) {
-      checkPermissions();
-    }
-  }, [shouldInitialize, isAudioOnly]);
-
-  // Set up permission change listeners
+  // Monitor for permission changes
   useEffect(() => {
     if (navigator.permissions && navigator.permissions.query) {
       const setupPermissionListeners = async () => {
@@ -173,13 +242,23 @@ export function VideoCall({
           
           const handlePermissionChange = () => {
             console.log('Permission state changed, rechecking permissions');
-            checkPermissions().then(hasPermissions => {
-              if (hasPermissions && initError && errorType === 'permission') {
-                // If permissions are now granted and we had a permission error, retry
-                console.log('Permissions granted, retrying initialization');
-                handleRetry();
+            
+            // If permissions are now granted and we had a permission error, retry
+            if ((cameraPermission.state === 'granted' && micPermission.state === 'granted') && 
+                initError && errorType === 'permission') {
+              console.log('Permissions now granted, retrying initialization');
+              setPermissionStatus('granted');
+              setHasPermissions(true);
+              handleRetry();
+            } else if (cameraPermission.state === 'denied' || micPermission.state === 'denied') {
+              // If permissions are explicitly denied now
+              setPermissionStatus('denied');
+              setHasPermissions(false);
+              if (!initError) {
+                setInitError('Camera or microphone access has been blocked. Please update your browser settings.');
+                setErrorType('permission');
               }
-            });
+            }
           };
           
           cameraPermission.addEventListener('change', handlePermissionChange);
@@ -198,28 +277,26 @@ export function VideoCall({
     } else {
       // For browsers without the permissions API, poll for permission changes
       // This helps recover if the user grants permissions after initially denying
-      if (permissionCheckIntervalRef.current) {
-        clearInterval(permissionCheckIntervalRef.current);
-      }
+      const checkInterval = 3000; // Check every 3 seconds
       
-      if (initError && errorType === 'permission') {
-        // Only set up polling if we have a permission error
-        permissionCheckIntervalRef.current = setInterval(() => {
-          checkPermissions().then(hasPermissions => {
-            if (hasPermissions) {
-              // If permissions are now granted, retry
-              console.log('Permissions now detected via polling, retrying');
-              handleRetry();
-              
-              // Clear the interval once permissions are granted
-              if (permissionCheckIntervalRef.current) {
-                clearInterval(permissionCheckIntervalRef.current);
-                permissionCheckIntervalRef.current = null;
-              }
+      permissionCheckIntervalRef.current = setInterval(async () => {
+        // Only check if we're in an error state due to permissions
+        if (initError && errorType === 'permission' && permissionStatus !== 'granted') {
+          console.log('Polling for permission changes...');
+          const permissionsGranted = await requestMediaPermissions();
+          
+          if (permissionsGranted) {
+            console.log('Permissions now granted via polling, retrying initialization');
+            handleRetry();
+            
+            // Clear the interval once permissions are granted
+            if (permissionCheckIntervalRef.current) {
+              clearInterval(permissionCheckIntervalRef.current);
+              permissionCheckIntervalRef.current = null;
             }
-          });
-        }, 2000); // Check every 2 seconds
-      }
+          }
+        }
+      }, checkInterval);
       
       return () => {
         if (permissionCheckIntervalRef.current) {
@@ -228,32 +305,34 @@ export function VideoCall({
         }
       };
     }
-  }, [initError, errorType]);
+  }, [initError, errorType, permissionStatus]);
 
+  // Main initialization logic
   useEffect(() => {
-    let audioTrack: IMicrophoneAudioTrack | undefined;
-    let videoTrack: ICameraVideoTrack | undefined;
-    let screenTrack: any;
-
-    // Only initialize once to prevent multiple camera access requests
-    // AND only if shouldInitialize is true
-    if (isInitializedRef.current || !shouldInitialize) {
-      console.log('Skipping initialization: isInitializedRef.current =', isInitializedRef.current, 'shouldInitialize =', shouldInitialize);
-      return;
-    }
+    if (!shouldInitialize || isInitializedRef.current) return;
     
-    console.log('Starting video call initialization for channel:', channelName);
+    console.log('Starting video call initialization...');
     isInitializedRef.current = true;
+    
+    let localAudioTrack: IMicrophoneAudioTrack | null = null;
+    let localVideoTrack: ICameraVideoTrack | null = null;
     
     const init = async () => {
       try {
-        // Check permissions first
+        // Step 1: Check permissions
+        console.log('Step 1: Checking permissions');
+        setInitializationStep('checking-permissions');
         const permissionsGranted = await checkPermissions();
+        
         if (!permissionsGranted) {
-          console.log('Permissions not granted, showing prompt');
+          console.log('Permissions not granted, showing prompt or error UI');
           // Don't throw here - we'll show UI for the user to grant permissions
           return;
         }
+        
+        // Step 2: Set up event listeners
+        console.log('Step 2: Setting up event listeners');
+        setInitializationStep('requesting-devices');
         
         client.on('user-published', async (user, mediaType) => {
           await client.subscribe(user, mediaType);
@@ -313,7 +392,10 @@ export function VideoCall({
           }
         });
 
-        // Generate a token and UID for the user
+        // Step 3: Generate token and join channel
+        console.log('Step 3: Generating token and joining channel');
+        setInitializationStep('joining-channel');
+        
         console.log('Generating token for channel:', channelName);
         const { token, uid } = await generateToken(channelName);
         
@@ -323,23 +405,25 @@ export function VideoCall({
         
         console.log('Generated token successfully, joining channel with UID:', uid);
         
-        // Flag that we're requesting permissions
-        setPermissionRequested(true);
-        
         // Join the channel
         await client.join(agoraConfig.appId, channelName, token, uid);
         console.log('Joined channel successfully');
         
-        // Create and publish the tracks
+        // Step 4: Create and publish local tracks
+        console.log('Step 4: Creating local tracks');
+        setInitializationStep('creating-tracks');
+        
         try {
-          if (!isAudioOnly) {
-            videoTrack = await AgoraRTC.createCameraVideoTrack();
-            await client.publish(videoTrack);
-            videoTrack.play('local-video');
-          }
+          // First try to create audio track as it's usually more reliable
+          localAudioTrack = await AgoraRTC.createMicrophoneAudioTrack();
+          console.log('Created audio track successfully');
           
-          audioTrack = await AgoraRTC.createMicrophoneAudioTrack();
-          await client.publish(audioTrack);
+          // Then try to create video track if not audio only
+          if (!isAudioOnly) {
+            console.log('Creating video track...');
+            localVideoTrack = await AgoraRTC.createCameraVideoTrack();
+            console.log('Created video track successfully');
+          }
         } catch (mediaError: any) {
           console.error('Error creating media tracks:', mediaError);
           
@@ -355,15 +439,33 @@ export function VideoCall({
           }
           
           // For other errors, continue with just audio if video fails
-          if (!isAudioOnly && !videoTrack) {
+          if (!isAudioOnly && !localVideoTrack) {
             toast.warning('Could not access camera. Continuing with audio only.');
           }
         }
         
+        // Step 5: Publish tracks to the channel
+        console.log('Step 5: Publishing tracks to channel');
+        setInitializationStep('publishing-tracks');
+        
+        if (localAudioTrack) {
+          await client.publish(localAudioTrack);
+          console.log('Published audio track successfully');
+        }
+        
+        if (localVideoTrack) {
+          await client.publish(localVideoTrack);
+          console.log('Published video track successfully');
+          
+          // Play local video
+          console.log('Playing local video');
+          localVideoTrack.play('local-video');
+        }
+        
         // Set local tracks state
         setLocalTracks({
-          audioTrack,
-          videoTrack,
+          audioTrack: localAudioTrack || undefined,
+          videoTrack: localVideoTrack || undefined,
         });
         
         console.log('Local tracks published successfully');
@@ -373,6 +475,7 @@ export function VideoCall({
         setPermissionRequested(false);
         setInitError(null);
         setErrorType(null);
+        setInitializationStep('complete');
         
         // Set up a timeout to check if any remote users have joined
         // If not, we'll display a "waiting for participant" message
@@ -396,6 +499,7 @@ export function VideoCall({
         if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
           setInitError('Camera or microphone access was denied. Please grant permission when prompted.');
           setErrorType('permission');
+          setPermissionStatus('denied');
         } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
           setInitError('No camera or microphone found. Please connect a device and try again.');
           setErrorType('permission');
@@ -408,14 +512,14 @@ export function VideoCall({
         }
         
         // Clean up any tracks that might have been created
-        if (audioTrack) {
-          audioTrack.stop();
-          audioTrack.close();
+        if (localAudioTrack) {
+          localAudioTrack.stop();
+          localAudioTrack.close();
         }
         
-        if (videoTrack) {
-          videoTrack.stop();
-          videoTrack.close();
+        if (localVideoTrack) {
+          localVideoTrack.stop();
+          localVideoTrack.close();
         }
         
         // Reset initialization flag to allow retry
@@ -446,12 +550,7 @@ export function VideoCall({
         localTracks.screenTrack.close();
       }
       
-      // Leave the channel
-      if (client) {
-        client.leave();
-      }
-      
-      // Clear any timeouts
+      // Clean up any timeouts
       if (joinTimeoutRef.current) {
         clearTimeout(joinTimeoutRef.current);
         joinTimeoutRef.current = null;
@@ -461,8 +560,16 @@ export function VideoCall({
         clearInterval(permissionCheckIntervalRef.current);
         permissionCheckIntervalRef.current = null;
       }
+      
+      if (cameraTimeoutRef.current) {
+        clearTimeout(cameraTimeoutRef.current);
+        cameraTimeoutRef.current = null;
+      }
+      
+      // Leave the channel
+      client.leave().catch(console.error);
     };
-  }, [channelName, isAudioOnly, onInitialized, shouldInitialize]);
+  }, [shouldInitialize, channelName, isAudioOnly, joinRetryCount]);
 
   const toggleAudio = async () => {
     if (localTracks.audioTrack) {

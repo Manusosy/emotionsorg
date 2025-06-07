@@ -472,18 +472,10 @@ export default function AppointmentsPage() {
             </p>
             <Button 
               onClick={() => {
-                if (location.pathname.includes('patient-dashboard')) {
-                  // If on patient dashboard, scroll to mentors section
-                  const mentorsSection = document.getElementById('mood-mentors-section');
-                  if (mentorsSection) {
-                    mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  } else {
-                    // Fall back to navigating to mood mentors page
-                    navigate('/mood-mentors');
-                  }
-                } else {
-                  // If not on dashboard, navigate to mood mentors page
-                  navigate('/mood-mentors');
+                // Scroll to the mood mentors section on the same page
+                const mentorsSection = document.getElementById('mood-mentors-section');
+                if (mentorsSection) {
+                  mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
               }}
               className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-full font-medium"
@@ -718,24 +710,16 @@ export default function AppointmentsPage() {
         <div className="flex justify-center mt-8">
           <Button
             onClick={() => {
-              if (location.pathname.includes('patient-dashboard')) {
-                // If on patient dashboard, scroll to mentors section
-                const mentorsSection = document.getElementById('mood-mentors-section');
-                if (mentorsSection) {
-                  mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                  // Fall back to navigating to mood mentors page
-                  navigate('/mood-mentors');
-                }
-              } else {
-                // If not on dashboard, navigate to mood mentors page
-                navigate('/mood-mentors');
+              // Scroll to the mood mentors section on the same page
+              const mentorsSection = document.getElementById('mood-mentors-section');
+              if (mentorsSection) {
+                mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-full font-medium"
           >
             <CalendarPlus className="w-4 h-4 mr-2" />
-            Book Appointment
+            Book New Appointment
           </Button>
         </div>
       </>
@@ -895,18 +879,10 @@ export default function AppointmentsPage() {
           <Button
             className="bg-blue-600 hover:bg-blue-700 rounded-lg text-white"
             onClick={() => {
-              if (location.pathname.includes('patient-dashboard')) {
-                // If on patient dashboard, scroll to mentors section
-                const mentorsSection = document.getElementById('mood-mentors-section');
-                if (mentorsSection) {
-                  mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                  // Fall back to navigating to mood mentors page
-                  navigate('/mood-mentors');
-                }
-              } else {
-                // If not on dashboard, navigate to mood mentors page
-                navigate('/mood-mentors');
+              // Scroll to the mood mentors section on the same page
+              const mentorsSection = document.getElementById('mood-mentors-section');
+              if (mentorsSection) {
+                mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }
             }}
           >
@@ -1018,7 +994,18 @@ export default function AppointmentsPage() {
           </div>
           
           {/* Mentor profiles section */}
-          <div>
+          <div id="mood-mentors-section">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-medium">Available Mood Mentors</h2>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="text-blue-600"
+                onClick={() => navigate('/mood-mentors')}
+              >
+                View All Mentors
+              </Button>
+            </div>
             {renderMoodMentorProfiles()}
           </div>
         </div>
