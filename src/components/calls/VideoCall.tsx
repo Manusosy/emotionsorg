@@ -88,7 +88,7 @@ export function VideoCall({
   );
   
   const controlsContainerClasses = cn(
-    'p-3 bg-gray-900 flex items-center justify-between'
+    'p-3 bg-gray-900 flex items-center justify-center relative'
   );
 
   // Add a function to check for existing permissions
@@ -800,14 +800,15 @@ export function VideoCall({
 
       {/* Controls */}
       <div className={controlsContainerClasses}>
-        <div className="flex space-x-2">
+        {/* Main centered controls */}
+        <div className="flex space-x-4 px-4">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button 
                   variant="outline" 
                   size="icon" 
-                  className="bg-gray-800 hover:bg-gray-700 border-none text-white rounded-full"
+                  className="bg-gray-800 hover:bg-gray-700 border-none text-white rounded-full w-12 h-12"
                   onClick={toggleAudio}
                 >
                   {isAudioEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5 text-red-500" />}
@@ -826,7 +827,7 @@ export function VideoCall({
                   <Button 
                     variant="outline" 
                     size="icon" 
-                    className="bg-gray-800 hover:bg-gray-700 border-none text-white rounded-full"
+                    className="bg-gray-800 hover:bg-gray-700 border-none text-white rounded-full w-12 h-12"
                     onClick={toggleVideo}
                   >
                     {isVideoEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5 text-red-500" />}
@@ -846,7 +847,7 @@ export function VideoCall({
                   <Button 
                     variant="outline" 
                     size="icon" 
-                    className="bg-gray-800 hover:bg-gray-700 border-none text-white rounded-full"
+                    className="bg-gray-800 hover:bg-gray-700 border-none text-white rounded-full w-12 h-12"
                     onClick={isScreenSharing ? stopScreenSharing : startScreenSharing}
                   >
                     {isScreenSharing ? <MonitorStop className="h-5 w-5" /> : <ScreenShare className="h-5 w-5" />}
@@ -858,9 +859,28 @@ export function VideoCall({
               </Tooltip>
             </TooltipProvider>
           )}
+          
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  className="bg-red-600 hover:bg-red-700 border-none text-white rounded-full w-12 h-12"
+                  onClick={handleEndCall}
+                >
+                  <PhoneOff className="h-5 w-5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                End Call
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
         
-        <div className="flex space-x-2">
+        {/* Fullscreen button in the corner */}
+        <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -875,24 +895,6 @@ export function VideoCall({
               </TooltipTrigger>
               <TooltipContent>
                 {isFullScreen ? 'Exit Full Screen' : 'Full Screen'}
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button 
-                  variant="outline" 
-                  size="icon" 
-                  className="bg-red-600 hover:bg-red-700 border-none text-white rounded-full"
-                  onClick={handleEndCall}
-                >
-                  <PhoneOff className="h-5 w-5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                End Call
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
