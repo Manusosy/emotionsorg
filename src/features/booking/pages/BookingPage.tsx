@@ -127,13 +127,6 @@ const BookingPage = () => {
     initPage();
   }, [moodMentorId, isAuthenticated, user, navigate]);
   
-  // If we have an initial call type, start at step 3 (date & time)
-  useEffect(() => {
-    if (initialCallType && currentStep === 1) {
-      setCurrentStep(3);
-    }
-  }, [initialCallType]);
-  
   // Update the useEffect that handles date selection
   useEffect(() => {
     const fetchAvailableSlots = async () => {
@@ -190,6 +183,7 @@ const BookingPage = () => {
   
   const prevStep = () => {
     if (currentStep > 1) {
+      // Always go to the immediately previous step
       setCurrentStep(prev => prev - 1);
       window.scrollTo(0, 0);
     }
@@ -303,11 +297,6 @@ const BookingPage = () => {
   const renderStepContent = () => {
     switch (currentStep) {
       case 1:
-        // If we have initialCallType, skip to step 3
-        if (initialCallType) {
-          setCurrentStep(3);
-          return null;
-        }
         return (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-center mb-8">Selected Mood Mentor</h2>
@@ -389,11 +378,6 @@ const BookingPage = () => {
         );
         
       case 2:
-        // If we have initialCallType, skip to step 3
-        if (initialCallType) {
-          setCurrentStep(3);
-          return null;
-        }
         return (
           <div className="space-y-6">
             <h2 className="text-2xl font-bold text-center mb-8">Choose Appointment Type</h2>
@@ -735,9 +719,11 @@ const BookingPage = () => {
                 </span>
                 
                 {index < steps.length - 1 && (
-                  <div className={`absolute h-0.5 w-full top-5 left-1/2 ${
-                    currentStep > step.id ? "bg-[#20C0F3]" : "bg-gray-200"
-                  }`}></div>
+                  <div 
+                    className={`absolute h-0.5 w-full top-5 left-1/2 ${
+                      currentStep > step.id ? "bg-[#20C0F3]" : "bg-gray-200"
+                    }`}
+                  ></div>
                 )}
               </div>
             ))}

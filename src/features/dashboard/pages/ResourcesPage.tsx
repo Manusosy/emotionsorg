@@ -521,26 +521,39 @@ export default function ResourcesPage() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">Resources</h1>
-            <p className="text-slate-500">
+      {/* Hero Section */}
+      <div className="bg-gradient-to-r from-[#0078FF] via-[#20c0f3] to-[#00D2FF] text-white pt-20 pb-24 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute -left-20 -top-20 w-96 h-96 rounded-full bg-white"></div>
+          <div className="absolute right-0 bottom-0 w-80 h-80 rounded-full bg-white"></div>
+          <div className="absolute left-1/3 top-1/3 w-64 h-64 rounded-full bg-white"></div>
+        </div>
+        <div className="container mx-auto px-4 relative z-10">
+          <div className="text-center max-w-3xl mx-auto">
+            <h1 className="text-4xl md:text-5xl font-bold mb-6 text-white">Resources</h1>
+            <p className="text-lg md:text-xl max-w-2xl mx-auto text-blue-50 mb-8">
               Access educational content and tools to support your mental health journey
             </p>
+            <div className="relative max-w-xl mx-auto">
+              <Input 
+                type="search"
+                placeholder="Search resources..."
+                className="pl-10 pr-14 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+            </div>
           </div>
-          <form onSubmit={handleSearch} className="relative w-full md:w-auto">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input
-              type="search"
-              placeholder="Search resources..."
-              className="pl-10 pr-4 w-full md:w-[300px]"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </form>
         </div>
+        
+        {/* Curved bottom edge */}
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-white" style={{ 
+          clipPath: "ellipse(75% 100% at 50% 100%)" 
+        }}></div>
+      </div>
 
+      <div className="py-8 container mx-auto px-4">
         <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6">
             <TabsTrigger value="all">All Resources</TabsTrigger>

@@ -807,33 +807,74 @@ export default function PatientDashboard() {
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center">
                     <Activity className="w-5 h-5 text-blue-500 mr-2" />
-                    <span className="text-sm font-medium">Stress Level</span>
+                    <span className="text-sm font-medium">Stress Management</span>
                   </div>
                   {hasStressAssessments && userMetrics.stressLevel > 0 && (
-                    <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">Tracked</span>
+                    <span className="text-xs font-medium px-2.5 py-0.5 whitespace-nowrap rounded-full" style={{ 
+                      backgroundColor: (() => {
+                        const healthPercentage = Math.max(0, Math.min(100, ((5 - userMetrics.stressLevel) / 4) * 100));
+                        if (healthPercentage >= 75) return "rgba(34, 197, 94, 0.15)"; // Green bg lighter
+                        if (healthPercentage >= 50) return "rgba(132, 204, 22, 0.15)"; // Lime bg lighter
+                        if (healthPercentage >= 25) return "rgba(250, 204, 21, 0.15)"; // Yellow bg lighter
+                        return "rgba(239, 68, 68, 0.15)"; // Red bg lighter
+                      })(),
+                      color: (() => {
+                        const healthPercentage = Math.max(0, Math.min(100, ((5 - userMetrics.stressLevel) / 4) * 100));
+                        if (healthPercentage >= 75) return "#15803d"; // Green text darker
+                        if (healthPercentage >= 50) return "#4d7c0f"; // Lime text darker
+                        if (healthPercentage >= 25) return "#a16207"; // Yellow text darker
+                        return "#b91c1c"; // Red text darker
+                      })()
+                    }}>
+                      {(() => {
+                        const healthPercentage = Math.max(0, Math.min(100, ((5 - userMetrics.stressLevel) / 4) * 100));
+                        if (healthPercentage >= 75) return "Low Stress";
+                        if (healthPercentage >= 50) return "Moderate";
+                        if (healthPercentage >= 25) return "High";
+                        return "Very High";
+                      })()}
+                    </span>
                   )}
                 </div>
                 
                 {userMetrics.stressLevel > 0 ? (
                   <>
-                    <div className="text-xl font-bold mb-1">
-                      {Math.round(((5 - userMetrics.stressLevel) / 4) * 100)}%
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
-                      <div 
-                        className="h-2 rounded-full transition-all duration-500 ease-in-out"
-                        style={{ 
-                          width: `${((5 - userMetrics.stressLevel) / 4) * 100}%`,
-                          backgroundColor: userMetrics.stressLevel < 2 ? '#4ade80' : 
-                                         userMetrics.stressLevel < 3 ? '#a3e635' : 
-                                         userMetrics.stressLevel < 4 ? '#facc15' : 
-                                         userMetrics.stressLevel < 4.5 ? '#fb923c' : '#ef4444'
-                        }}
-                      ></div>
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      Based on your recent assessment
-                    </p>
+                    {/* Calculate health and stress percentages */}
+                    {(() => {
+                      // Use the same calculation as EmotionalHealthWheel
+                      const healthPercentage = Math.max(0, Math.min(100, ((5 - userMetrics.stressLevel) / 4) * 100));
+                      const stressPercentage = 100 - healthPercentage;
+                      
+                      // Get color using the same logic as EmotionalHealthWheel
+                      const getStressColor = () => {
+                        if (healthPercentage >= 75) return "#22c55e"; // Green (Excellent)
+                        if (healthPercentage >= 50) return "#84cc16"; // Lime (Good)
+                        if (healthPercentage >= 25) return "#facc15"; // Yellow (Fair)
+                        return "#ef4444"; // Red (Concerning/Worrying)
+                      };
+                      
+                      const color = getStressColor();
+                      
+                      return (
+                        <>
+                          <div className="text-xl font-bold mb-1">
+                            {Math.round(stressPercentage)}%
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
+                            <div 
+                              className="h-2 rounded-full transition-all duration-500 ease-in-out"
+                              style={{ 
+                                width: `${Math.round(stressPercentage)}%`,
+                                backgroundColor: color
+                              }}
+                            ></div>
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            <span>Lower stress is better</span>
+                          </div>
+                        </>
+                      );
+                    })()}
                   </>
                 ) : (
                   <div className="text-center py-2">

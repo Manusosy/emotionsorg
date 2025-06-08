@@ -339,232 +339,141 @@ const Resources = () => {
   ];
 
   return (
-    <div className="max-w-7xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-gray-50">
       {/* Hero Section */}
-      <section className="mb-16">
-        <div className="text-center mb-10">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Mental Health Resources</h1>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Access a wide range of materials to support your mental wellbeing, from educational content to interactive tools.
-          </p>
+      <div className="bg-gradient-to-r from-[#0078FF] via-[#20c0f3] to-[#00D2FF] text-white pt-20 pb-24 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute -left-20 -top-20 w-96 h-96 rounded-full bg-white"></div>
+          <div className="absolute right-0 bottom-0 w-80 h-80 rounded-full bg-white"></div>
+          <div className="absolute left-1/3 top-1/3 w-64 h-64 rounded-full bg-white"></div>
+        </div>
+        <div className="container mx-auto px-4 relative z-10">
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="text-center max-w-3xl mx-auto"
+          >
+            <h1 className="text-4xl md:text-5xl font-bold mb-6 text-white">Mental Health Resources</h1>
+            <p className="text-lg md:text-xl max-w-2xl mx-auto text-blue-50 mb-8">
+              Access a wide range of materials to support your mental wellbeing, from educational content to interactive tools.
+            </p>
+            <div className="relative max-w-xl mx-auto">
+              <Input 
+                type="text"
+                placeholder="Search for resources..."
+                className="pl-10 pr-14 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+            </div>
+          </motion.div>
         </div>
         
-        <div className="relative mx-auto max-w-2xl">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-          <Input
-            type="text"
-            placeholder="Search for resources..."
-            className="pl-10 pr-4 py-3 rounded-full border-gray-300 focus:ring-blue-500 focus:border-blue-500"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </div>
-      </section>
+        {/* Curved bottom edge */}
+        <div className="absolute bottom-0 left-0 right-0 h-16 bg-gray-50" style={{ 
+          clipPath: "ellipse(75% 100% at 50% 100%)" 
+        }}></div>
+      </div>
       
       {/* Categories */}
-      <section className="mb-16">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Browse by Category</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {categories.map((category) => (
-            <motion.div
-              key={category.id}
-              className="cursor-pointer"
-              onClick={() => setActiveCategory(category.id)}
-              whileHover={{ scale: 1.03 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Card className={`h-full transition-colors ${activeCategory === category.id ? 'border-blue-500 bg-blue-50' : 'hover:border-gray-300'}`}>
-                <CardContent className="p-6">
-                  <div className="flex items-start space-x-4">
-                    <div className="p-3 rounded-full bg-blue-100 text-blue-600">
-                      {category.icon}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-lg mb-2">{category.title}</h3>
-                      <p className="text-gray-600 text-sm mb-4">{category.description}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
-      </section>
-      
-      {/* Featured Resources */}
-      <section className="mb-16">
-        <h2 className="text-2xl font-bold text-gray-900 mb-6">Featured Resources</h2>
-        
-        {isLoading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p className="text-gray-500">Loading resources...</p>
-          </div>
-        ) : featuredResources.length > 0 ? (
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={staggerContainer}
-            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
-          >
-            {featuredResources.map((resource) => (
+      <div className="container mx-auto px-4">
+        <section className="mb-16 mt-8">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Browse by Category</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {categories.map((category) => (
               <motion.div
-                key={resource.id}
-                variants={fadeInUp}
+                key={category.id}
+                className="cursor-pointer"
+                onClick={() => setActiveCategory(category.id)}
+                whileHover={{ scale: 1.03 }}
+                transition={{ duration: 0.2 }}
               >
-                <Card className="overflow-hidden bg-white border-none shadow-md h-full">
-                  <div className="relative aspect-[4/3] h-52">
-                    <img 
-                      src={resource.image} 
-                      alt={resource.title}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex flex-col justify-end p-5">
-                      <div className="flex items-center mb-2">
-                        <Badge className="bg-[#00D2FF] text-white border-0">
-                          {getResourceTypeIcon(resource.type)}
-                          <span className="ml-1">{getResourceTypeLabel(resource.type)}</span>
-                        </Badge>
-                        {resource.isNew && (
-                          <Badge className="ml-2 bg-amber-500 text-white border-0">New</Badge>
-                        )}
-                        {resource.isPopular && (
-                          <Badge className="ml-2 bg-pink-500 text-white border-0">Popular</Badge>
-                        )}
+                <Card className={`h-full transition-colors ${activeCategory === category.id ? 'border-blue-500 bg-blue-50' : 'hover:border-gray-300'}`}>
+                  <CardContent className="p-6">
+                    <div className="flex items-start space-x-4">
+                      <div className="p-3 rounded-full bg-blue-100 text-blue-600">
+                        {category.icon}
                       </div>
-                      <h3 className="text-xl font-bold text-white text-left">{resource.title}</h3>
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-lg mb-2">{category.title}</h3>
+                        <p className="text-gray-600 text-sm mb-4">{category.description}</p>
+                      </div>
                     </div>
-                  </div>
-                  <CardContent className="p-5">
-                    <p className="text-gray-600 mb-4 line-clamp-2">{resource.description}</p>
-                    {resource.author && (
-                      <div className="flex items-center mb-4">
-                        <Avatar className="h-8 w-8 mr-2">
-                          <AvatarImage src={resource.author_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(resource.author)}&background=random`} alt={resource.author} />
-                          <AvatarFallback>{resource.author.charAt(0)}</AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <p className="text-sm font-medium">{resource.author}</p>
-                          <p className="text-xs text-gray-500">{resource.author_role || "Contributor"}</p>
-                        </div>
-                      </div>
-                    )}
-                    {(resource.read_time || resource.duration) && (
-                      <div className="flex items-center text-sm text-gray-500 mb-4">
-                        <Clock className="h-4 w-4 mr-1" />
-                        <span>{resource.read_time || resource.duration}</span>
-                      </div>
-                    )}
                   </CardContent>
-                  <CardFooter className="p-5 pt-0 flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      {getResourceActionButton(resource)}
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="text-gray-500 hover:text-blue-500"
-                        onClick={() => handleResourceShare(resource)}
-                      >
-                        <Share2 className="h-5 w-5" />
-                      </Button>
-                    </div>
-                    <Button variant="ghost" size="icon" className="text-gray-500 hover:text-red-500">
-                      <Heart className="h-5 w-5" />
-                    </Button>
-                  </CardFooter>
                 </Card>
               </motion.div>
             ))}
-          </motion.div>
-        ) : (
-          <div className="text-center py-8 text-gray-500">
-            No featured resources available
           </div>
-        )}
-      </section>
-      
-      {/* All Resources */}
-      <section>
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">
-            All Resources 
-            <span className="text-sm font-normal text-gray-500 ml-2">
-              ({resources.length} total)
-            </span>
-          </h2>
-          <div className="flex items-center">
-            <Button variant="ghost" className="text-sm flex items-center" onClick={() => setActiveCategory("all")}>
-              <span className={activeCategory === "all" ? "text-blue-600 font-medium" : ""}>All</span>
-            </Button>
-            {categories.map((cat) => (
-              <Button 
-                key={cat.id} 
-                variant="ghost" 
-                className="text-sm flex items-center"
-                onClick={() => setActiveCategory(cat.id)}
-              >
-                <span className={activeCategory === cat.id ? "text-blue-600 font-medium" : ""}>{cat.title}</span>
-              </Button>
-            ))}
-          </div>
-        </div>
+        </section>
         
-        {isLoading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p className="text-gray-500">Loading resources...</p>
-          </div>
-        ) : filteredResources.length > 0 ? (
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={staggerContainer}
-            className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"
-          >
-            {filteredResources.map((resource) => (
-              <motion.div
-                key={resource.id}
-                variants={fadeInUp}
-                className="h-full"
-              >
-                <Card className="overflow-hidden border hover:shadow-lg transition-shadow h-full flex flex-col">
-                  <div className="relative aspect-video">
-                    <img 
-                      src={resource.image} 
-                      alt={resource.title}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute top-2 left-2">
-                      <Badge className="bg-gray-800/70 text-white hover:bg-gray-800">
-                        {getResourceTypeIcon(resource.type)}
-                        <span className="ml-1">{getResourceTypeLabel(resource.type)}</span>
-                      </Badge>
+        {/* Featured Resources */}
+        <section className="mb-16">
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Featured Resources</h2>
+          
+          {isLoading ? (
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+              <p className="text-gray-500">Loading resources...</p>
+            </div>
+          ) : featuredResources.length > 0 ? (
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              variants={staggerContainer}
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
+            >
+              {featuredResources.map((resource) => (
+                <motion.div
+                  key={resource.id}
+                  variants={fadeInUp}
+                >
+                  <Card className="overflow-hidden bg-white border-none shadow-md h-full">
+                    <div className="relative aspect-[4/3] h-52">
+                      <img 
+                        src={resource.image} 
+                        alt={resource.title}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex flex-col justify-end p-5">
+                        <div className="flex items-center mb-2">
+                          <Badge className="bg-[#00D2FF] text-white border-0">
+                            {getResourceTypeIcon(resource.type)}
+                            <span className="ml-1">{getResourceTypeLabel(resource.type)}</span>
+                          </Badge>
+                          {resource.isNew && (
+                            <Badge className="ml-2 bg-amber-500 text-white border-0">New</Badge>
+                          )}
+                          {resource.isPopular && (
+                            <Badge className="ml-2 bg-pink-500 text-white border-0">Popular</Badge>
+                          )}
+                        </div>
+                        <h3 className="text-xl font-bold text-white text-left">{resource.title}</h3>
+                      </div>
                     </div>
-                    {resource.isNew && (
-                      <div className="absolute top-2 right-2">
-                        <Badge className="bg-amber-500 text-white">New</Badge>
-                      </div>
-                    )}
-                  </div>
-                  <CardContent className="p-4 flex-grow">
-                    <h3 className="font-semibold text-lg mb-2 line-clamp-1">{resource.title}</h3>
-                    <p className="text-gray-600 text-sm mb-4 line-clamp-2">{resource.description}</p>
-                    {resource.author && (
-                      <div className="flex items-center text-xs text-gray-500 mb-2">
-                        <span className="font-medium">{resource.author}</span>
-                        <span className="mx-1">•</span>
-                        <span>{resource.author_role || "Contributor"}</span>
-                      </div>
-                    )}
-                    {(resource.read_time || resource.duration) && (
-                      <div className="flex items-center text-xs text-gray-500">
-                        <Clock className="h-3 w-3 mr-1" />
-                        <span>{resource.read_time || resource.duration}</span>
-                      </div>
-                    )}
-                  </CardContent>
-                  <CardFooter className="p-4 pt-0 border-t">
-                    <div className="flex items-center justify-between w-full">
+                    <CardContent className="p-5">
+                      <p className="text-gray-600 mb-4 line-clamp-2">{resource.description}</p>
+                      {resource.author && (
+                        <div className="flex items-center mb-4">
+                          <Avatar className="h-8 w-8 mr-2">
+                            <AvatarImage src={resource.author_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(resource.author)}&background=random`} alt={resource.author} />
+                            <AvatarFallback>{resource.author.charAt(0)}</AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <p className="text-sm font-medium">{resource.author}</p>
+                            <p className="text-xs text-gray-500">{resource.author_role || "Contributor"}</p>
+                          </div>
+                        </div>
+                      )}
+                      {(resource.read_time || resource.duration) && (
+                        <div className="flex items-center text-sm text-gray-500 mb-4">
+                          <Clock className="h-4 w-4 mr-1" />
+                          <span>{resource.read_time || resource.duration}</span>
+                        </div>
+                      )}
+                    </CardContent>
+                    <CardFooter className="p-5 pt-0 flex justify-between items-center">
                       <div className="flex items-center gap-2">
                         {getResourceActionButton(resource)}
                         <Button 
@@ -576,59 +485,168 @@ const Resources = () => {
                           <Share2 className="h-5 w-5" />
                         </Button>
                       </div>
-                      
-                      {/* Show download/share counts if they exist */}
-                      {(resource.downloads || resource.shares) && (
-                        <div className="flex items-center gap-3 text-xs text-gray-500">
-                          {resource.downloads && (
-                            <div className="flex items-center">
-                              <Download className="h-3 w-3 mr-1" />
-                              <span>{resource.downloads}</span>
-                            </div>
-                          )}
-                          {resource.shares && (
-                            <div className="flex items-center">
-                              <Share2 className="h-3 w-3 mr-1" />
-                              <span>{resource.shares}</span>
-                            </div>
-                          )}
+                      <Button variant="ghost" size="icon" className="text-gray-500 hover:text-red-500">
+                        <Heart className="h-5 w-5" />
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                </motion.div>
+              ))}
+            </motion.div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              No featured resources available
+            </div>
+          )}
+        </section>
+        
+        {/* All Resources */}
+        <section>
+          <div className="flex justify-between items-center mb-6">
+            <h2 className="text-2xl font-bold text-gray-900">
+              All Resources 
+              <span className="text-sm font-normal text-gray-500 ml-2">
+                ({resources.length} total)
+              </span>
+            </h2>
+            <div className="flex items-center">
+              <Button variant="ghost" className="text-sm flex items-center" onClick={() => setActiveCategory("all")}>
+                <span className={activeCategory === "all" ? "text-blue-600 font-medium" : ""}>All</span>
+              </Button>
+              {categories.map((cat) => (
+                <Button 
+                  key={cat.id} 
+                  variant="ghost" 
+                  className="text-sm flex items-center"
+                  onClick={() => setActiveCategory(cat.id)}
+                >
+                  <span className={activeCategory === cat.id ? "text-blue-600 font-medium" : ""}>{cat.title}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+          
+          {isLoading ? (
+            <div className="text-center py-12">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
+              <p className="text-gray-500">Loading resources...</p>
+            </div>
+          ) : filteredResources.length > 0 ? (
+            <motion.div
+              initial="hidden"
+              animate="visible"
+              variants={staggerContainer}
+              className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"
+            >
+              {filteredResources.map((resource) => (
+                <motion.div
+                  key={resource.id}
+                  variants={fadeInUp}
+                  className="h-full"
+                >
+                  <Card className="overflow-hidden border hover:shadow-lg transition-shadow h-full flex flex-col">
+                    <div className="relative aspect-video">
+                      <img 
+                        src={resource.image} 
+                        alt={resource.title}
+                        className="w-full h-full object-cover"
+                      />
+                      <div className="absolute top-2 left-2">
+                        <Badge className="bg-gray-800/70 text-white hover:bg-gray-800">
+                          {getResourceTypeIcon(resource.type)}
+                          <span className="ml-1">{getResourceTypeLabel(resource.type)}</span>
+                        </Badge>
+                      </div>
+                      {resource.isNew && (
+                        <div className="absolute top-2 right-2">
+                          <Badge className="bg-amber-500 text-white">New</Badge>
                         </div>
                       )}
                     </div>
-                  </CardFooter>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-        ) : (
-          <div className="text-center py-16 bg-gray-50 rounded-lg">
-            <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-1">No resources found</h3>
-            <p className="text-gray-500">
-              {searchQuery ? 
-                `No resources matching "${searchQuery}" in the selected category.` : 
-                "No resources available in the selected category."}
-            </p>
-            {searchQuery && (
-              <Button 
-                variant="outline" 
-                className="mt-4"
-                onClick={() => setSearchQuery("")}
-              >
-                Clear search
-              </Button>
-            )}
-            {user?.user_metadata?.role === "mood_mentor" && (
-              <Button 
-                className="mt-4"
-                onClick={() => window.location.href = "/mood-mentors/resources"}
-              >
-                <Plus className="mr-2 h-4 w-4" /> Add Resources
-              </Button>
-            )}
-          </div>
-        )}
-      </section>
+                    <CardContent className="p-4 flex-grow">
+                      <h3 className="font-semibold text-lg mb-2 line-clamp-1">{resource.title}</h3>
+                      <p className="text-gray-600 text-sm mb-4 line-clamp-2">{resource.description}</p>
+                      {resource.author && (
+                        <div className="flex items-center text-xs text-gray-500 mb-2">
+                          <span className="font-medium">{resource.author}</span>
+                          <span className="mx-1">•</span>
+                          <span>{resource.author_role || "Contributor"}</span>
+                        </div>
+                      )}
+                      {(resource.read_time || resource.duration) && (
+                        <div className="flex items-center text-xs text-gray-500">
+                          <Clock className="h-3 w-3 mr-1" />
+                          <span>{resource.read_time || resource.duration}</span>
+                        </div>
+                      )}
+                    </CardContent>
+                    <CardFooter className="p-4 pt-0 border-t">
+                      <div className="flex items-center justify-between w-full">
+                        <div className="flex items-center gap-2">
+                          {getResourceActionButton(resource)}
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-gray-500 hover:text-blue-500"
+                            onClick={() => handleResourceShare(resource)}
+                          >
+                            <Share2 className="h-5 w-5" />
+                          </Button>
+                        </div>
+                        
+                        {/* Show download/share counts if they exist */}
+                        {(resource.downloads || resource.shares) && (
+                          <div className="flex items-center gap-3 text-xs text-gray-500">
+                            {resource.downloads && (
+                              <div className="flex items-center">
+                                <Download className="h-3 w-3 mr-1" />
+                                <span>{resource.downloads}</span>
+                              </div>
+                            )}
+                            {resource.shares && (
+                              <div className="flex items-center">
+                                <Share2 className="h-3 w-3 mr-1" />
+                                <span>{resource.shares}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </CardFooter>
+                  </Card>
+                </motion.div>
+              ))}
+            </motion.div>
+          ) : (
+            <div className="text-center py-16 bg-gray-50 rounded-lg">
+              <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-1">No resources found</h3>
+              <p className="text-gray-500">
+                {searchQuery ? 
+                  `No resources matching "${searchQuery}" in the selected category.` : 
+                  "No resources available in the selected category."}
+              </p>
+              {searchQuery && (
+                <Button 
+                  variant="outline" 
+                  className="mt-4"
+                  onClick={() => setSearchQuery("")}
+                >
+                  Clear search
+                </Button>
+              )}
+              {user?.user_metadata?.role === "mood_mentor" && (
+                <Button 
+                  className="mt-4"
+                  onClick={() => window.location.href = "/mood-mentors/resources"}
+                >
+                  <Plus className="mr-2 h-4 w-4" /> Add Resources
+                </Button>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 };

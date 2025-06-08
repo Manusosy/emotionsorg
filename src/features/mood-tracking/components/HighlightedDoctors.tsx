@@ -4,14 +4,7 @@ import { Card } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
 import BookingButton from "@/features/booking/components/BookingButton";
 import { toast } from "sonner";
-
-// Mock service implementation
-const moodMentorService = {
-  getAvailableMoodMentors: async (limit = 10) => {
-    console.log("Using mock mood mentor service");
-    return { success: false, error: new Error("Mock service"), data: [] };
-  }
-};
+import { moodMentorService } from "@/services";
 
 interface MoodMentor {
   id: string;
@@ -28,55 +21,9 @@ interface MoodMentor {
   name_slug?: string;
 }
 
-// Sample mock data to use as fallback when API calls fail
-const mockMoodMentors: MoodMentor[] = [
-  {
-    id: "mock-1",
-    full_name: "Dr. Sarah Johnson",
-    avatar_url: "/lovable-uploads/7d02b0da-dd91-4635-8bc4-6df39dffd0f1.png",
-    specialties: ["Depression", "Anxiety", "Relationships"],
-    location: "New York, US",
-    duration: "45 Min",
-    rating: 4.9,
-    available: true,
-    languages: ["English", "Spanish"],
-    education: "PhD Psychology, Harvard",
-    experience: "10+ years",
-    name_slug: "dr-sarah-johnson"
-  },
-  {
-    id: "mock-2",
-    full_name: "Dr. Michael Chen",
-    avatar_url: "/lovable-uploads/a299cbd8-711d-4138-b99d-eec11582bf18.png",
-    specialties: ["Stress Management", "Trauma", "Grief"],
-    location: "London, UK",
-    duration: "60 Min",
-    rating: 4.8,
-    available: true,
-    languages: ["English", "Mandarin"],
-    education: "MD Psychiatry, Oxford",
-    experience: "8 years",
-    name_slug: "dr-michael-chen"
-  },
-  {
-    id: "mock-3",
-    full_name: "Dr. Olivia Rodriguez",
-    avatar_url: "/lovable-uploads/557ff7f5-9815-4228-b935-0fb6a858cc65.png",
-    specialties: ["Family Therapy", "ADHD", "Addiction"],
-    location: "Toronto, CA",
-    duration: "30 Min",
-    rating: 4.7,
-    available: false,
-    languages: ["English", "French"],
-    education: "PhD Clinical Psychology, Toronto",
-    experience: "12 years",
-    name_slug: "dr-olivia-rodriguez"
-  }
-];
-
 export default function MoodMentorGrid() {
   const navigate = useNavigate();
-  const [moodMentors, setMoodMentors] = useState<MoodMentor[]>(mockMoodMentors);
+  const [moodMentors, setMoodMentors] = useState<MoodMentor[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,52 +40,45 @@ export default function MoodMentorGrid() {
 
   const fetchMoodMentors = async () => {
     try {
-      // Wrap in setTimeout to prevent blocking the UI
-      setTimeout(async () => {
-        try {
-          // Use mood mentor service to get available mentors
-          const result = await moodMentorService.getAvailableMoodMentors(10);
-          
-          if (result.success && result.data && result.data.length > 0) {
-            // Map to the expected MoodMentor interface format
-            const mappedMoodMentors = result.data.map(mentor => ({
-              id: mentor.id,
-              full_name: mentor.name || mentor.full_name || 'Mood Mentor',
-              avatar_url: mentor.avatar_url || mentor.avatar || '/default-avatar.png',
-              specialties: mentor.specialty ? 
-                (typeof mentor.specialty === 'string' ? mentor.specialty.split(',') : [mentor.specialty]) : 
-                ['Mental Health Support'],
-              location: mentor.location || 'Remote',
-              duration: mentor.session_duration || '30 Min',
-              rating: mentor.rating || 4.7,
-              available: mentor.availability_status === 'Available', 
-              languages: mentor.languages && Array.isArray(mentor.languages) ? 
-                mentor.languages : ['English'],
-              education: (typeof mentor.education === 'string') ? 
-                mentor.education : 
-                (mentor.education && mentor.education[0]?.degree) || 'Mental Health Professional',
-              experience: (typeof mentor.experience === 'string') ? 
-                mentor.experience : 
-                `${mentor.experience || 3}+ years`,
-              name_slug: mentor.name_slug
-            }));
-            
-            setMoodMentors(mappedMoodMentors);
-          } else {
-            // Fallback to mock data if no real data available
-            console.log("No mood mentor data returned, using mock data");
-            setMoodMentors(mockMoodMentors);
-          }
-        } catch (error: any) {
-          console.error("Failed to fetch mood mentors:", error);
-          // Silently fallback to mock data
-          setMoodMentors(mockMoodMentors);
-        } finally {
-          setIsLoading(false);
-        }
-      }, 500);
-    } catch (error: any) {
-      console.error("Error in fetching mood mentors:", error);
+      setIsLoading(true);
+      
+      // Get up to 3 top-rated mentors from the real service
+      const mentors = await moodMentorService.getMoodMentors({
+        limit: 3,
+        minRating: 4.0
+      });
+      
+      if (mentors && mentors.length > 0) {
+        // Map to the component's expected MoodMentor interface format
+        const mappedMentors = mentors.map(mentor => ({
+          id: mentor.id,
+          full_name: mentor.fullName || 'Mood Mentor',
+          avatar_url: mentor.avatarUrl || '/default-avatar.png',
+          specialties: mentor.specialties || [],
+          location: mentor.location || 'Remote',
+          duration: mentor.sessionDuration || '30 Min',
+          rating: mentor.rating || 4.7,
+          available: mentor.availabilityStatus === 'available',
+          languages: mentor.languages || ['English'],
+          education: Array.isArray(mentor.education) && mentor.education.length > 0
+            ? `${mentor.education[0].degree}, ${mentor.education[0].institution}` 
+            : 'Mental Health Professional',
+          experience: Array.isArray(mentor.experience) && mentor.experience.length > 0
+            ? mentor.experience[0].title
+            : `${Math.floor(Math.random() * 5) + 3} years experience`,
+          name_slug: mentor.nameSlug
+        }));
+        
+        setMoodMentors(mappedMentors);
+      } else {
+        // Log error but don't show to user
+        console.error("No mentors returned from service");
+        setError("Failed to load mood mentors");
+      }
+    } catch (error) {
+      console.error("Error fetching mood mentors:", error);
+      setError("Failed to load mood mentors");
+    } finally {
       setIsLoading(false);
     }
   };
@@ -179,6 +119,33 @@ export default function MoodMentorGrid() {
               </div>
             </Card>
           ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error || moodMentors.length === 0) {
+    return (
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex flex-col items-center mb-8">
+          <div className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-full mb-4">
+            <span className="w-2 h-2 bg-white rounded-full mr-2"></span>
+            <span className="font-medium text-sm">Meet Our Team</span>
+            <span className="w-2 h-2 bg-white rounded-full ml-2"></span>
+          </div>
+          <h2 className="text-3xl md:text-4xl font-bold text-[#001A41]">Our Mood Mentors</h2>
+        </div>
+        <div className="text-center py-8">
+          <p className="text-gray-500">
+            {error || "No mood mentors are currently available. Please check back later."}
+          </p>
+          <button 
+            onClick={() => fetchMoodMentors()}
+            className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600 transition-colors"
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );

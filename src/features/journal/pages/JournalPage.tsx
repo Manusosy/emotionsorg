@@ -562,7 +562,7 @@ const JournalWelcome = ({ onStartJournaling }: { onStartJournaling: () => void }
                 transition={{ duration: 0.7 }}
                 className="text-left"
               >
-                <h1 className="text-3xl md:text-5xl font-bold leading-tight mb-4">Your Journal.<br />Your Journey.</h1>
+                <h1 className="text-3xl md:text-5xl font-bold leading-tight mb-4 text-white">Your Journal.<br />Your Journey.</h1>
                 <p className="text-lg max-w-md text-blue-50 mb-8 leading-relaxed">
                   Document your thoughts, track your emotional growth, and discover patterns in your mental wellbeing journey.
                 </p>

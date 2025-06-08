@@ -105,7 +105,8 @@ export default function AppointmentsPage() {
         .from('mentor_appointments_view')
         .select('*')
         .eq('mentor_id', user?.id)
-        .order('date', { ascending: true });
+        .order('date', { ascending: false })
+        .order('start_time', { ascending: false });
 
       // Apply status filter
       if (statusFilter !== "all") {

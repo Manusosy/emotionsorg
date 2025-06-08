@@ -43,27 +43,45 @@ export const VideoSessionProvider: React.FC<{ children: ReactNode }> = ({ childr
 
   // Add a function to completely clean up camera access
   const cleanupCameraAccess = () => {
-    // Only attempt to clean up tracks if MediaDevices API is available
-    if (navigator.mediaDevices) {
-      // Don't request new media permissions; only check for existing tracks
-      // Instead of requesting new permissions, just check if tracks exist already
-      try {
-        // Get all media tracks currently in use and stop them
-        const mediaDevices = navigator.mediaDevices as any;
-        
-        // Check if the browser supports enumerating media devices
-        if (mediaDevices.getTracks) {
-          const tracks = mediaDevices.getTracks();
-          if (tracks && tracks.length > 0) {
-            tracks.forEach((track: MediaStreamTrack) => {
+    console.log('Cleaning up camera and microphone access');
+    
+    try {
+      // Get all active media streams and stop all tracks
+      if (navigator.mediaDevices) {
+        // The proper way to stop all tracks is to enumerate each device
+        navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+          .then(stream => {
+            // Stop all tracks in this stream
+            stream.getTracks().forEach(track => {
               track.stop();
-              console.log(`Stopped existing ${track.kind} track`);
+              console.log(`Stopped ${track.kind} track`, track.label);
             });
-          }
-        }
-      } catch (err) {
-        console.warn('Error while cleaning up existing media tracks:', err);
+          })
+          .catch(err => {
+            console.warn('Could not get media for cleanup:', err);
+          });
       }
+      
+      // Also try to enumerate all active tracks across the page
+      document.querySelectorAll('video').forEach(videoElement => {
+        const stream = (videoElement as HTMLVideoElement).srcObject as MediaStream;
+        if (stream) {
+          stream.getTracks().forEach(track => {
+            track.stop();
+            console.log(`Stopped track from video element: ${track.kind}`);
+          });
+          videoElement.srcObject = null;
+        }
+      });
+      
+      // Force garbage collection hints
+      if (window.gc) {
+        window.gc();
+      }
+      
+      console.log('Camera cleanup completed');
+    } catch (err) {
+      console.warn('Error during camera cleanup:', err);
     }
   };
 

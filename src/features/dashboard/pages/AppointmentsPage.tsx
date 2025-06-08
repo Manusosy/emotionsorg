@@ -278,7 +278,7 @@ export default function AppointmentsPage() {
       formattedAppointments.sort((a, b) => {
         const dateA = new Date(`${a.date}T${a.time}`);
         const dateB = new Date(`${b.date}T${b.time}`);
-        return dateA.getTime() - dateB.getTime();
+        return dateB.getTime() - dateA.getTime();
       });
       
       console.log("Formatted appointments:", formattedAppointments);
@@ -669,7 +669,7 @@ export default function AppointmentsPage() {
                             <Button 
                               size="sm"
                               className="h-8 px-3 bg-blue-600 hover:bg-blue-700 rounded-full"
-                              onClick={() => navigate("/booking")}
+                              onClick={() => navigate(`/booking?mentor=${appointment.mentor?.id}`)}
                             >
                               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
                               Reschedule
@@ -705,23 +705,6 @@ export default function AppointmentsPage() {
             </div>
           </CardContent>
         </Card>
-        
-        {/* Add a button to book new appointments */}
-        <div className="flex justify-center mt-8">
-          <Button
-            onClick={() => {
-              // Scroll to the mood mentors section on the same page
-              const mentorsSection = document.getElementById('mood-mentors-section');
-              if (mentorsSection) {
-                mentorsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-              }
-            }}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-2.5 rounded-full font-medium"
-          >
-            <CalendarPlus className="w-4 h-4 mr-2" />
-            Book New Appointment
-          </Button>
-        </div>
       </>
     );
   };
@@ -812,7 +795,6 @@ export default function AppointmentsPage() {
                   moodMentorId={mentor.id}
                   moodMentorName={mentor.name}
                   className="w-full py-2 px-3"
-                  scrollToMentors={true}
                   buttonText="Book Appointment"
                 />
               </div>
@@ -881,6 +863,7 @@ export default function AppointmentsPage() {
             moodMentorName=""
             className="bg-blue-600 hover:bg-blue-700 rounded-lg text-white"
             scrollToMentors={true}
+            isTopButton={true}
             buttonText={
               <>
                 <CalendarPlus className="w-4 h-4 mr-2" />

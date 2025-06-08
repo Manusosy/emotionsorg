@@ -35,7 +35,6 @@ import Profile from "@/features/dashboard/pages/Profile";
 import DeleteAccount from "@/features/dashboard/pages/DeleteAccount";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
-import ComingSoon from '@/components/ComingSoon';
 import MoodMentorDashboard from "@/features/mood_mentors/pages/MoodMentorDashboard";
 import MoodMentorSettingsPage from "@/features/mood_mentors/pages/SettingsPage";
 import MoodMentorProfilePage from "@/features/mood_mentors/pages/ProfilePage";
