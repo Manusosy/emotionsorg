@@ -31,7 +31,7 @@ const Footer = () => {
           <div className="text-center md:text-left flex flex-col items-center md:items-start">
             <div className="flex items-center gap-2 mb-5">
               <Heart className="h-6 w-6 text-amber-500 fill-amber-500" />
-              <h3 className="text-2xl font-bold text-gray-900">Our Mission</h3>
+              <h3 className="text-2xl font-medium text-gray-900">Our Mission</h3>
             </div>
             <p className="text-gray-700 text-base leading-relaxed mb-4 max-w-sm">
               Making mental health support accessible to everyone, everywhere.
@@ -43,7 +43,7 @@ const Footer = () => {
 
           {/* Quick Links */}
           <div>
-            <h3 className="text-2xl font-bold text-gray-900 mb-5 text-center md:text-left">Quick Links</h3>
+            <h3 className="text-2xl font-medium text-gray-900 mb-5 text-center md:text-left">Quick Links</h3>
             <div className="grid grid-cols-2 gap-y-4 text-center md:text-left">
               <a 
                 href="/about" 
@@ -94,7 +94,7 @@ const Footer = () => {
           <div className="flex flex-col space-y-8">
             {/* Newsletter */}
             <div>
-              <h3 className="text-2xl font-bold text-gray-900 mb-2 text-center md:text-left">Newsletter</h3>
+              <h3 className="text-2xl font-medium text-gray-900 mb-2 text-center md:text-left">Newsletter</h3>
               <p className="text-gray-600 mb-5 text-center md:text-left">
                 Subscribe & Stay Updated from the Emotions
               </p>
@@ -121,7 +121,7 @@ const Footer = () => {
             
             {/* Social Media Icons */}
             <div className="flex items-center justify-center md:justify-start">
-              <span className="text-gray-700 font-medium mr-4">Follow Us:</span>
+              <span className="text-gray-700 font-normal mr-4">Follow Us:</span>
               <div className="flex gap-3">
                 <a
                   href="https://facebook.com"

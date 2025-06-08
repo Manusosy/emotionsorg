@@ -338,7 +338,7 @@ const HelpGroups = () => {
             transition={{ duration: 0.6 }}
             className="text-center max-w-3xl mx-auto"
           >
-            <h1 className="text-4xl md:text-5xl font-bold mb-6">Help Groups</h1>
+            <h1 className="text-4xl md:text-5xl font-bold mb-6 text-white">Help Groups</h1>
             <p className="text-lg md:text-xl max-w-2xl mx-auto text-blue-50 mb-8">
               Connect with others who understand what you're going through. Our support groups 
               provide a safe space to share experiences and grow together.
@@ -347,19 +347,11 @@ const HelpGroups = () => {
               <Input 
                 type="text"
                 placeholder="Search for a group..."
-                className="pl-10 pr-14 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
+                className="pl-10 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
               <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="absolute right-2 top-2 rounded-full bg-white border-0 text-gray-500 hover:text-[#20c0f3] hover:bg-blue-50"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <Filter className="h-5 w-5" />
-              </Button>
             </div>
           </motion.div>
         </div>

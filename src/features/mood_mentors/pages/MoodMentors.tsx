@@ -273,33 +273,22 @@ const MoodMentors = () => {
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          className="text-center max-w-3xl mx-auto px-4 relative z-10"
+          transition={{ duration: 0.7 }}
+          className="text-center"
         >
-          <h1 className="text-4xl md:text-5xl font-bold mb-6">Our Mood Mentors</h1>
-          <p className="text-lg md:text-xl max-w-2xl mx-auto text-blue-50 mb-8">
-            Our Mood Mentors are dedicated professionals providing 
-            compassionate support for your emotional well-being. These 
-            specialists focus on various areas of mental health to help you navigate 
-            life's challenges with confidence and resilience.
+          <h1 className="text-4xl md:text-5xl font-bold mb-6 text-white">Our Mood Mentors</h1>
+          <p className="text-lg max-w-2xl mx-auto text-blue-50 mb-8">
+            Our Mood Mentors are dedicated professionals providing personalized mental health support and guidance tailored to your unique needs.
           </p>
           <div className="relative max-w-xl mx-auto mb-8">
             <Input 
               type="text"
               placeholder="Search for a mood mentor..."
-              className="pl-10 pr-14 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
+              className="pl-10 py-3 w-full rounded-full border-0 text-gray-800 shadow-lg"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
             <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
-            <Button 
-              variant="outline" 
-              size="icon" 
-              className="absolute right-2 top-2 rounded-full bg-white border-0 text-gray-500 hover:text-[#20c0f3] hover:bg-blue-50"
-              onClick={() => setShowFilters(!showFilters)}
-            >
-              <Filter className="h-5 w-5" />
-            </Button>
           </div>
         </motion.div>
         
