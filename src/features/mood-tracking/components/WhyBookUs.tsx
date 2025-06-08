@@ -342,7 +342,7 @@ const WhyBookUs = () => {
               >
                 <step.icon className="w-6 h-6 text-white" />
               </div>
-              <h3 className="text-xl font-bold mb-2 font-jakarta">{step.title}</h3>
+              <h3 className="text-xl font-bold mb-2 font-jakarta text-white">{step.title}</h3>
               <p className="text-gray-300 text-sm font-jakarta">
                 {step.description}
               </p>
