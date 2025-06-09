@@ -32,7 +32,8 @@ import {
   Phone,
   FileText,
   ArrowLeft,
-  MessageCircle
+  MessageCircle,
+  Bell
 } from 'lucide-react';
 
 export default function AppointmentSessionPage() {
@@ -52,26 +53,35 @@ export default function AppointmentSessionPage() {
   const [patientJoined, setPatientJoined] = useState(false);
   const [videoInitialized, setVideoInitialized] = useState(false);
   const [shouldInitializeVideo, setShouldInitializeVideo] = useState(false);
-  
-  // Add a function to clean up camera access
-  const cleanupCameraAccess = () => {
-    // Only clean up if video is actually active
-    if (isVideoActive) {
-      console.log('Cleaning up camera access after session');
-      // Get all media devices and stop them
-      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
-        .then(stream => {
-          const tracks = stream.getTracks();
-          tracks.forEach(track => {
-            track.stop();
-            console.log(`MentorSession: Stopped ${track.kind} track`);
-          });
-        })
-        .catch(err => {
-          console.warn('MentorSession: Could not get media devices to clean up:', err);
-        });
-    } else {
-      console.log('No active video to clean up');
+  const [patientHasRequested, setPatientHasRequested] = useState(false);
+  const [patientWaitingSince, setPatientWaitingSince] = useState<Date | null>(null);
+
+  // Function to play notification sound using Web Audio API
+  const playNotificationSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+      
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime); // A5
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+      
+      // Set volume
+      gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+      
+      // Start and stop
+      oscillator.start();
+      setTimeout(() => {
+        oscillator.frequency.setValueAtTime(1200, audioContext.currentTime + 0.1); // Higher note
+        setTimeout(() => {
+          oscillator.stop();
+          audioContext.close();
+        }, 200);
+      }, 150);
+    } catch (e) {
+      console.warn('Could not play notification sound:', e);
     }
   };
   
@@ -102,16 +112,98 @@ export default function AppointmentSessionPage() {
           if (payload.new) {
             console.log('Patient joined event received:', payload.new);
             setPatientJoined(true);
+            setPatientWaitingSince(new Date(payload.new.created_at));
+            
+            // Play sound notification
+            playNotificationSound();
+            
+            // Show desktop notification if supported
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('Patient Waiting', {
+                body: `Your patient has joined the waiting room and is ready for your session.`,
+                icon: '/favicon.ico'
+              });
+            }
+            
             toast.success('Patient has joined the session');
           }
         })
         .subscribe();
       
+      // Also subscribe to patient session start requests
+      const requestChannel = supabase
+        .channel(`patient-request:${appointmentId}`)
+        .on('postgres_changes', { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'session_events',
+          filter: `appointment_id=eq.${appointmentId} AND event_type=eq.patient_requested_start`
+        }, (payload) => {
+          if (payload.new) {
+            console.log('Patient requested start event received:', payload.new);
+            setPatientHasRequested(true);
+            
+            // Play sound notification
+            playNotificationSound();
+            
+            // Show desktop notification if supported
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification('Patient Waiting', {
+                body: `Your patient is waiting and has requested to start the session.`,
+                icon: '/favicon.ico'
+              });
+            }
+            
+            toast.info('Patient has requested to start the session', {
+              action: {
+                label: 'Start Now',
+                onClick: () => startSession()
+              },
+            });
+          }
+        })
+        .subscribe();
+      
+      // Request notification permission
+      if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+      
+      // Check if patient has already joined or requested start
+      const checkPatientStatus = async () => {
+        // Check for patient join events
+        const { data: joinEvents } = await supabase
+          .from('session_events')
+          .select('*')
+          .eq('appointment_id', appointmentId)
+          .eq('event_type', 'patient_joined')
+          .order('created_at', { ascending: false })
+          .limit(1);
+          
+        if (joinEvents && joinEvents.length > 0) {
+          setPatientJoined(true);
+          setPatientWaitingSince(new Date(joinEvents[0].created_at));
+        }
+        
+        // Check if patient has requested to start
+        const { data: requestEvents } = await supabase
+          .from('session_events')
+          .select('*')
+          .eq('appointment_id', appointmentId)
+          .eq('event_type', 'patient_requested_start')
+          .order('created_at', { ascending: false })
+          .limit(1);
+          
+        if (requestEvents && requestEvents.length > 0) {
+          setPatientHasRequested(true);
+        }
+      };
+      
+      checkPatientStatus();
+      
       return () => {
         supabase.removeChannel(sessionChannel);
-        
-        // Clean up camera access when leaving the page
-        cleanupCameraAccess();
+        supabase.removeChannel(requestChannel);
         
         // Reset video initialization state
         setVideoInitialized(false);
@@ -124,9 +216,6 @@ export default function AppointmentSessionPage() {
     
     // When component unmounts, mark that we're no longer on the session page
     return () => {
-      // Clean up camera access when leaving the page
-      cleanupCameraAccess();
-      
       // Reset video initialization state
       setVideoInitialized(false);
       setShouldInitializeVideo(false);
@@ -446,6 +535,40 @@ export default function AppointmentSessionPage() {
     );
   };
   
+  // Format patient waiting time
+  const formatWaitingTime = () => {
+    if (!patientWaitingSince) return '0:00';
+    
+    const now = new Date();
+    const diffMs = now.getTime() - patientWaitingSince.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffSecs = Math.floor((diffMs % 60000) / 1000);
+    
+    return `${diffMins}:${diffSecs.toString().padStart(2, '0')}`;
+  };
+  
+  // Add a function to clean up camera access
+  const cleanupCameraAccess = () => {
+    // Only clean up if video is actually active
+    if (isVideoActive) {
+      console.log('Cleaning up camera access after session');
+      // Get all media devices and stop them
+      navigator.mediaDevices.getUserMedia({ audio: true, video: true })
+        .then(stream => {
+          const tracks = stream.getTracks();
+          tracks.forEach(track => {
+            track.stop();
+            console.log(`MentorSession: Stopped ${track.kind} track`);
+          });
+        })
+        .catch(err => {
+          console.warn('MentorSession: Could not get media devices to clean up:', err);
+        });
+    } else {
+      console.log('No active video to clean up');
+    }
+  };
+  
   // Render loading state
   if (loading) {
     return (
@@ -626,7 +749,35 @@ export default function AppointmentSessionPage() {
                       
                       <PatientStatus />
                       
-                      <div className="w-full h-[500px]">
+                      {!sessionStarted && patientJoined && patientWaitingSince && (
+                        <div className={`mb-6 p-4 rounded-lg ${patientHasRequested ? 'bg-amber-50 border border-amber-200' : 'bg-blue-50 border border-blue-200'}`}>
+                          <div className="flex items-start">
+                            <div className={`rounded-full p-2 mr-3 ${patientHasRequested ? 'bg-amber-100' : 'bg-blue-100'}`}>
+                              <Clock className={`h-5 w-5 ${patientHasRequested ? 'text-amber-600' : 'text-blue-600'}`} />
+                            </div>
+                            <div className="flex-1">
+                              <h3 className={`font-semibold ${patientHasRequested ? 'text-amber-800' : 'text-blue-800'}`}>
+                                {patientHasRequested ? 'Patient Requested Session Start' : 'Patient is Waiting'}
+                              </h3>
+                              <p className={`text-sm mt-1 ${patientHasRequested ? 'text-amber-700' : 'text-blue-700'}`}>
+                                {patient?.first_name || 'Your patient'} has been waiting for {formatWaitingTime()} minutes.
+                                {patientHasRequested ? ' They have requested to start the session.' : ''}
+                              </p>
+                              <div className="mt-3">
+                                <Button 
+                                  size="sm" 
+                                  onClick={startSession}
+                                  className={patientHasRequested ? 'bg-amber-600 hover:bg-amber-700' : ''}
+                                >
+                                  Start Session Now
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="w-full video-call-wrapper">
                         {isVideoActive && (
                           <AppointmentCall 
                             appointmentId={appointmentId || ''}
@@ -638,24 +789,9 @@ export default function AppointmentSessionPage() {
                               console.log('Call ended from AppointmentCall component');
                               setIsVideoActive(false);
                               
-                              // Check if patient ever joined the session
-                              if (patientJoined && videoInitialized) {
-                                // Patient joined and video was initialized - prompt for completion
-                                if (window.confirm('Would you like to mark this appointment as completed?')) {
-                                  completeSession();
-                                } else {
-                                  console.log('User chose not to complete the session');
-                                }
-                              } else if (!patientJoined && videoInitialized) {
-                                // Patient never joined but video was initialized
-                                if (window.confirm('The patient never joined the session. Would you like to mark this appointment as completed anyway?')) {
-                                  completeSession();
-                                } else {
-                                  console.log('User chose not to complete the session when patient did not join');
-                                }
-                              } else {
-                                console.log('Video was not successfully initialized, not completing session');
-                              }
+                              // No longer automatically prompt for completion
+                              // Just log that the call ended but the appointment remains active
+                              console.log('Call ended, but appointment remains active until explicitly completed');
                             }}
                             onInitialized={() => {
                               console.log('Video call successfully initialized');
@@ -673,7 +809,7 @@ export default function AppointmentSessionPage() {
                       
                       <PatientStatus />
                       
-                      <div className="w-full h-[500px]">
+                      <div className="w-full video-call-wrapper">
                         {isVideoActive && (
                           <AppointmentCall 
                             appointmentId={appointmentId || ''}
@@ -685,24 +821,9 @@ export default function AppointmentSessionPage() {
                               console.log('Call ended from AppointmentCall component');
                               setIsVideoActive(false);
                               
-                              // Check if patient ever joined the session
-                              if (patientJoined && videoInitialized) {
-                                // Patient joined and audio was initialized - prompt for completion
-                                if (window.confirm('Would you like to mark this appointment as completed?')) {
-                                  completeSession();
-                                } else {
-                                  console.log('User chose not to complete the session');
-                                }
-                              } else if (!patientJoined && videoInitialized) {
-                                // Patient never joined but audio was initialized
-                                if (window.confirm('The patient never joined the session. Would you like to mark this appointment as completed anyway?')) {
-                                  completeSession();
-                                } else {
-                                  console.log('User chose not to complete the session when patient did not join');
-                                }
-                              } else {
-                                console.log('Audio was not successfully initialized, not completing session');
-                              }
+                              // No longer automatically prompt for completion
+                              // Just log that the call ended but the appointment remains active
+                              console.log('Call ended, but appointment remains active until explicitly completed');
                             }}
                             onInitialized={() => {
                               console.log('Audio call successfully initialized');
